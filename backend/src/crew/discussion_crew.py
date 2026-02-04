@@ -7,6 +7,12 @@ from crewai import Crew, Process, Task
 from crewai.tasks.task_output import TaskOutput
 
 from src.agents import NumberDesigner, PlayerAdvocate, SystemDesigner
+from src.api.websocket.events import (
+    AgentStatus,
+    create_message_event,
+    create_status_event,
+)
+from src.api.websocket.manager import broadcast_sync
 from src.monitoring.langfuse_client import create_trace
 
 logger = logging.getLogger(__name__)
@@ -23,6 +29,7 @@ class DiscussionCrew:
         self,
         llm: Any | None = None,
         callback: Callable[[str, str], None] | None = None,
+        discussion_id: str | None = None,
     ) -> None:
         """Initialize the discussion crew.
 
@@ -30,9 +37,11 @@ class DiscussionCrew:
             llm: Optional LLM instance to use for all agents.
             callback: Optional callback function called with (agent_role, message)
                      when an agent produces output.
+            discussion_id: Optional discussion ID for WebSocket broadcasting.
         """
         self._llm = llm
         self._callback = callback
+        self._discussion_id = discussion_id
 
         # Initialize agents
         self._system_designer = SystemDesigner(llm=llm)
@@ -138,6 +147,48 @@ class DiscussionCrew:
 
         return tasks
 
+    def _broadcast_status(self, agent_role: str, status: AgentStatus) -> None:
+        """Broadcast agent status change via WebSocket.
+
+        Args:
+            agent_role: The agent's role name.
+            status: The new agent status.
+        """
+        if self._discussion_id is None:
+            return
+
+        try:
+            event = create_status_event(
+                discussion_id=self._discussion_id,
+                agent_id=agent_role.lower().replace(" ", "_"),
+                agent_role=agent_role,
+                status=status,
+            )
+            broadcast_sync(self._discussion_id, event.to_dict())
+        except Exception as exc:
+            logger.debug("Failed to broadcast status: %s", exc)
+
+    def _broadcast_message(self, agent_role: str, content: str) -> None:
+        """Broadcast agent message via WebSocket.
+
+        Args:
+            agent_role: The agent's role name.
+            content: The message content.
+        """
+        if self._discussion_id is None:
+            return
+
+        try:
+            event = create_message_event(
+                discussion_id=self._discussion_id,
+                agent_id=agent_role.lower().replace(" ", "_"),
+                agent_role=agent_role,
+                content=content,
+            )
+            broadcast_sync(self._discussion_id, event.to_dict())
+        except Exception as exc:
+            logger.debug("Failed to broadcast message: %s", exc)
+
     def _build_task_callback(
         self,
         trace_span: Any | None,
@@ -145,6 +196,14 @@ class DiscussionCrew:
         """Create a task callback that forwards output and records tracing spans."""
 
         def _callback(task_output: TaskOutput) -> None:
+            agent_role = str(task_output.agent) if task_output.agent else "Unknown"
+
+            # Broadcast status change: speaking -> idle
+            self._broadcast_status(agent_role, AgentStatus.IDLE)
+
+            # Broadcast the message content
+            self._broadcast_message(agent_role, str(task_output))
+
             if self._callback is not None:
                 try:
                     self._callback(task_output.agent, str(task_output))
@@ -232,6 +291,11 @@ class DiscussionCrew:
         tasks = self.create_discussion_tasks(topic, rounds)
         trace_span, task_callback = self._prepare_trace(topic, rounds)
 
+        # Broadcast initial thinking status for first agent
+        if self._agents:
+            first_agent = self._agents[0]
+            self._broadcast_status(first_agent.role, AgentStatus.THINKING)
+
         try:
             crew = Crew(
                 agents=[agent.build_agent() for agent in self._agents],
@@ -243,9 +307,17 @@ class DiscussionCrew:
 
             result = crew.kickoff()
             self._finalize_trace(trace_span, result=result)
+
+            # Broadcast completion status for all agents
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+
             return str(result)
         except Exception as exc:
             self._finalize_trace(trace_span, error=exc)
+            # Broadcast idle status on error
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
             raise
 
     async def run_async(
@@ -267,6 +339,11 @@ class DiscussionCrew:
         tasks = self.create_discussion_tasks(topic, rounds)
         trace_span, task_callback = self._prepare_trace(topic, rounds)
 
+        # Broadcast initial thinking status for first agent
+        if self._agents:
+            first_agent = self._agents[0]
+            self._broadcast_status(first_agent.role, AgentStatus.THINKING)
+
         try:
             crew = Crew(
                 agents=[agent.build_agent() for agent in self._agents],
@@ -278,7 +355,15 @@ class DiscussionCrew:
 
             result = await crew.kickoff_async()
             self._finalize_trace(trace_span, result=result)
+
+            # Broadcast completion status for all agents
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+
             return str(result)
         except Exception as exc:
             self._finalize_trace(trace_span, error=exc)
+            # Broadcast idle status on error
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
             raise
