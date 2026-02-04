@@ -79,6 +79,12 @@ interface ServerMessage {
 - 主动清理：`disconnect()` 时从 `dict[discussion_id, set[websocket]]` 移除
 - 内存回收：依赖 Python GC，连接对象无其他引用时自动回收
 
+**心跳超时实现要点**:
+- 维护 `last_seen: dict[WebSocket, float]`，每次收到 ping 时更新为 `time.time()`
+- 启动后台 `asyncio.create_task(sweep_stale_connections())` 定时任务
+- sweep 任务每 10 秒检查一次，清理 `time.time() - last_seen[ws] > 30` 的连接
+- 清理时调用 `ws.close()` 并从连接池移除
+
 **验证**:
 - `cd backend && python -c "from src.api.websocket.manager import ConnectionManager"` → exit_code == 0
 
@@ -131,6 +137,12 @@ interface ServerMessage {
 > **注意**: FastAPI 的 CORSMiddleware 仅处理 HTTP 请求，不影响 WebSocket。
 > WebSocket 跨域需在接受连接时手动校验 Origin header，拒绝不在允许列表的来源。
 
+**Origin 校验策略**:
+- Origin 存在且在允许列表 → 接受连接
+- Origin 存在但不在允许列表 → 拒绝连接（`websocket.close(1008)`）
+- Origin 为空（CLI、服务端客户端等非浏览器场景）→ 接受连接（MVP 阶段）
+- 允许列表从配置读取，开发环境默认包含 `http://localhost:*`
+
 **验证**:
 - `cd backend && python -m uvicorn src.api.main:app --reload &; sleep 3; kill %1` → 无错误
 
@@ -152,17 +164,26 @@ interface ServerMessage {
 
 采用 `asyncio.run_coroutine_threadsafe()` 桥接：
 ```python
-# 在 Crew 同步代码中调用
-import asyncio
-from src.api.websocket.manager import manager
+# manager.py 中保存 event loop 引用
+_main_loop: asyncio.AbstractEventLoop | None = None
 
+def set_event_loop(loop: asyncio.AbstractEventLoop):
+    """在 FastAPI startup 事件中调用"""
+    global _main_loop
+    _main_loop = loop
+
+# 在 Crew 同步代码中调用
 def broadcast_sync(discussion_id: str, message: dict):
-    loop = asyncio.get_event_loop()
+    if _main_loop is None:
+        return  # 应用未启动，静默忽略
     asyncio.run_coroutine_threadsafe(
         manager.broadcast(discussion_id, message),
-        loop
+        _main_loop
     )
 ```
+
+> **注意**: Python 3.11+ 在非 async 线程里 `asyncio.get_event_loop()` 会报错。
+> 必须在 FastAPI startup 事件中保存 loop：`set_event_loop(asyncio.get_running_loop())`
 
 或者使用消息队列（如 `asyncio.Queue`）解耦，Crew 放消息、WS handler 取消息广播。MVP 阶段用 `run_coroutine_threadsafe` 即可。
 
