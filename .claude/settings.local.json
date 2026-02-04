@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(python:*)",
+      "Bash(pip:*)",
+      "Bash(uv:*)",
+      "Bash(pnpm:*)",
+      "Bash(npm:*)",
+      "Bash(node:*)",
+      "Bash(curl:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(mypy:*)",
+      "Bash(black:*)",
+      "Bash(isort:*)",
+      "Bash(eslint:*)",
+      "Bash(tsc:*)",
+      "Read(/Users/bowen/workspace/claude/bw-work/**)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.crewai.com)",
+      "WebFetch(domain:langfuse.com)",
+      "Skill(bwf-spec)",
+      "Skill(bwf-spec:*)",
+      "Skill(bwf-plan)",
+      "Skill(bwf-plan:*)",
+      "Skill(bwf-dev)",
+      "Skill(bwf-dev:*)",
+      "Bash(git init:*)"
+    ]
+  }
+}
