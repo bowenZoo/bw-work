@@ -93,29 +93,35 @@ def create_trace(
     user_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> Any | None:
-    """Create a new Langfuse trace.
+    """Create a new Langfuse trace root span.
 
     Args:
-        name: Name for the trace.
+        name: Name for the trace/span.
         session_id: Optional session identifier.
         user_id: Optional user identifier.
         metadata: Optional metadata to attach.
 
     Returns:
-        Langfuse trace object if client is initialized, None otherwise.
+        Langfuse span object if client is initialized, None otherwise.
+        Caller is responsible for ending the span.
     """
     client = init_langfuse()
     if client is None:
         return None
 
     try:
-        trace = client.trace(
+        if not hasattr(client, "start_span"):
+            logger.warning("Langfuse client missing start_span; tracing disabled.")
+            return None
+
+        span = client.start_span(name=name, metadata=metadata or {})
+        span.update_trace(
             name=name,
             session_id=session_id,
             user_id=user_id,
             metadata=metadata or {},
         )
-        return trace
+        return span
     except Exception as e:
         logger.error(f"Failed to create trace: {e}")
         return None

@@ -1,10 +1,15 @@
 """Discussion Crew - Orchestrates multi-agent design discussions."""
 
+import logging
 from typing import Any, Callable
 
 from crewai import Crew, Process, Task
+from crewai.tasks.task_output import TaskOutput
 
 from src.agents import NumberDesigner, PlayerAdvocate, SystemDesigner
+from src.monitoring.langfuse_client import create_trace
+
+logger = logging.getLogger(__name__)
 
 
 class DiscussionCrew:
@@ -102,7 +107,9 @@ class DiscussionCrew:
 
                 expected_output = f"{agent.role}对'{topic}'的专业分析和建议"
 
+                task_name = f"round-{round_num}-{agent.role}"
                 task = Task(
+                    name=task_name,
                     description=description,
                     expected_output=expected_output,
                     agent=agent,
@@ -112,6 +119,7 @@ class DiscussionCrew:
 
         # Final summary task
         summary_task = Task(
+            name="summary",
             description=f"""
 请综合所有讨论内容，为话题'{topic}'生成一份讨论总结：
 
@@ -130,6 +138,42 @@ class DiscussionCrew:
 
         return tasks
 
+    def _build_task_callback(
+        self,
+        trace_span: Any | None,
+    ) -> Callable[[TaskOutput], None]:
+        """Create a task callback that forwards output and records tracing spans."""
+
+        def _callback(task_output: TaskOutput) -> None:
+            if self._callback is not None:
+                try:
+                    self._callback(task_output.agent, str(task_output))
+                except Exception as exc:
+                    logger.warning("Task callback failed: %s", exc)
+
+            if trace_span is None:
+                return
+
+            try:
+                span_name = task_output.name or f"task:{task_output.agent}"
+                span = trace_span.start_span(
+                    name=span_name,
+                    input={
+                        "description": task_output.description,
+                        "expected_output": task_output.expected_output,
+                    },
+                    metadata={
+                        "agent": task_output.agent,
+                        "output_format": str(task_output.output_format),
+                    },
+                )
+                span.update(output=task_output.raw)
+                span.end()
+            except Exception as exc:
+                logger.debug("Failed to record Langfuse span: %s", exc)
+
+        return _callback
+
     def run(
         self,
         topic: str,
@@ -147,16 +191,40 @@ class DiscussionCrew:
             The final discussion result/summary.
         """
         tasks = self.create_discussion_tasks(topic, rounds)
-
-        crew = Crew(
-            agents=[agent.build_agent() for agent in self._agents],
-            tasks=tasks,
-            process=Process.sequential,
-            verbose=verbose,
+        trace_span = create_trace(
+            name="discussion",
+            metadata={
+                "topic": topic,
+                "rounds": rounds,
+                "agents": [agent.role for agent in self._agents],
+            },
         )
+        task_callback = self._build_task_callback(trace_span)
 
-        result = crew.kickoff()
-        return str(result)
+        try:
+            crew = Crew(
+                agents=[agent.build_agent() for agent in self._agents],
+                tasks=tasks,
+                process=Process.sequential,
+                verbose=verbose,
+                task_callback=task_callback,
+            )
+
+            result = crew.kickoff()
+            if trace_span is not None:
+                trace_span.update(output=str(result))
+            return str(result)
+        except Exception as exc:
+            if trace_span is not None:
+                trace_span.update(
+                    level="ERROR",
+                    status_message=str(exc),
+                    metadata={"error": str(exc)},
+                )
+            raise
+        finally:
+            if trace_span is not None:
+                trace_span.end()
 
     async def run_async(
         self,
@@ -175,13 +243,37 @@ class DiscussionCrew:
             The final discussion result/summary.
         """
         tasks = self.create_discussion_tasks(topic, rounds)
-
-        crew = Crew(
-            agents=[agent.build_agent() for agent in self._agents],
-            tasks=tasks,
-            process=Process.sequential,
-            verbose=verbose,
+        trace_span = create_trace(
+            name="discussion",
+            metadata={
+                "topic": topic,
+                "rounds": rounds,
+                "agents": [agent.role for agent in self._agents],
+            },
         )
+        task_callback = self._build_task_callback(trace_span)
 
-        result = await crew.kickoff_async()
-        return str(result)
+        try:
+            crew = Crew(
+                agents=[agent.build_agent() for agent in self._agents],
+                tasks=tasks,
+                process=Process.sequential,
+                verbose=verbose,
+                task_callback=task_callback,
+            )
+
+            result = await crew.kickoff_async()
+            if trace_span is not None:
+                trace_span.update(output=str(result))
+            return str(result)
+        except Exception as exc:
+            if trace_span is not None:
+                trace_span.update(
+                    level="ERROR",
+                    status_message=str(exc),
+                    metadata={"error": str(exc)},
+                )
+            raise
+        finally:
+            if trace_span is not None:
+                trace_span.end()

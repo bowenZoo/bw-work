@@ -1,6 +1,4 @@
 """Discussion API routes."""
-
-import asyncio
 import uuid
 from datetime import datetime
 from enum import Enum
@@ -76,7 +74,8 @@ class StartDiscussionResponse(BaseModel):
     message: str
 
 
-# In-memory storage for discussions (will be replaced with database later)
+# NOTE: In-memory storage is per-process and resets on restart.
+# This is a temporary scaffold until persistent storage is added.
 _discussions: dict[str, DiscussionState] = {}
 
 
@@ -87,8 +86,9 @@ def _run_discussion_sync(discussion_id: str) -> None:
         return
 
     try:
-        discussion.status = DiscussionStatus.RUNNING
-        discussion.started_at = datetime.utcnow().isoformat()
+        if discussion.status == DiscussionStatus.PENDING:
+            discussion.status = DiscussionStatus.RUNNING
+            discussion.started_at = datetime.utcnow().isoformat()
 
         crew = DiscussionCrew()
         result = crew.run(
@@ -172,6 +172,10 @@ async def start_discussion(
             status_code=400,
             detail=f"Discussion cannot be started: current status is {discussion.status}",
         )
+
+    # Mark as running before enqueuing to avoid duplicate starts.
+    discussion.status = DiscussionStatus.RUNNING
+    discussion.started_at = datetime.utcnow().isoformat()
 
     # Run in background
     background_tasks.add_task(_run_discussion_sync, discussion_id)
