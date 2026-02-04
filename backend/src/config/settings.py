@@ -19,6 +19,26 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 18000
 
+    # WebSocket
+    websocket_allowed_origin_prefixes: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:",
+            "http://127.0.0.1:",
+            "https://localhost:",
+            "https://127.0.0.1:",
+        ],
+        alias="WEBSOCKET_ALLOWED_ORIGIN_PREFIXES",
+    )
+    websocket_allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost",
+            "https://localhost",
+            "http://127.0.0.1",
+            "https://127.0.0.1",
+        ],
+        alias="WEBSOCKET_ALLOWED_ORIGINS",
+    )
+
     # LLM Configuration
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = "gpt-4"

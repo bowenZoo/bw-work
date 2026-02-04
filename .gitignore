@@ -21,6 +21,7 @@ dist/
 .bwf/progress/*.yaml
 
 # Data directories (keep structure, ignore content)
+backend/data/
 data/projects/*
 !data/projects/.gitkeep
 data/chroma/

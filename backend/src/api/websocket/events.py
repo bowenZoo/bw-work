@@ -125,6 +125,7 @@ def create_status_event(
     agent_id: str,
     agent_role: str,
     status: AgentStatus,
+    content: str | None = None,
 ) -> StatusEvent:
     """Create a status event for agent state changes.
 
@@ -133,6 +134,7 @@ def create_status_event(
         agent_id: The agent identifier.
         agent_role: The agent's role name.
         status: The new agent status.
+        content: Optional status message.
 
     Returns:
         A StatusEvent instance.
@@ -143,6 +145,7 @@ def create_status_event(
             agent_id=agent_id,
             agent_role=agent_role,
             status=status,
+            content=content,
         )
     )
 

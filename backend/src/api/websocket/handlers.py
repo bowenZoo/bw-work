@@ -7,6 +7,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from src.api.websocket.events import ClientMessageType, PongEvent
 from src.api.websocket.manager import connection_manager
+from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -75,26 +76,12 @@ def _validate_origin(websocket: WebSocket) -> bool:
         return True
 
     # Check against allowed origins
-    allowed_prefixes = [
-        "http://localhost:",
-        "http://127.0.0.1:",
-        "https://localhost:",
-        "https://127.0.0.1:",
-    ]
-
-    for prefix in allowed_prefixes:
+    for prefix in settings.websocket_allowed_origin_prefixes:
         if origin.startswith(prefix):
             return True
 
     # Exact matches for development
-    allowed_exact = [
-        "http://localhost",
-        "https://localhost",
-        "http://127.0.0.1",
-        "https://127.0.0.1",
-    ]
-
-    return origin in allowed_exact
+    return origin in settings.websocket_allowed_origins
 
 
 async def _handle_client_message(websocket: WebSocket, message: dict) -> None:
