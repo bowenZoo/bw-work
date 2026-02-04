@@ -46,10 +46,10 @@ data/
 
 | 组件 | 选型 | 理由 |
 |------|------|------|
-| 结构化存储 | SQLite | 轻量，无需额外服务 |
+| 结构化存储 | SQLite | 轻量，无需额外服务（仅存索引/元数据） |
 | 向量数据库 | Chroma | 项目技术栈指定，Python 原生 |
-| 文件存储 | JSON/Markdown | 可读性好，版本控制友好 |
-| 嵌入模型 | OpenAI Ada | 成本低，效果好 |
+| 文件存储 | JSON/Markdown | **事实来源**，可读性好，版本控制友好 |
+| 嵌入模型 | QWen Embedding | 替代 OpenAI Ada，本地可用 |
 
 ### 数据模型
 
@@ -106,10 +106,12 @@ class Decision:
 
 **执行**:
 - 创建 `backend/src/memory/discussion_memory.py`
-- 实现讨论保存（JSON 文件 + SQLite 索引）
+- 实现讨论保存：
+  - **JSON 文件**：讨论正文（事实来源，便于阅读和 Git 版本控制）
+  - **SQLite**：索引和元数据（用于快速查询，可从 JSON 重建）
 - 实现讨论加载
 - 实现历史讨论列表查询
-- 实现自动归档（超过 100 条移至 archive/）
+- 实现自动归档（阈值可配置，默认 100 条，超出移至 archive/）
 
 **验证**:
 - `cd backend && python -c "from src.memory.discussion_memory import DiscussionMemory; dm = DiscussionMemory(); print(dm)"` → exit_code == 0
@@ -235,6 +237,6 @@ class Decision:
 - [ ] 新讨论可引用历史决策 (Spec AC-14)
 - [ ] 支持按关键词搜索历史内容 (Spec AC-15)
 - [ ] 决策记录包含上下文和原因 (Spec AC-16)
-- [ ] 历史记录存储最近 100 条，超出自动归档
+- [ ] 历史记录存储阈值可配置（默认 100 条），超出自动归档
 - [ ] 向量搜索返回相关结果（或降级模式下关键词搜索可用）
 - [ ] 所有单元测试通过（无外部依赖时使用降级模式）

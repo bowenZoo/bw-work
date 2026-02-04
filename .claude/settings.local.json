@@ -33,7 +33,8 @@
       "Skill(bwf-dev)",
       "Skill(bwf-dev:*)",
       "Bash(git init:*)",
-      "Bash(source:*)"
+      "Bash(source:*)",
+      "Bash(git show:*)"
     ]
   }
 }

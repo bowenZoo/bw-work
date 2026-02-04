@@ -48,20 +48,36 @@ interface PlaybackState {
 - pause(): 暂停
 - seek(index): 跳转到指定消息
 - setSpeed(speed): 设置播放速度
+
+// 时间语义：固定间隔模式
+// 每条消息间隔 = 1500ms / speed
+// 例如：1x 速度下每 1.5 秒显示一条消息
+// 系统消息默认显示，保持回放完整性
 ```
+
+### 数据一致性假设
+
+- **讨论消息不可变、只追加**：讨论一旦产生，消息序列不可修改或重排
+- **列表分页稳定**：新讨论追加在列表头部，不影响已加载页的顺序
+- 如需隐藏/删除内容，使用软删除（标记 `deleted_at`），保留原始顺序
 
 ## 任务清单
 
-### Task 5.1: 实现历史列表 API
+### Task 5.1: 实现历史列表与详情 API
 
 **执行**:
 - 确保 `backend/src/api/routes/memory.py` 已实现
 - 实现 GET `/api/discussions` 返回列表
-- 支持分页参数（page, limit）
-- 支持按时间排序
+  - 支持分页参数（page, limit）
+  - 支持按时间排序（created_at DESC）
+  - 响应格式：`{ items: Discussion[], hasMore: boolean }`
+- 实现 GET `/api/discussions/{id}/messages` 返回讨论消息
+  - 消息按 `created_at ASC` 排序（时间顺序，用于回放）
+  - 响应格式：`{ discussion: DiscussionMeta, messages: Message[] }`
 
 **验证**:
-- `curl http://localhost:18000/api/discussions` → 返回讨论列表
+- `curl http://localhost:18000/api/discussions` → 返回讨论列表，含 hasMore 字段
+- `curl http://localhost:18000/api/discussions/{id}/messages` → 返回讨论消息序列
 
 **输出文件**:
 - `backend/src/api/routes/memory.py` (确认/更新)
@@ -108,7 +124,7 @@ interface PlaybackState {
 **执行**:
 - 创建 `frontend/src/views/HistoryView.vue`
 - 整合历史列表组件
-- 添加搜索过滤功能
+- 添加搜索过滤功能（客户端过滤，适用于小规模数据）
 - 配置路由 `/history`
 
 **验证**:
@@ -118,6 +134,8 @@ interface PlaybackState {
 **输出文件**:
 - `frontend/src/views/HistoryView.vue`
 - `frontend/src/router.ts` (更新)
+
+**备注**: 搜索为客户端过滤实现，在讨论数 < 500 时性能良好。如未来数据量增长，可扩展为后端搜索（添加 `q` 参数）。
 
 ---
 
