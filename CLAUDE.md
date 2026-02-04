@@ -186,3 +186,6 @@ cd frontend && pnpm dev
 1. 每次讨论自动保存到 `data/projects/{project_id}/`
 2. 策划案版本管理在 `data/projects/{project_id}/drafts/`
 3. 决策记录在 `data/projects/{project_id}/decisions.md`
+4. `.claude/settings.local.json` 是**团队统一配置**，已提交到仓库
+   - 包含开发流程所需的权限（验证命令、skill 调用等）
+   - 如需本地覆盖，可在 `~/.claude/settings.json` 中配置

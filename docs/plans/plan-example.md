@@ -8,6 +8,18 @@
 
 这是一个 Plan 模板，展示标准格式。
 
+## 前置依赖
+
+执行本 Plan 前，确保已安装开发依赖：
+
+```bash
+# Python 开发工具
+pip install pytest mypy ruff black
+
+# 或使用 requirements-dev.txt（如有）
+pip install -r requirements-dev.txt
+```
+
 ## 技术方案
 
 ### 架构设计
