@@ -204,7 +204,7 @@ frontend/
 
 **执行**:
 - 创建 `frontend/src/components/agent/AgentAvatar.vue`
-- **头像方案**：使用 Heroicons 或 Lucide 图标库（需在 Task 2.1 安装 `@heroicons/vue` 或 `lucide-vue-next`）
+- **头像方案**：使用 Lucide 图标库（已在 Task 2.1 安装 `lucide-vue-next`）
   - 系统策划：Cog / Settings 图标
   - 数值策划：Calculator 图标
   - 玩家代言人：UserCircle / ExclamationTriangle 图标
