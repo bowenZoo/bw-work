@@ -174,6 +174,45 @@ class DiscussionCrew:
 
         return _callback
 
+    def _prepare_trace(
+        self,
+        topic: str,
+        rounds: int,
+    ) -> tuple[Any | None, Callable[[TaskOutput], None]]:
+        """Create a root trace span and task callback."""
+        trace_span = create_trace(
+            name="discussion",
+            metadata={
+                "topic": topic,
+                "rounds": rounds,
+                "agents": [agent.role for agent in self._agents],
+            },
+        )
+        return trace_span, self._build_task_callback(trace_span)
+
+    def _finalize_trace(
+        self,
+        trace_span: Any | None,
+        *,
+        result: Any | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        """Update and end the trace span."""
+        if trace_span is None:
+            return
+        try:
+            if error is not None:
+                trace_span.update(
+                    level="ERROR",
+                    status_message=str(error),
+                    metadata={"error": str(error)},
+                )
+            elif result is not None:
+                trace_span.update(output=str(result))
+            trace_span.end()
+        except Exception as exc:
+            logger.debug("Failed to finalize Langfuse trace: %s", exc)
+
     def run(
         self,
         topic: str,
@@ -191,15 +230,7 @@ class DiscussionCrew:
             The final discussion result/summary.
         """
         tasks = self.create_discussion_tasks(topic, rounds)
-        trace_span = create_trace(
-            name="discussion",
-            metadata={
-                "topic": topic,
-                "rounds": rounds,
-                "agents": [agent.role for agent in self._agents],
-            },
-        )
-        task_callback = self._build_task_callback(trace_span)
+        trace_span, task_callback = self._prepare_trace(topic, rounds)
 
         try:
             crew = Crew(
@@ -211,20 +242,11 @@ class DiscussionCrew:
             )
 
             result = crew.kickoff()
-            if trace_span is not None:
-                trace_span.update(output=str(result))
+            self._finalize_trace(trace_span, result=result)
             return str(result)
         except Exception as exc:
-            if trace_span is not None:
-                trace_span.update(
-                    level="ERROR",
-                    status_message=str(exc),
-                    metadata={"error": str(exc)},
-                )
+            self._finalize_trace(trace_span, error=exc)
             raise
-        finally:
-            if trace_span is not None:
-                trace_span.end()
 
     async def run_async(
         self,
@@ -243,15 +265,7 @@ class DiscussionCrew:
             The final discussion result/summary.
         """
         tasks = self.create_discussion_tasks(topic, rounds)
-        trace_span = create_trace(
-            name="discussion",
-            metadata={
-                "topic": topic,
-                "rounds": rounds,
-                "agents": [agent.role for agent in self._agents],
-            },
-        )
-        task_callback = self._build_task_callback(trace_span)
+        trace_span, task_callback = self._prepare_trace(topic, rounds)
 
         try:
             crew = Crew(
@@ -263,17 +277,8 @@ class DiscussionCrew:
             )
 
             result = await crew.kickoff_async()
-            if trace_span is not None:
-                trace_span.update(output=str(result))
+            self._finalize_trace(trace_span, result=result)
             return str(result)
         except Exception as exc:
-            if trace_span is not None:
-                trace_span.update(
-                    level="ERROR",
-                    status_message=str(exc),
-                    metadata={"error": str(exc)},
-                )
+            self._finalize_trace(trace_span, error=exc)
             raise
-        finally:
-            if trace_span is not None:
-                trace_span.end()

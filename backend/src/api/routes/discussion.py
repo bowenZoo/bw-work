@@ -86,7 +86,8 @@ def _run_discussion_sync(discussion_id: str) -> None:
         return
 
     try:
-        if discussion.status == DiscussionStatus.PENDING:
+        if discussion.started_at is None:
+            # Defensive: allow direct invocation without /start setting status.
             discussion.status = DiscussionStatus.RUNNING
             discussion.started_at = datetime.utcnow().isoformat()
 
