@@ -187,5 +187,6 @@ cd frontend && pnpm dev
 2. 策划案版本管理在 `data/projects/{project_id}/drafts/`
 3. 决策记录在 `data/projects/{project_id}/decisions.md`
 4. `.claude/settings.local.json` 是**团队统一配置**，已提交到仓库
+   - 文件名含 `local` 是 Claude Code 的约定（项目级配置），非"本地私有"之意
    - 包含开发流程所需的权限（验证命令、skill 调用等）
-   - 如需本地覆盖，可在 `~/.claude/settings.json` 中配置
+   - 如需个人覆盖，可在 `~/.claude/settings.json` 中配置（全局优先级更高）

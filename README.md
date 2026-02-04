@@ -42,6 +42,8 @@
 
 ## 参考项目
 
+> **注意**: `github/` 目录已在 `.gitignore` 中排除，需手动获取。详见「参考项目获取」章节。
+
 ```
 github/
 ├── crewAI/      # 核心：Agent 编排框架
@@ -159,9 +161,28 @@ bw-work/
 # 克隆后进入目录
 cd bw-work
 
-# 查看参考项目
-ls github/
+# 安装开发依赖
+pip install -r requirements-dev.txt
 
 # 开始开发（生成规格文档）
 /bwf-spec
 ```
+
+## 参考项目获取（可选）
+
+`github/` 目录包含参考项目，**不随仓库分发**，需手动获取：
+
+```bash
+mkdir -p github && cd github
+
+# 核心依赖
+git clone https://github.com/crewAIInc/crewAI.git
+git clone https://github.com/langfuse/langfuse.git
+
+# 参考实现（可选）
+git clone https://github.com/OpenBMB/ChatDev.git
+git clone https://github.com/geekan/MetaGPT.git
+# openclaw 需替换为实际地址
+```
+
+或使用 shallow clone 节省空间：`git clone --depth 1 <url>`
