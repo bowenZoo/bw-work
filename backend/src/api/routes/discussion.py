@@ -91,7 +91,7 @@ def _run_discussion_sync(discussion_id: str) -> None:
             discussion.status = DiscussionStatus.RUNNING
             discussion.started_at = datetime.utcnow().isoformat()
 
-        crew = DiscussionCrew()
+        crew = DiscussionCrew(discussion_id=discussion_id)
         result = crew.run(
             topic=discussion.topic,
             rounds=discussion.rounds,

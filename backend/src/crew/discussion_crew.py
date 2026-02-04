@@ -11,6 +11,7 @@ from crewai.tasks.task_output import TaskOutput
 from src.agents import NumberDesigner, PlayerAdvocate, SystemDesigner
 from src.api.websocket.events import (
     AgentStatus,
+    create_error_event,
     create_message_event,
     create_status_event,
 )
@@ -72,6 +73,8 @@ class DiscussionCrew:
         # Current discussion record
         self._current_discussion: Discussion | None = None
         self._messages: list[Message] = []
+        self._task_agent_roles: list[str] = []
+        self._task_index = 0
 
     @property
     def agents(self) -> list[Any]:
@@ -87,6 +90,11 @@ class DiscussionCrew:
     def project_id(self) -> str:
         """Get the project ID."""
         return self._project_id
+
+    def _reset_task_sequence(self) -> None:
+        """Reset the task sequence tracking for status updates."""
+        self._task_agent_roles = []
+        self._task_index = 0
 
     def _load_history_context(self, topic: str) -> str:
         """Load historical context related to the topic.
@@ -205,6 +213,7 @@ class DiscussionCrew:
             List of CrewAI Task objects.
         """
         tasks = []
+        self._reset_task_sequence()
 
         # Load historical context
         history_context = self._load_history_context(topic)
@@ -262,6 +271,7 @@ class DiscussionCrew:
                     context=context_tasks if context_tasks else None,
                 )
                 tasks.append(task)
+                self._task_agent_roles.append(agent.role)
 
         # Final summary task
         summary_task = Task(
@@ -281,15 +291,22 @@ class DiscussionCrew:
             context=tasks[-6:],  # Use last 6 tasks as context
         )
         tasks.append(summary_task)
+        self._task_agent_roles.append(system_agent.role)
 
         return tasks
 
-    def _broadcast_status(self, agent_role: str, status: AgentStatus) -> None:
+    def _broadcast_status(
+        self,
+        agent_role: str,
+        status: AgentStatus,
+        content: str | None = None,
+    ) -> None:
         """Broadcast agent status change via WebSocket.
 
         Args:
             agent_role: The agent's role name.
             status: The new agent status.
+            content: Optional status message.
         """
         if self._discussion_id is None:
             return
@@ -300,6 +317,7 @@ class DiscussionCrew:
                 agent_id=agent_role.lower().replace(" ", "_"),
                 agent_role=agent_role,
                 status=status,
+                content=content,
             )
             broadcast_sync(self._discussion_id, event.to_dict())
         except Exception as exc:
@@ -326,6 +344,37 @@ class DiscussionCrew:
         except Exception as exc:
             logger.debug("Failed to broadcast message: %s", exc)
 
+    def _broadcast_discussion_event(self, content: str) -> None:
+        """Broadcast a discussion-level event via WebSocket."""
+        if self._discussion_id is None:
+            return
+
+        try:
+            event = create_status_event(
+                discussion_id=self._discussion_id,
+                agent_id="discussion",
+                agent_role="discussion",
+                status=AgentStatus.IDLE,
+                content=content,
+            )
+            broadcast_sync(self._discussion_id, event.to_dict())
+        except Exception as exc:
+            logger.debug("Failed to broadcast discussion event: %s", exc)
+
+    def _broadcast_error(self, content: str) -> None:
+        """Broadcast an error event via WebSocket."""
+        if self._discussion_id is None:
+            return
+
+        try:
+            event = create_error_event(
+                discussion_id=self._discussion_id,
+                content=content,
+            )
+            broadcast_sync(self._discussion_id, event.to_dict())
+        except Exception as exc:
+            logger.debug("Failed to broadcast error event: %s", exc)
+
     def _build_task_callback(
         self,
         trace_span: Any | None,
@@ -336,10 +385,15 @@ class DiscussionCrew:
             agent_role = str(task_output.agent) if task_output.agent else "Unknown"
 
             # Broadcast status change: speaking -> idle
+            self._broadcast_status(agent_role, AgentStatus.SPEAKING)
+            self._broadcast_message(agent_role, str(task_output))
             self._broadcast_status(agent_role, AgentStatus.IDLE)
 
-            # Broadcast the message content
-            self._broadcast_message(agent_role, str(task_output))
+            # Broadcast thinking status for next agent, if any
+            self._task_index += 1
+            if self._task_index < len(self._task_agent_roles):
+                next_role = self._task_agent_roles[self._task_index]
+                self._broadcast_status(next_role, AgentStatus.THINKING)
 
             # Record message to memory
             self._record_message(agent_role, str(task_output))
@@ -457,10 +511,13 @@ class DiscussionCrew:
             # Broadcast completion status for all agents
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
+            self._broadcast_discussion_event("discussion_completed")
 
             return str(result)
         except Exception as exc:
             self._finalize_trace(trace_span, error=exc)
+            self._broadcast_error(str(exc))
+            self._broadcast_discussion_event("discussion_failed")
             # Save discussion even on error (without summary)
             self._save_discussion()
             # Broadcast idle status on error
@@ -513,10 +570,13 @@ class DiscussionCrew:
             # Broadcast completion status for all agents
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
+            self._broadcast_discussion_event("discussion_completed")
 
             return str(result)
         except Exception as exc:
             self._finalize_trace(trace_span, error=exc)
+            self._broadcast_error(str(exc))
+            self._broadcast_discussion_event("discussion_failed")
             # Save discussion even on error (without summary)
             self._save_discussion()
             # Broadcast idle status on error

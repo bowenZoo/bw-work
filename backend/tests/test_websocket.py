@@ -1,6 +1,7 @@
 """WebSocket tests."""
 
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -44,6 +45,75 @@ class TestConnectionManager:
         """Connection count is zero when empty."""
         assert manager.get_connection_count() == 0
         assert manager.get_connection_count("test-discussion") == 0
+
+
+class _FakeWebSocket:
+    """Minimal fake WebSocket for ConnectionManager tests."""
+
+    def __init__(self) -> None:
+        self.accepted = False
+        self.sent: list[dict] = []
+        self.closed = False
+        self.close_code: int | None = None
+        self.close_reason: str | None = None
+
+    async def accept(self) -> None:
+        self.accepted = True
+
+    async def send_json(self, message: dict) -> None:
+        self.sent.append(message)
+
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
+        self.closed = True
+        self.close_code = code
+        self.close_reason = reason
+
+
+class TestBroadcastAndHeartbeat:
+    """Tests for ConnectionManager broadcast and heartbeat cleanup."""
+
+    @pytest.mark.asyncio
+    async def test_broadcast_sends_to_all_clients(self):
+        manager = ConnectionManager()
+        ws1 = _FakeWebSocket()
+        ws2 = _FakeWebSocket()
+
+        await manager.connect(ws1, "discussion-1")
+        await manager.connect(ws2, "discussion-1")
+
+        payload = {"type": "message", "data": {"discussion_id": "discussion-1"}}
+        await manager.broadcast("discussion-1", payload)
+
+        assert ws1.sent == [payload]
+        assert ws2.sent == [payload]
+
+    @pytest.mark.asyncio
+    async def test_broadcast_scoped_to_discussion(self):
+        manager = ConnectionManager()
+        ws1 = _FakeWebSocket()
+        ws2 = _FakeWebSocket()
+
+        await manager.connect(ws1, "discussion-1")
+        await manager.connect(ws2, "discussion-2")
+
+        payload = {"type": "message", "data": {"discussion_id": "discussion-1"}}
+        await manager.broadcast("discussion-1", payload)
+
+        assert ws1.sent == [payload]
+        assert ws2.sent == []
+
+    @pytest.mark.asyncio
+    async def test_cleanup_stale_connections(self):
+        manager = ConnectionManager()
+        ws = _FakeWebSocket()
+
+        await manager.connect(ws, "discussion-1")
+        manager._last_seen[ws] = time.time() - (manager.HEARTBEAT_TIMEOUT + 1)
+
+        await manager._cleanup_stale()
+
+        assert ws.closed is True
+        assert manager.get_connection_count("discussion-1") == 0
 
 
 class TestWebSocketEvents:
