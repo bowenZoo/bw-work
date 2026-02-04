@@ -26,7 +26,7 @@ steps:
   - "实现 login/logout 接口"
 verification:
   - "pytest tests/test_auth.py"
-  - "curl localhost:8000/api/auth/health"
+  - "curl localhost:18000/api/auth/health"
 ```
 
 ## 开发规范

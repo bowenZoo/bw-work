@@ -189,7 +189,7 @@ backend/
 
 **验证**:
 - `cd backend && python -c "from src.api.main import app"` → exit_code == 0
-- `cd backend && python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &; sleep 3; curl -s http://localhost:8000/health; kill %1` → contains "ok"
+- `cd backend && python -m uvicorn src.api.main:app --host 0.0.0.0 --port 18000 &; sleep 3; curl -s http://localhost:18000/health; kill %1` → contains "ok"
 
 **输出文件**:
 - `backend/src/api/main.py`

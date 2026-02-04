@@ -77,10 +77,14 @@ frontend/
 - 安装依赖：`pinia`, `vue-router`, `tailwindcss`
 - 配置 TailwindCSS
 - 配置 TypeScript
+- 配置 vite.config.ts 开发服务器端口为 18001：
+  ```ts
+  server: { port: 18001 }
+  ```
 
 **验证**:
 - `cd frontend && pnpm install && pnpm build` → exit_code == 0
-- `cd frontend && pnpm dev &; sleep 5; curl http://localhost:5173; kill %1` → 返回 HTML
+- `cd frontend && pnpm dev &; sleep 5; curl http://localhost:18001; kill %1` → 返回 HTML
 
 **输出文件**:
 - `frontend/package.json`

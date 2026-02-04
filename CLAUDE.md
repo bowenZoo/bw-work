@@ -163,14 +163,22 @@ cat docs/plans/plan-example.md
 cat .bwf/progress/plan-example.yaml
 ```
 
+## 端口分配
+
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| 后端 API | 18000 | FastAPI 服务 |
+| 前端开发 | 18001 | Vite 开发服务器 |
+| 预留 | 18002-18010 | 未来扩展（如 Redis、监控等）|
+
 ## 运行时命令
 
 ```bash
-# 启动后端
-cd backend && python -m uvicorn api.main:app --reload
+# 启动后端（端口 18000）
+cd backend && python -m uvicorn src.api.main:app --reload --port 18000
 
-# 启动前端
-cd frontend && pnpm dev
+# 启动前端（端口 18001）
+cd frontend && pnpm dev --port 18001
 ```
 
 ## 参考项目

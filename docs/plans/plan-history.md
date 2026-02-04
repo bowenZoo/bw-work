@@ -61,7 +61,7 @@ interface PlaybackState {
 - 支持按时间排序
 
 **验证**:
-- `curl http://localhost:8000/api/discussions` → 返回讨论列表
+- `curl http://localhost:18000/api/discussions` → 返回讨论列表
 
 **输出文件**:
 - `backend/src/api/routes/memory.py` (确认/更新)
