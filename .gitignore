@@ -20,5 +20,14 @@ dist/
 # Runtime
 .bwf/progress/*.yaml
 
+# Data directories (keep structure, ignore content)
+data/projects/*
+!data/projects/.gitkeep
+data/chroma/
+data/knowledge/templates/*
+!data/knowledge/templates/.gitkeep
+data/knowledge/references/*
+!data/knowledge/references/.gitkeep
+
 # Reference projects (external)
 github/

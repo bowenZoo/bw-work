@@ -1,7 +1,9 @@
 """Discussion Crew - Orchestrates multi-agent design discussions."""
 
 import logging
+from datetime import datetime
 from typing import Any, Callable
+from uuid import uuid4
 
 from crewai import Crew, Process, Task
 from crewai.tasks.task_output import TaskOutput
@@ -13,6 +15,9 @@ from src.api.websocket.events import (
     create_status_event,
 )
 from src.api.websocket.manager import broadcast_sync
+from src.memory.base import Discussion, Message
+from src.memory.decision_tracker import DecisionTracker
+from src.memory.discussion_memory import DiscussionMemory
 from src.monitoring.langfuse_client import create_trace
 
 logger = logging.getLogger(__name__)
@@ -30,6 +35,8 @@ class DiscussionCrew:
         llm: Any | None = None,
         callback: Callable[[str, str], None] | None = None,
         discussion_id: str | None = None,
+        project_id: str | None = None,
+        data_dir: str = "data/projects",
     ) -> None:
         """Initialize the discussion crew.
 
@@ -38,10 +45,14 @@ class DiscussionCrew:
             callback: Optional callback function called with (agent_role, message)
                      when an agent produces output.
             discussion_id: Optional discussion ID for WebSocket broadcasting.
+            project_id: Optional project ID for memory storage.
+            data_dir: Data directory for memory storage.
         """
         self._llm = llm
         self._callback = callback
-        self._discussion_id = discussion_id
+        self._discussion_id = discussion_id or str(uuid4())
+        self._project_id = project_id or "default"
+        self._data_dir = data_dir
 
         # Initialize agents
         self._system_designer = SystemDesigner(llm=llm)
@@ -54,10 +65,130 @@ class DiscussionCrew:
             self._player_advocate,
         ]
 
+        # Initialize memory systems
+        self._discussion_memory = DiscussionMemory(data_dir=data_dir)
+        self._decision_tracker = DecisionTracker(data_dir=data_dir)
+
+        # Current discussion record
+        self._current_discussion: Discussion | None = None
+        self._messages: list[Message] = []
+
     @property
     def agents(self) -> list[Any]:
         """Get all agents in the crew."""
         return self._agents
+
+    @property
+    def discussion_id(self) -> str:
+        """Get the current discussion ID."""
+        return self._discussion_id
+
+    @property
+    def project_id(self) -> str:
+        """Get the project ID."""
+        return self._project_id
+
+    def _load_history_context(self, topic: str) -> str:
+        """Load historical context related to the topic.
+
+        Args:
+            topic: The discussion topic.
+
+        Returns:
+            Formatted historical context string.
+        """
+        context_parts = []
+
+        # Search for related past discussions
+        related_discussions = self._discussion_memory.search(topic, limit=3)
+        if related_discussions:
+            context_parts.append("## 相关历史讨论\n")
+            for disc in related_discussions:
+                context_parts.append(f"### {disc.topic}")
+                if disc.summary:
+                    context_parts.append(f"总结: {disc.summary}\n")
+                context_parts.append("")
+
+        # Search for related decisions
+        related_decisions = self._decision_tracker.search(topic, limit=5, project_id=self._project_id)
+        if related_decisions:
+            context_parts.append("## 相关历史决策\n")
+            for decision in related_decisions:
+                context_parts.append(f"- **{decision.title}**: {decision.description}")
+                context_parts.append(f"  原因: {decision.rationale}\n")
+
+        return "\n".join(context_parts) if context_parts else ""
+
+    def _init_discussion(self, topic: str) -> Discussion:
+        """Initialize a new discussion record.
+
+        Args:
+            topic: The discussion topic.
+
+        Returns:
+            The created Discussion object.
+        """
+        discussion = Discussion(
+            id=self._discussion_id,
+            project_id=self._project_id,
+            topic=topic,
+            messages=[],
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        self._current_discussion = discussion
+        self._messages = []
+        return discussion
+
+    def _record_message(self, agent_role: str, content: str) -> None:
+        """Record a message from an agent.
+
+        Args:
+            agent_role: The agent's role.
+            content: The message content.
+        """
+        message = Message(
+            id=str(uuid4()),
+            agent_id=agent_role.lower().replace(" ", "_"),
+            agent_role=agent_role,
+            content=content,
+            timestamp=datetime.now(),
+        )
+        self._messages.append(message)
+
+    def _save_discussion(self, summary: str | None = None) -> None:
+        """Save the current discussion to memory.
+
+        Args:
+            summary: Optional discussion summary.
+        """
+        if self._current_discussion is None:
+            return
+
+        self._current_discussion.messages = self._messages
+        self._current_discussion.summary = summary
+        self._current_discussion.updated_at = datetime.now()
+
+        self._discussion_memory.save(self._current_discussion)
+        logger.info(
+            "Discussion saved: %s (%d messages)",
+            self._current_discussion.id,
+            len(self._messages),
+        )
+
+    def get_historical_decisions(self, limit: int = 10) -> list[Any]:
+        """Get historical decisions for the current project.
+
+        Args:
+            limit: Maximum number of decisions to return.
+
+        Returns:
+            List of Decision objects.
+        """
+        return self._decision_tracker.list_all(
+            project_id=self._project_id,
+            limit=limit,
+        )
 
     def create_discussion_tasks(
         self,
@@ -74,6 +205,12 @@ class DiscussionCrew:
             List of CrewAI Task objects.
         """
         tasks = []
+
+        # Load historical context
+        history_context = self._load_history_context(topic)
+        history_section = ""
+        if history_context:
+            history_section = f"\n\n---\n参考历史信息：\n{history_context}\n---\n"
 
         # Build CrewAI agents
         system_agent = self._system_designer.build_agent()
@@ -93,7 +230,7 @@ class DiscussionCrew:
 作为{agent.role}，请针对以下话题发表你的初步看法和设计建议：
 
 话题：{topic}
-
+{history_section}
 请从你的专业角度出发，提出你认为重要的设计考虑点。
 输出应该包含：
 1. 你对这个话题的理解
@@ -204,6 +341,9 @@ class DiscussionCrew:
             # Broadcast the message content
             self._broadcast_message(agent_role, str(task_output))
 
+            # Record message to memory
+            self._record_message(agent_role, str(task_output))
+
             if self._callback is not None:
                 try:
                     self._callback(task_output.agent, str(task_output))
@@ -288,6 +428,9 @@ class DiscussionCrew:
         Returns:
             The final discussion result/summary.
         """
+        # Initialize discussion record
+        self._init_discussion(topic)
+
         tasks = self.create_discussion_tasks(topic, rounds)
         trace_span, task_callback = self._prepare_trace(topic, rounds)
 
@@ -308,6 +451,9 @@ class DiscussionCrew:
             result = crew.kickoff()
             self._finalize_trace(trace_span, result=result)
 
+            # Save discussion to memory with summary
+            self._save_discussion(summary=str(result))
+
             # Broadcast completion status for all agents
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
@@ -315,6 +461,8 @@ class DiscussionCrew:
             return str(result)
         except Exception as exc:
             self._finalize_trace(trace_span, error=exc)
+            # Save discussion even on error (without summary)
+            self._save_discussion()
             # Broadcast idle status on error
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
@@ -336,6 +484,9 @@ class DiscussionCrew:
         Returns:
             The final discussion result/summary.
         """
+        # Initialize discussion record
+        self._init_discussion(topic)
+
         tasks = self.create_discussion_tasks(topic, rounds)
         trace_span, task_callback = self._prepare_trace(topic, rounds)
 
@@ -356,6 +507,9 @@ class DiscussionCrew:
             result = await crew.kickoff_async()
             self._finalize_trace(trace_span, result=result)
 
+            # Save discussion to memory with summary
+            self._save_discussion(summary=str(result))
+
             # Broadcast completion status for all agents
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
@@ -363,6 +517,8 @@ class DiscussionCrew:
             return str(result)
         except Exception as exc:
             self._finalize_trace(trace_span, error=exc)
+            # Save discussion even on error (without summary)
+            self._save_discussion()
             # Broadcast idle status on error
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
