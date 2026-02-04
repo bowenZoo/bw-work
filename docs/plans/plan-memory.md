@@ -142,13 +142,16 @@ class Decision:
 
 **执行**:
 - 创建 `backend/src/memory/vector_store.py`
-- 配置 Chroma 持久化存储
+- 配置 Chroma 持久化存储（路径从环境变量或 config 读取）
 - 实现文本嵌入和存储
 - 实现语义相似性搜索
+- **降级模式**：当 embedding 模型不可用时，回退到关键词搜索
 
 **验证**:
 - `cd backend && python -c "from src.memory.vector_store import VectorStore; vs = VectorStore(); print(vs)"` → exit_code == 0
-- 语义搜索返回相关结果
+- 语义搜索返回相关结果（或降级模式下关键词搜索可用）
+
+**注意**：测试时可设置 `VECTOR_STORE_ENABLED=false` 跳过向量依赖
 
 **输出文件**:
 - `backend/src/memory/vector_store.py`
@@ -160,8 +163,8 @@ class Decision:
 
 **执行**:
 - 创建 `backend/src/memory/knowledge_base.py`
-- 实现知识文档导入（Markdown/PDF）
-- 实现知识检索
+- 实现知识文档导入（**P1: 仅 Markdown**，PDF 作为 P2 扩展）
+- 实现知识检索（结合向量搜索或降级到关键词）
 - 支持模板管理
 
 **验证**:
@@ -233,5 +236,5 @@ class Decision:
 - [ ] 支持按关键词搜索历史内容 (Spec AC-15)
 - [ ] 决策记录包含上下文和原因 (Spec AC-16)
 - [ ] 历史记录存储最近 100 条，超出自动归档
-- [ ] 向量搜索返回相关结果
-- [ ] 所有单元测试通过
+- [ ] 向量搜索返回相关结果（或降级模式下关键词搜索可用）
+- [ ] 所有单元测试通过（无外部依赖时使用降级模式）
