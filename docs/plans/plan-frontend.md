@@ -74,9 +74,10 @@ frontend/
 
 **执行**:
 - 使用 `pnpm create vite frontend --template vue-ts`
-- 安装依赖：`pinia`, `vue-router`, `tailwindcss`
+- 安装依赖：`pinia`, `vue-router`, `tailwindcss`, `vue-tsc`, `lucide-vue-next`（图标库）
 - 配置 TailwindCSS
 - 配置 TypeScript
+- 在 package.json 添加 script: `"type-check": "vue-tsc --noEmit"`
 - 配置 vite.config.ts 开发服务器端口为 18001：
   ```ts
   server: { port: 18001 }
@@ -101,9 +102,11 @@ frontend/
 
 **执行**:
 - 创建 `frontend/src/types/index.ts`
-- 定义 Agent 类型（id, name, role, avatar, status）
-- 定义 Message 类型（id, agentId, content, timestamp）
-- 定义 Discussion 类型（id, topic, messages, status）
+- **按 plan-websocket.md 的消息协议定义类型，确保前后端一致**：
+  - `ServerMessage` - type: 'message' | 'status' | 'error' | 'pong'，data 结构与后端一致
+  - `Agent` - id, name, role, status: 'thinking' | 'speaking' | 'idle'
+  - `Message` - id, agentId, agentRole, content, timestamp
+  - `Discussion` - id, topic, messages, status
 
 **验证**:
 - `cd frontend && pnpm run type-check` → exit_code == 0
@@ -134,9 +137,11 @@ frontend/
 
 **执行**:
 - 创建 `frontend/src/composables/useWebSocket.ts`
-- 实现连接、断开、重连逻辑
-- 实现消息接收和发送
-- 处理连接状态
+- **连接地址配置**：从 `import.meta.env.VITE_WS_URL` 读取，默认 `ws://localhost:18000`
+- 实现连接、断开逻辑
+- **重连策略**：固定 3 秒间隔，最多重试 5 次，超过后更新状态提示用户刷新
+- 实现消息接收和发送（ping 心跳）
+- 处理连接状态：connecting / connected / disconnected / error
 
 **验证**:
 - `cd frontend && pnpm run type-check` → exit_code == 0
@@ -199,15 +204,18 @@ frontend/
 
 **执行**:
 - 创建 `frontend/src/components/agent/AgentAvatar.vue`
-- 根据 Agent 角色显示不同头像/图标
-- 显示在线/离线/思考中状态
+- **头像方案**：使用 Heroicons 或 Lucide 图标库（需在 Task 2.1 安装 `@heroicons/vue` 或 `lucide-vue-next`）
+  - 系统策划：Cog / Settings 图标
+  - 数值策划：Calculator 图标
+  - 玩家代言人：UserCircle / ExclamationTriangle 图标
+- 根据 Agent role 映射对应图标
+- 显示状态指示器（idle/thinking/speaking 用不同颜色圆点）
 
 **验证**:
 - 组件可正常渲染，状态切换正常
 
 **输出文件**:
 - `frontend/src/components/agent/AgentAvatar.vue`
-- `frontend/src/assets/agents/` (SVG 图标)
 
 ---
 
@@ -284,7 +292,11 @@ frontend/
 **执行**:
 - 创建 `frontend/src/composables/useDiscussion.ts`
 - 实现创建讨论、启动讨论、接收消息
-- 与后端 API 对接
+- **对接后端 API**（见 plan-backend-core.md Task 1.7）：
+  - `POST /api/discussions` - 创建讨论，返回 discussion_id
+  - `GET /api/discussions/{id}` - 获取讨论状态
+  - `POST /api/discussions/{id}/start` - 启动讨论
+- API Base URL 从 `import.meta.env.VITE_API_URL` 读取，默认 `http://localhost:18000`
 
 **验证**:
 - 可创建讨论并接收实时消息
