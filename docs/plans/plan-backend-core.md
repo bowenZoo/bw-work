@@ -181,6 +181,7 @@ backend/
 
 **执行**:
 - 创建 `backend/src/api/main.py` - FastAPI 应用入口
+- 实现 GET `/health` - 健康检查接口（返回 `{"status": "ok"}`）
 - 创建 `backend/src/api/routes/discussion.py` - 讨论相关路由
 - 实现 POST `/api/discussions` - 创建讨论
 - 实现 GET `/api/discussions/{id}` - 获取讨论状态
@@ -188,7 +189,7 @@ backend/
 
 **验证**:
 - `cd backend && python -c "from src.api.main import app"` → exit_code == 0
-- `cd backend && python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &; sleep 3; curl http://localhost:8000/health; kill %1` → 返回 200
+- `cd backend && python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &; sleep 3; curl -s http://localhost:8000/health; kill %1` → contains "ok"
 
 **输出文件**:
 - `backend/src/api/main.py`
