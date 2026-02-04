@@ -161,6 +161,10 @@ bw-work/
 # 克隆后进入目录
 cd bw-work
 
+# 创建虚拟环境（推荐）
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
 # 安装开发依赖
 pip install -r requirements-dev.txt
 
@@ -182,7 +186,7 @@ git clone https://github.com/langfuse/langfuse.git
 # 参考实现（可选）
 git clone https://github.com/OpenBMB/ChatDev.git
 git clone https://github.com/geekan/MetaGPT.git
-# openclaw 需替换为实际地址
+# openclaw: 内部记忆系统参考，暂无公开地址（可跳过）
 ```
 
 或使用 shallow clone 节省空间：`git clone --depth 1 <url>`
