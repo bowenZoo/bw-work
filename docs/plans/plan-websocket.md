@@ -84,6 +84,7 @@ interface ServerMessage {
 - 启动后台 `asyncio.create_task(sweep_stale_connections())` 定时任务
 - sweep 任务每 10 秒检查一次，清理 `time.time() - last_seen[ws] > 30` 的连接
 - 清理时调用 `ws.close()` 并从连接池移除
+- 生命周期：在 FastAPI startup 事件启动 sweep 任务，在 shutdown 事件中 `task.cancel()` 取消
 
 **验证**:
 - `cd backend && python -c "from src.api.websocket.manager import ConnectionManager"` → exit_code == 0
@@ -142,6 +143,7 @@ interface ServerMessage {
 - Origin 存在但不在允许列表 → 拒绝连接（`websocket.close(1008)`）
 - Origin 为空（CLI、服务端客户端等非浏览器场景）→ 接受连接（MVP 阶段）
 - 允许列表从配置读取，开发环境默认包含 `http://localhost:*`
+- 匹配方式：使用前缀匹配 `origin.startswith("http://localhost:")`，避免严格等值比较
 
 **验证**:
 - `cd backend && python -m uvicorn src.api.main:app --reload &; sleep 3; kill %1` → 无错误
@@ -201,8 +203,7 @@ def broadcast_sync(discussion_id: str, message: dict):
 **前置依赖**:
 - 确保 `pyproject.toml` 或 `requirements-dev.txt` 包含：
   - `pytest-asyncio` - 异步测试支持
-  - `httpx` - TestClient 的 WebSocket 测试支持
-  - `websockets`（可选）- 如需真实连接测试
+  - `websockets`（可选）- 如需真实连接测试（TestClient 已内置 websocket_connect）
 
 **执行**:
 - 创建 `backend/tests/test_websocket.py`
