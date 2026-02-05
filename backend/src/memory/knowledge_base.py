@@ -11,8 +11,8 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
-from uuid import uuid4
+from typing import Any
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from src.memory.vector_store import VectorStore
 
@@ -26,7 +26,7 @@ class KnowledgeDocument:
     id: str
     title: str
     content: str
-    source_path: Optional[str] = None
+    source_path: str | None = None
     doc_type: str = "markdown"
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
@@ -44,7 +44,7 @@ class KnowledgeBase:
     def __init__(
         self,
         knowledge_dir: str = "data/knowledge",
-        vector_store: Optional[VectorStore] = None,
+        vector_store: VectorStore | None = None,
     ):
         """
         初始化知识库
@@ -86,7 +86,7 @@ class KnowledgeBase:
             try:
                 content = md_file.read_text(encoding="utf-8")
                 title = self._extract_title(content, md_file.name)
-                doc_id = str(uuid4())
+                doc_id = str(uuid5(NAMESPACE_URL, str(md_file.resolve())))
 
                 doc = KnowledgeDocument(
                     id=doc_id,
@@ -94,10 +94,23 @@ class KnowledgeBase:
                     content=content,
                     source_path=str(md_file),
                     doc_type="markdown",
-                    metadata={"source": str(md_file.relative_to(self.knowledge_dir))},
+                    metadata={
+                        "source": str(md_file.relative_to(self.knowledge_dir)),
+                        "doc_type": "markdown",
+                    },
                 )
 
                 self._documents[doc_id] = doc
+                self._vector_store.add(
+                    text=content,
+                    metadata={
+                        "doc_id": doc_id,
+                        "title": title,
+                        "doc_type": "markdown",
+                        "source": str(md_file.relative_to(self.knowledge_dir)),
+                    },
+                    doc_id=doc_id,
+                )
 
             except Exception as e:
                 logger.warning(f"Failed to load {md_file}: {e}")
@@ -114,8 +127,8 @@ class KnowledgeBase:
     def import_document(
         self,
         file_path: str,
-        metadata: Optional[dict[str, Any]] = None,
-    ) -> Optional[KnowledgeDocument]:
+        metadata: dict[str, Any] | None = None,
+    ) -> KnowledgeDocument | None:
         """
         导入文档
 
@@ -150,6 +163,7 @@ class KnowledgeBase:
         doc_metadata = {
             "source": str(path.name),
             "type": "imported",
+            "doc_type": "markdown",
         }
         if metadata:
             doc_metadata.update(metadata)
@@ -172,6 +186,7 @@ class KnowledgeBase:
             metadata={
                 "doc_id": doc_id,
                 "title": title,
+                "doc_type": "markdown",
                 **doc_metadata,
             },
             doc_id=doc_id,
@@ -185,7 +200,7 @@ class KnowledgeBase:
         title: str,
         content: str,
         doc_type: str = "markdown",
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> KnowledgeDocument:
         """
         添加文档（不从文件导入）
@@ -218,6 +233,7 @@ class KnowledgeBase:
             metadata={
                 "doc_id": doc_id,
                 "title": title,
+                "doc_type": doc_type,
                 **(metadata or {}),
             },
             doc_id=doc_id,
@@ -225,7 +241,7 @@ class KnowledgeBase:
 
         return doc
 
-    def get_document(self, doc_id: str) -> Optional[KnowledgeDocument]:
+    def get_document(self, doc_id: str) -> KnowledgeDocument | None:
         """
         获取文档
 
@@ -241,7 +257,7 @@ class KnowledgeBase:
         self,
         query: str,
         limit: int = 10,
-        doc_type: Optional[str] = None,
+        doc_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         搜索知识库
@@ -286,7 +302,7 @@ class KnowledgeBase:
 
     def list_documents(
         self,
-        doc_type: Optional[str] = None,
+        doc_type: str | None = None,
         limit: int = 100,
     ) -> list[KnowledgeDocument]:
         """
@@ -363,7 +379,7 @@ class KnowledgeBase:
 
         return templates
 
-    def get_template(self, template_name: str) -> Optional[KnowledgeDocument]:
+    def get_template(self, template_name: str) -> KnowledgeDocument | None:
         """
         获取模板
 

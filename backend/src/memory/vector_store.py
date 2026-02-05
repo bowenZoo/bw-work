@@ -7,9 +7,8 @@
 
 import logging
 import os
-import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -25,9 +24,9 @@ class VectorStore:
 
     def __init__(
         self,
-        persist_directory: Optional[str] = None,
+        persist_directory: str | None = None,
         collection_name: str = "default",
-        enabled: Optional[bool] = None,
+        enabled: bool | None = None,
     ):
         """
         初始化向量存储
@@ -50,6 +49,7 @@ class VectorStore:
         self._client = None
         self._collection = None
         self._fallback_mode = False
+        self._fallback_docs: dict[str, dict[str, Any]] = {}
 
         if self._enabled:
             self._init_chroma()
@@ -89,11 +89,25 @@ class VectorStore:
         """是否启用向量搜索"""
         return self._enabled and not self._fallback_mode and self._collection is not None
 
+    def _store_fallback_doc(self, doc_id: str, text: str, metadata: dict[str, Any]) -> None:
+        """Store a document in the fallback index for keyword search."""
+        self._fallback_docs[doc_id] = {
+            "text": text,
+            "metadata": metadata,
+        }
+
+    def _metadata_matches(self, metadata: dict[str, Any], filter_metadata: dict[str, Any]) -> bool:
+        """Check if metadata matches the filter criteria."""
+        for key, value in filter_metadata.items():
+            if metadata.get(key) != value:
+                return False
+        return True
+
     def add(
         self,
         text: str,
-        metadata: Optional[dict[str, Any]] = None,
-        doc_id: Optional[str] = None,
+        metadata: dict[str, Any] | None = None,
+        doc_id: str | None = None,
     ) -> str:
         """
         添加文本到向量存储
@@ -111,20 +125,29 @@ class VectorStore:
 
         if metadata is None:
             metadata = {}
+        else:
+            metadata = dict(metadata)
 
         # 存储原始文本用于降级模式
         metadata["_text"] = text
+        self._store_fallback_doc(doc_id, text, metadata)
 
         if self.is_vector_enabled:
             try:
-                self._collection.add(
-                    documents=[text],
-                    metadatas=[metadata],
-                    ids=[doc_id],
-                )
+                if hasattr(self._collection, "upsert"):
+                    self._collection.upsert(
+                        documents=[text],
+                        metadatas=[metadata],
+                        ids=[doc_id],
+                    )
+                else:
+                    self._collection.add(
+                        documents=[text],
+                        metadatas=[metadata],
+                        ids=[doc_id],
+                    )
             except Exception as e:
                 logger.warning(f"Failed to add to vector store: {e}")
-                self._fallback_mode = True
 
         return doc_id
 
@@ -132,7 +155,7 @@ class VectorStore:
         self,
         query: str,
         limit: int = 10,
-        filter_metadata: Optional[dict[str, Any]] = None,
+        filter_metadata: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """
         搜索相似文本
@@ -154,7 +177,7 @@ class VectorStore:
         self,
         query: str,
         limit: int,
-        filter_metadata: Optional[dict[str, Any]] = None,
+        filter_metadata: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """向量语义搜索"""
         try:
@@ -181,15 +204,48 @@ class VectorStore:
 
         except Exception as e:
             logger.warning(f"Vector search failed: {e}. Falling back to keyword search.")
+            self._fallback_mode = True
             return self._keyword_search(query, limit, filter_metadata)
 
     def _keyword_search(
         self,
         query: str,
         limit: int,
-        filter_metadata: Optional[dict[str, Any]] = None,
+        filter_metadata: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """关键词搜索（降级模式）"""
+        # Prefer in-memory fallback index when available
+        if self._fallback_docs:
+            try:
+                query_terms = set(query.lower().split())
+                results = []
+
+                for doc_id, doc in self._fallback_docs.items():
+                    metadata = doc.get("metadata", {})
+                    if filter_metadata and not self._metadata_matches(metadata, filter_metadata):
+                        continue
+
+                    text = doc.get("text", "")
+                    text_lower = text.lower()
+                    matches = sum(1 for term in query_terms if term in text_lower)
+
+                    if matches > 0:
+                        score = matches / len(query_terms)
+                        results.append(
+                            {
+                                "id": doc_id,
+                                "text": text,
+                                "metadata": metadata,
+                                "score": score,
+                            }
+                        )
+
+                results.sort(key=lambda x: x["score"], reverse=True)
+                return results[:limit]
+            except Exception as e:
+                logger.error(f"Keyword search failed: {e}")
+                return []
+
         if not self._collection:
             return []
 
@@ -243,21 +299,23 @@ class VectorStore:
         Returns:
             是否成功删除
         """
+        removed = self._fallback_docs.pop(doc_id, None) is not None
+
         if not self._collection:
-            return False
+            return removed
 
         try:
             self._collection.delete(ids=[doc_id])
             return True
         except Exception as e:
             logger.error(f"Failed to delete document: {e}")
-            return False
+            return removed
 
     def update(
         self,
         doc_id: str,
         text: str,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool:
         """
         更新文档
@@ -270,13 +328,16 @@ class VectorStore:
         Returns:
             是否成功更新
         """
-        if not self._collection:
-            return False
-
         if metadata is None:
             metadata = {}
+        else:
+            metadata = dict(metadata)
 
         metadata["_text"] = text
+        self._store_fallback_doc(doc_id, text, metadata)
+
+        if not self._collection:
+            return True
 
         try:
             self._collection.update(
@@ -287,12 +348,12 @@ class VectorStore:
             return True
         except Exception as e:
             logger.error(f"Failed to update document: {e}")
-            return False
+            return True
 
     def count(self) -> int:
         """获取文档数量"""
         if not self._collection:
-            return 0
+            return len(self._fallback_docs)
 
         try:
             return self._collection.count()
@@ -302,7 +363,8 @@ class VectorStore:
     def clear(self) -> bool:
         """清空集合"""
         if not self._client:
-            return False
+            self._fallback_docs.clear()
+            return True
 
         try:
             self._client.delete_collection(self.collection_name)
@@ -310,6 +372,7 @@ class VectorStore:
                 name=self.collection_name,
                 metadata={"hnsw:space": "cosine"},
             )
+            self._fallback_docs.clear()
             return True
         except Exception as e:
             logger.error(f"Failed to clear collection: {e}")

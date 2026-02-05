@@ -7,7 +7,6 @@
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 from uuid import uuid4
 
 from src.memory.base import Decision, MemoryStore
@@ -90,7 +89,7 @@ class DecisionTracker(MemoryStore[Decision]):
 
         return decisions
 
-    def save(self, decision: Decision, project_id: Optional[str] = None) -> str:
+    def save(self, decision: Decision, project_id: str | None = None) -> str:
         """
         保存决策
 
@@ -128,7 +127,7 @@ class DecisionTracker(MemoryStore[Decision]):
 
         return decision.id
 
-    def load(self, decision_id: str, project_id: Optional[str] = None) -> Optional[Decision]:
+    def load(self, decision_id: str, project_id: str | None = None) -> Decision | None:
         """
         加载决策
 
@@ -155,7 +154,7 @@ class DecisionTracker(MemoryStore[Decision]):
 
         return self._decisions_cache.get(decision_id)
 
-    def search(self, query: str, limit: int = 10, project_id: Optional[str] = None) -> list[Decision]:
+    def search(self, query: str, limit: int = 10, project_id: str | None = None) -> list[Decision]:
         """
         搜索决策
 
@@ -189,7 +188,7 @@ class DecisionTracker(MemoryStore[Decision]):
 
         return results
 
-    def delete(self, decision_id: str, project_id: Optional[str] = None) -> bool:
+    def delete(self, decision_id: str, project_id: str | None = None) -> bool:
         """
         删除决策
 
@@ -239,7 +238,7 @@ class DecisionTracker(MemoryStore[Decision]):
 
         return True
 
-    def list_all(self, offset: int = 0, limit: int = 100, project_id: Optional[str] = None) -> list[Decision]:
+    def list_all(self, offset: int = 0, limit: int = 100, project_id: str | None = None) -> list[Decision]:
         """
         列出所有决策
 
@@ -269,7 +268,7 @@ class DecisionTracker(MemoryStore[Decision]):
         # 应用分页
         return results[offset : offset + limit]
 
-    def list_by_discussion(self, discussion_id: str, project_id: Optional[str] = None) -> list[Decision]:
+    def list_by_discussion(self, discussion_id: str, project_id: str | None = None) -> list[Decision]:
         """
         列出讨论相关的所有决策
 

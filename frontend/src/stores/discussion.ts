@@ -15,9 +15,12 @@ export const useDiscussionStore = defineStore('discussion', () => {
 
   const messages = computed(() => currentDiscussion.value?.messages ?? []);
 
-  const status = computed(() => currentDiscussion.value?.status ?? 'idle');
+  const status = computed(() => currentDiscussion.value?.status ?? 'pending');
 
-  const isInProgress = computed(() => status.value === 'in_progress');
+  const isInProgress = computed(() => {
+    if (!currentDiscussion.value) return false;
+    return status.value === 'pending' || status.value === 'running';
+  });
 
   const isCompleted = computed(() => status.value === 'completed');
 
@@ -41,7 +44,7 @@ export const useDiscussionStore = defineStore('discussion', () => {
 
   function startDiscussion() {
     if (currentDiscussion.value) {
-      currentDiscussion.value.status = 'in_progress';
+      currentDiscussion.value.status = 'running';
     }
   }
 

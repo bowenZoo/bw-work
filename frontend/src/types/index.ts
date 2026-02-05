@@ -1,11 +1,13 @@
 // Agent status types
 export type AgentStatus = 'thinking' | 'speaking' | 'idle';
 
+export type AgentRole = 'system_designer' | 'number_designer' | 'player_advocate';
+
 // Agent interface
 export interface Agent {
   id: string;
   name: string;
-  role: 'system_designer' | 'number_designer' | 'player_advocate';
+  role: AgentRole;
   status: AgentStatus;
 }
 
@@ -19,7 +21,7 @@ export interface Message {
 }
 
 // Discussion status
-export type DiscussionStatus = 'idle' | 'in_progress' | 'completed' | 'error';
+export type DiscussionStatus = 'pending' | 'running' | 'completed' | 'failed';
 
 // Discussion interface
 export interface Discussion {
@@ -67,9 +69,44 @@ export interface CreateDiscussionResponse {
   status: DiscussionStatus;
 }
 
-export interface DiscussionResponse {
+export interface DiscussionStatusResponse {
   id: string;
   topic: string;
   status: DiscussionStatus;
-  messages: Message[];
+  rounds: number;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  result?: string | null;
+  error?: string | null;
+}
+
+// History API types
+export interface DiscussionSummary {
+  id: string;
+  project_id: string;
+  topic: string;
+  summary: string | null;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DiscussionListResponse {
+  items: DiscussionSummary[];
+  hasMore: boolean;
+}
+
+// API message response (snake_case from backend)
+export interface ApiMessageResponse {
+  id: string;
+  agent_id: string;
+  agent_role: string;
+  content: string;
+  timestamp: string;
+}
+
+export interface DiscussionMessagesResponse {
+  discussion: DiscussionSummary;
+  messages: ApiMessageResponse[];
 }

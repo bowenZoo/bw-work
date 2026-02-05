@@ -1,4 +1,4 @@
-import { ref, onUnmounted, watch } from 'vue';
+import { ref, onUnmounted, watch, type Ref, type ComputedRef } from 'vue';
 import type { ConnectionStatus, ServerMessage, ClientMessage } from '@/types';
 
 const WS_BASE_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:18000';
@@ -6,7 +6,9 @@ const RECONNECT_INTERVAL = 3000; // 3 seconds
 const MAX_RECONNECT_ATTEMPTS = 5;
 const PING_INTERVAL = 25000; // 25 seconds
 
-export function useWebSocket(discussionId: string | null) {
+export function useWebSocket(
+  discussionId: Ref<string | null> | ComputedRef<string | null>
+) {
   // State
   const socket = ref<WebSocket | null>(null);
   const connectionStatus = ref<ConnectionStatus>('disconnected');
@@ -20,7 +22,8 @@ export function useWebSocket(discussionId: string | null) {
 
   // Connect to WebSocket
   function connect() {
-    if (!discussionId) {
+    const currentId = discussionId.value;
+    if (!currentId) {
       console.warn('Cannot connect: discussionId is null');
       return;
     }
@@ -33,7 +36,7 @@ export function useWebSocket(discussionId: string | null) {
     connectionStatus.value = 'connecting';
     shouldReconnect.value = true;
 
-    const wsUrl = `${WS_BASE_URL}/ws/${discussionId}`;
+    const wsUrl = `${WS_BASE_URL}/ws/${currentId}`;
     console.log(`Connecting to WebSocket: ${wsUrl}`);
 
     try {
@@ -143,7 +146,7 @@ export function useWebSocket(discussionId: string | null) {
   }
 
   // Watch for discussionId changes
-  watch(() => discussionId, (newId, oldId) => {
+  watch(discussionId, (newId, oldId) => {
     if (oldId !== newId) {
       disconnect();
       if (newId) {

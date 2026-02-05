@@ -8,12 +8,10 @@
 """
 
 import json
-import os
 import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 from uuid import uuid4
 
 from src.memory.base import Discussion, MemoryStore, Message
@@ -188,7 +186,7 @@ class DiscussionMemory(MemoryStore[Discussion]):
 
         return discussion.id
 
-    def load(self, discussion_id: str) -> Optional[Discussion]:
+    def load(self, discussion_id: str) -> Discussion | None:
         """
         加载讨论
 
@@ -217,7 +215,7 @@ class DiscussionMemory(MemoryStore[Discussion]):
         if not file_path.exists():
             return None
 
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             data = json.load(f)
 
         return self._dict_to_discussion(data)
@@ -235,30 +233,65 @@ class DiscussionMemory(MemoryStore[Discussion]):
         Returns:
             匹配的讨论列表
         """
+        query_lower = query.lower()
         conn = sqlite3.connect(self._db_path)
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT id FROM discussions
-            WHERE (topic LIKE ? OR summary LIKE ?)
-            AND archived = 0
-            ORDER BY updated_at DESC
-            LIMIT ?
-        """,
-            (f"%{query}%", f"%{query}%", limit),
-        )
+        try:
+            cursor.execute(
+                """
+                SELECT id FROM discussions
+                WHERE (topic LIKE ? OR summary LIKE ?)
+                AND archived = 0
+                ORDER BY updated_at DESC
+                LIMIT ?
+            """,
+                (f"%{query}%", f"%{query}%", limit),
+            )
 
-        rows = cursor.fetchall()
-        conn.close()
+            rows = cursor.fetchall()
 
-        results = []
-        for row in rows:
-            discussion = self.load(row[0])
-            if discussion:
-                results.append(discussion)
+            results = []
+            seen_ids: set[str] = set()
+            for row in rows:
+                discussion = self.load(row[0])
+                if discussion:
+                    results.append(discussion)
+                    seen_ids.add(discussion.id)
+                    if len(results) >= limit:
+                        return results
 
-        return results
+            # If not enough results, scan message content for matches (fallback)
+            if len(results) < limit:
+                cursor.execute(
+                    """
+                    SELECT id FROM discussions
+                    WHERE archived = 0
+                    ORDER BY updated_at DESC
+                """
+                )
+                all_rows = cursor.fetchall()
+
+                for row in all_rows:
+                    if len(results) >= limit:
+                        break
+                    discussion_id = row[0]
+                    if discussion_id in seen_ids:
+                        continue
+                    discussion = self.load(discussion_id)
+                    if not discussion:
+                        continue
+                    for message in discussion.messages:
+                        if query_lower in message.content.lower():
+                            results.append(discussion)
+                            seen_ids.add(discussion_id)
+                            break
+
+                return results
+
+            return results
+        finally:
+            conn.close()
 
     def delete(self, discussion_id: str) -> bool:
         """
@@ -315,7 +348,7 @@ class DiscussionMemory(MemoryStore[Discussion]):
             """
             SELECT id FROM discussions
             WHERE archived = 0
-            ORDER BY updated_at DESC
+            ORDER BY created_at DESC
             LIMIT ? OFFSET ?
         """,
             (limit, offset),
@@ -353,7 +386,7 @@ class DiscussionMemory(MemoryStore[Discussion]):
             """
             SELECT id FROM discussions
             WHERE project_id = ? AND archived = 0
-            ORDER BY updated_at DESC
+            ORDER BY created_at DESC
             LIMIT ? OFFSET ?
         """,
             (project_id, limit, offset),

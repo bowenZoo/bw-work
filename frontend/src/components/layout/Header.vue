@@ -52,10 +52,16 @@ const isConnected = computed(() => props.connectionStatus === 'connected');
         </div>
       </div>
 
-      <!-- Connection status -->
-      <div class="flex items-center gap-2" :class="connectionStatusClass">
-        <component :is="isConnected ? Wifi : WifiOff" class="w-4 h-4" />
-        <span class="text-sm">{{ connectionStatusText }}</span>
+      <!-- Extra slot and connection status -->
+      <div class="flex items-center gap-4">
+        <!-- Extra slot for additional content -->
+        <slot name="extra" />
+
+        <!-- Connection status -->
+        <div class="flex items-center gap-2" :class="connectionStatusClass">
+          <component :is="isConnected ? Wifi : WifiOff" class="w-4 h-4" />
+          <span class="text-sm">{{ connectionStatusText }}</span>
+        </div>
       </div>
     </div>
   </header>

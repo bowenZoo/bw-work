@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import type { Message } from '@/types';
 import { useAgentsStore } from '@/stores';
+import { normalizeAgentRole } from '@/utils/agents';
 
 const props = defineProps<{
   message: Message;
@@ -9,10 +10,15 @@ const props = defineProps<{
 
 const agentsStore = useAgentsStore();
 
+const normalizedRole = computed(() => normalizeAgentRole(props.message.agentRole));
+
 // Get agent info based on role
 const agent = computed(() => {
-  return agentsStore.getAgentByRole(props.message.agentRole);
+  const role = normalizedRole.value ?? props.message.agentRole;
+  return role ? agentsStore.getAgentByRole(role) : undefined;
 });
+
+const displayName = computed(() => agent.value?.name ?? props.message.agentRole || 'Unknown');
 
 // Format timestamp
 const formattedTime = computed(() => {
@@ -25,7 +31,7 @@ const formattedTime = computed(() => {
 
 // Get color class based on agent role
 const roleColorClass = computed(() => {
-  switch (props.message.agentRole) {
+  switch (normalizedRole.value) {
     case 'system_designer':
       return 'bg-blue-100 border-blue-300';
     case 'number_designer':
@@ -38,7 +44,7 @@ const roleColorClass = computed(() => {
 });
 
 const roleBadgeClass = computed(() => {
-  switch (props.message.agentRole) {
+  switch (normalizedRole.value) {
     case 'system_designer':
       return 'bg-blue-500';
     case 'number_designer':
@@ -61,7 +67,7 @@ const roleBadgeClass = computed(() => {
           roleBadgeClass,
         ]"
       >
-        {{ agent?.name?.charAt(0) ?? '?' }}
+        {{ displayName.charAt(0) ?? '?' }}
       </div>
     </div>
 
@@ -69,7 +75,7 @@ const roleBadgeClass = computed(() => {
     <div class="flex-1 min-w-0">
       <!-- Header -->
       <div class="flex items-center gap-2 mb-1">
-        <span class="font-medium text-gray-900">{{ agent?.name ?? 'Unknown' }}</span>
+        <span class="font-medium text-gray-900">{{ displayName }}</span>
         <span class="text-xs text-gray-500">{{ formattedTime }}</span>
       </div>
 

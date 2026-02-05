@@ -7,7 +7,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Generic, Optional, TypeVar
+from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -31,7 +31,7 @@ class Discussion:
     project_id: str
     topic: str
     messages: list[Message] = field(default_factory=list)
-    summary: Optional[str] = None
+    summary: str | None = None
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
@@ -70,7 +70,7 @@ class MemoryStore(ABC, Generic[T]):
         pass
 
     @abstractmethod
-    def load(self, item_id: str) -> Optional[T]:
+    def load(self, item_id: str) -> T | None:
         """
         加载记录
 

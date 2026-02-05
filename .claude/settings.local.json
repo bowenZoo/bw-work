@@ -34,7 +34,10 @@
       "Skill(bwf-dev:*)",
       "Bash(git init:*)",
       "Bash(source:*)",
-      "Bash(git show:*)"
+      "Bash(git show:*)",
+      "WebFetch(domain:docs.kie.ai)",
+      "WebFetch(domain:wenwen-ai.apifox.cn)",
+      "WebFetch(domain:docs.evolink.ai)"
     ]
   }
 }

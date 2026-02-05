@@ -1,13 +1,19 @@
 """FastAPI application entry point."""
 
 import asyncio
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routes import discussion_router, memory_router
+from src.api.routes import (
+    discussion_router,
+    document_router,
+    intervention_router,
+    memory_router,
+    monitoring_router,
+)
 from src.api.websocket import connection_manager, websocket_router
 from src.api.websocket.manager import set_event_loop
 from src.config.settings import settings
@@ -54,5 +60,8 @@ async def health_check() -> dict[str, str]:
 
 # Include routers
 app.include_router(discussion_router)
+app.include_router(document_router)
+app.include_router(intervention_router)
 app.include_router(memory_router)
+app.include_router(monitoring_router)
 app.include_router(websocket_router)

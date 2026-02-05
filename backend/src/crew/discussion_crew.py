@@ -1,8 +1,12 @@
 """Discussion Crew - Orchestrates multi-agent design discussions."""
 
 import logging
+import threading
+import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable
+from enum import Enum
+from typing import Any
 from uuid import uuid4
 
 from crewai import Crew, Process, Task
@@ -22,6 +26,91 @@ from src.memory.discussion_memory import DiscussionMemory
 from src.monitoring.langfuse_client import create_trace
 
 logger = logging.getLogger(__name__)
+
+
+class DiscussionState(str, Enum):
+    """State of a discussion for pause/resume functionality."""
+
+    RUNNING = "running"
+    PAUSED = "paused"
+    FINISHED = "finished"
+
+
+# Global registry for discussion states and injected messages
+# Key: discussion_id, Value: dict with state and injected messages
+_discussion_states: dict[str, dict] = {}
+_state_lock = threading.Lock()
+
+
+def get_discussion_state(discussion_id: str) -> dict | None:
+    """Get the state of a discussion.
+
+    Args:
+        discussion_id: The discussion ID.
+
+    Returns:
+        Discussion state dict or None if not found.
+    """
+    with _state_lock:
+        return _discussion_states.get(discussion_id)
+
+
+def set_discussion_state(discussion_id: str, state: DiscussionState) -> None:
+    """Set the state of a discussion.
+
+    Args:
+        discussion_id: The discussion ID.
+        state: The new state.
+    """
+    with _state_lock:
+        if discussion_id not in _discussion_states:
+            _discussion_states[discussion_id] = {
+                "state": state,
+                "injected_messages": [],
+                "current_task_index": 0,
+            }
+        else:
+            _discussion_states[discussion_id]["state"] = state
+
+
+def add_injected_message(discussion_id: str, message: dict) -> None:
+    """Add an injected message to a discussion.
+
+    Args:
+        discussion_id: The discussion ID.
+        message: The message to inject.
+    """
+    with _state_lock:
+        if discussion_id in _discussion_states:
+            _discussion_states[discussion_id]["injected_messages"].append(message)
+
+
+def get_and_clear_injected_messages(discussion_id: str) -> list[dict]:
+    """Get and clear injected messages for a discussion.
+
+    Args:
+        discussion_id: The discussion ID.
+
+    Returns:
+        List of injected messages.
+    """
+    with _state_lock:
+        if discussion_id in _discussion_states:
+            messages = _discussion_states[discussion_id]["injected_messages"]
+            _discussion_states[discussion_id]["injected_messages"] = []
+            return messages
+        return []
+
+
+def cleanup_discussion_state(discussion_id: str) -> None:
+    """Clean up discussion state when finished.
+
+    Args:
+        discussion_id: The discussion ID.
+    """
+    with _state_lock:
+        if discussion_id in _discussion_states:
+            del _discussion_states[discussion_id]
 
 
 class DiscussionCrew:
@@ -76,6 +165,10 @@ class DiscussionCrew:
         self._task_agent_roles: list[str] = []
         self._task_index = 0
 
+        # Pause/resume state
+        self._pause_check_interval = 0.5  # seconds
+        self._pause_timeout = 30 * 60  # 30 minutes auto-finish timeout
+
     @property
     def agents(self) -> list[Any]:
         """Get all agents in the crew."""
@@ -95,6 +188,141 @@ class DiscussionCrew:
         """Reset the task sequence tracking for status updates."""
         self._task_agent_roles = []
         self._task_index = 0
+
+    def _check_pause_and_wait(self) -> list[dict]:
+        """Check if discussion is paused and wait if so.
+
+        This method blocks until the discussion is resumed or times out.
+        It's called between agent turns to allow human intervention.
+
+        Returns:
+            List of injected messages to incorporate into the discussion.
+        """
+        state_info = get_discussion_state(self._discussion_id)
+        if state_info is None:
+            return []
+
+        if state_info["state"] != DiscussionState.PAUSED:
+            return []
+
+        # Broadcast pause status
+        self._broadcast_discussion_event("discussion_paused")
+
+        # Wait for resume or timeout
+        start_time = time.time()
+        while True:
+            state_info = get_discussion_state(self._discussion_id)
+            if state_info is None:
+                break
+
+            if state_info["state"] == DiscussionState.RUNNING:
+                # Resumed - get injected messages
+                injected = get_and_clear_injected_messages(self._discussion_id)
+                self._broadcast_discussion_event("discussion_resumed")
+                return injected
+
+            if state_info["state"] == DiscussionState.FINISHED:
+                # Manually finished while paused
+                break
+
+            # Check timeout
+            if time.time() - start_time > self._pause_timeout:
+                logger.warning(
+                    "Discussion %s paused timeout, auto-finishing",
+                    self._discussion_id,
+                )
+                set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
+                break
+
+            time.sleep(self._pause_check_interval)
+
+        return []
+
+    def _inject_user_messages(self, messages: list[dict]) -> None:
+        """Inject user messages into the discussion context.
+
+        Args:
+            messages: List of injected message dicts.
+        """
+        for msg in messages:
+            # Record to memory
+            self._record_message(
+                agent_role="User",
+                content=msg.get("content", ""),
+            )
+            # Broadcast the user message
+            self._broadcast_message(
+                agent_role="User",
+                content=msg.get("content", ""),
+            )
+
+    def request_pause(self) -> bool:
+        """Request to pause the discussion.
+
+        Returns:
+            True if pause request was accepted.
+        """
+        state_info = get_discussion_state(self._discussion_id)
+        if state_info is None:
+            # Initialize state if not exists
+            set_discussion_state(self._discussion_id, DiscussionState.PAUSED)
+            return True
+
+        if state_info["state"] == DiscussionState.RUNNING:
+            set_discussion_state(self._discussion_id, DiscussionState.PAUSED)
+            return True
+
+        return False
+
+    def request_resume(self) -> bool:
+        """Request to resume the discussion.
+
+        Returns:
+            True if resume request was accepted.
+        """
+        state_info = get_discussion_state(self._discussion_id)
+        if state_info is None:
+            return False
+
+        if state_info["state"] == DiscussionState.PAUSED:
+            set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
+            return True
+
+        return False
+
+    def inject_message(self, content: str) -> bool:
+        """Inject a user message into the discussion.
+
+        Args:
+            content: The message content.
+
+        Returns:
+            True if injection was successful.
+        """
+        state_info = get_discussion_state(self._discussion_id)
+        if state_info is None:
+            return False
+
+        message = {
+            "role": "user",
+            "content": content,
+            "source": "intervention",
+            "timestamp": datetime.now().isoformat(),
+            "save_to_memory": True,
+        }
+        add_injected_message(self._discussion_id, message)
+        return True
+
+    def is_paused(self) -> bool:
+        """Check if the discussion is paused.
+
+        Returns:
+            True if paused.
+        """
+        state_info = get_discussion_state(self._discussion_id)
+        if state_info is None:
+            return False
+        return state_info["state"] == DiscussionState.PAUSED
 
     def _load_history_context(self, topic: str) -> str:
         """Load historical context related to the topic.
@@ -389,14 +617,19 @@ class DiscussionCrew:
             self._broadcast_message(agent_role, str(task_output))
             self._broadcast_status(agent_role, AgentStatus.IDLE)
 
+            # Record message to memory
+            self._record_message(agent_role, str(task_output))
+
+            # Check for pause between agent turns (intervention checkpoint)
+            injected_messages = self._check_pause_and_wait()
+            if injected_messages:
+                self._inject_user_messages(injected_messages)
+
             # Broadcast thinking status for next agent, if any
             self._task_index += 1
             if self._task_index < len(self._task_agent_roles):
                 next_role = self._task_agent_roles[self._task_index]
                 self._broadcast_status(next_role, AgentStatus.THINKING)
-
-            # Record message to memory
-            self._record_message(agent_role, str(task_output))
 
             if self._callback is not None:
                 try:
@@ -432,13 +665,20 @@ class DiscussionCrew:
         topic: str,
         rounds: int,
     ) -> tuple[Any | None, Callable[[TaskOutput], None]]:
-        """Create a root trace span and task callback."""
+        """Create a root trace span and task callback.
+
+        Uses discussion_id as session_id to enable cost tracking and
+        trace aggregation per discussion.
+        """
         trace_span = create_trace(
             name="discussion",
+            session_id=self._discussion_id,  # Enable per-discussion cost tracking
             metadata={
                 "topic": topic,
                 "rounds": rounds,
                 "agents": [agent.role for agent in self._agents],
+                "discussion_id": self._discussion_id,
+                "project_id": self._project_id,
             },
         )
         return trace_span, self._build_task_callback(trace_span)
@@ -485,6 +725,9 @@ class DiscussionCrew:
         # Initialize discussion record
         self._init_discussion(topic)
 
+        # Initialize discussion state for pause/resume
+        set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
+
         tasks = self.create_discussion_tasks(topic, rounds)
         trace_span, task_callback = self._prepare_trace(topic, rounds)
 
@@ -508,6 +751,10 @@ class DiscussionCrew:
             # Save discussion to memory with summary
             self._save_discussion(summary=str(result))
 
+            # Mark discussion as finished and clean up
+            set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
+            cleanup_discussion_state(self._discussion_id)
+
             # Broadcast completion status for all agents
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
@@ -520,6 +767,8 @@ class DiscussionCrew:
             self._broadcast_discussion_event("discussion_failed")
             # Save discussion even on error (without summary)
             self._save_discussion()
+            # Clean up discussion state
+            cleanup_discussion_state(self._discussion_id)
             # Broadcast idle status on error
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
@@ -544,6 +793,9 @@ class DiscussionCrew:
         # Initialize discussion record
         self._init_discussion(topic)
 
+        # Initialize discussion state for pause/resume
+        set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
+
         tasks = self.create_discussion_tasks(topic, rounds)
         trace_span, task_callback = self._prepare_trace(topic, rounds)
 
@@ -567,6 +819,10 @@ class DiscussionCrew:
             # Save discussion to memory with summary
             self._save_discussion(summary=str(result))
 
+            # Mark discussion as finished and clean up
+            set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
+            cleanup_discussion_state(self._discussion_id)
+
             # Broadcast completion status for all agents
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
@@ -579,6 +835,8 @@ class DiscussionCrew:
             self._broadcast_discussion_event("discussion_failed")
             # Save discussion even on error (without summary)
             self._save_discussion()
+            # Clean up discussion state
+            cleanup_discussion_state(self._discussion_id)
             # Broadcast idle status on error
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)

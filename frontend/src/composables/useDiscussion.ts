@@ -1,9 +1,10 @@
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDiscussionStore, useAgentsStore } from '@/stores';
 import { useWebSocket } from './useWebSocket';
 import * as discussionApi from '@/api/discussion';
 import type { Discussion, Message, ServerMessage } from '@/types';
+import { normalizeAgentRole } from '@/utils/agents';
 
 export function useDiscussion() {
   const router = useRouter();
@@ -23,7 +24,7 @@ export function useDiscussion() {
     lastMessage,
     connect,
     disconnect,
-  } = useWebSocket(discussionId.value);
+  } = useWebSocket(discussionId);
 
   /**
    * Create a new discussion with the given topic
@@ -103,19 +104,36 @@ export function useDiscussion() {
     discussionStore.setError(null);
 
     try {
-      const response = await discussionApi.getDiscussion(id);
+      const [statusResponse, messagesResponse] = await Promise.all([
+        discussionApi.getDiscussionStatus(id),
+        discussionApi.getDiscussionMessages(id).catch(() => null),
+      ]);
+
+      const messages: Message[] = (messagesResponse?.messages ?? []).map((msg) => {
+        const normalizedRole =
+          normalizeAgentRole(msg.agent_id) ?? normalizeAgentRole(msg.agent_role);
+        return {
+          id: msg.id,
+          agentId: normalizedRole ?? msg.agent_id,
+          agentRole: normalizedRole ?? msg.agent_role,
+          content: msg.content,
+          timestamp: msg.timestamp,
+        };
+      });
+
+      const topic = messagesResponse?.discussion.topic ?? statusResponse.topic;
 
       const discussion: Discussion = {
-        id: response.id,
-        topic: response.topic,
-        messages: response.messages,
-        status: response.status,
+        id: statusResponse.id,
+        topic,
+        messages,
+        status: statusResponse.status,
       };
 
       discussionStore.setDiscussion(discussion);
 
       // Connect WebSocket if discussion is in progress
-      if (discussion.status === 'in_progress') {
+      if (discussion.status === 'running') {
         connect();
       }
 
@@ -138,30 +156,45 @@ export function useDiscussion() {
     switch (message.type) {
       case 'message':
         if (message.data.agent_id && message.data.content) {
+          const normalizedRole =
+            normalizeAgentRole(message.data.agent_id) ??
+            normalizeAgentRole(message.data.agent_role);
+          const agentRole = normalizedRole ?? message.data.agent_role ?? message.data.agent_id;
           const newMessage: Message = {
             id: `${message.data.discussion_id}-${Date.now()}`,
-            agentId: message.data.agent_id,
-            agentRole: message.data.agent_role ?? '',
+            agentId: agentRole,
+            agentRole,
             content: message.data.content,
             timestamp: message.data.timestamp,
           };
           discussionStore.addMessage(newMessage);
-
-          // Update agent status
-          if (message.data.agent_role) {
-            agentsStore.setAgentStatusByRole(message.data.agent_role, 'idle');
-          }
         }
         break;
 
       case 'status':
+        if (message.data.agent_role === 'discussion' || message.data.agent_id === 'discussion') {
+          if (message.data.content === 'discussion_completed') {
+            discussionStore.endDiscussion();
+          }
+          if (message.data.content === 'discussion_failed') {
+            discussionStore.setStatus('failed');
+          }
+          break;
+        }
+
         if (message.data.agent_role && message.data.status) {
-          agentsStore.setAgentStatusByRole(message.data.agent_role, message.data.status);
+          const normalizedRole =
+            normalizeAgentRole(message.data.agent_role) ??
+            normalizeAgentRole(message.data.agent_id);
+          if (normalizedRole) {
+            agentsStore.setAgentStatusByRole(normalizedRole, message.data.status);
+          }
         }
         break;
 
       case 'error':
         discussionStore.setError(message.data.content ?? 'Unknown error');
+        discussionStore.setStatus('failed');
         break;
     }
   }
@@ -183,6 +216,12 @@ export function useDiscussion() {
     agentsStore.resetAllAgentsStatus();
     discussionStore.clearDiscussion();
   }
+
+  watch(lastMessage, (message) => {
+    if (message) {
+      handleMessage(message);
+    }
+  });
 
   return {
     // State
