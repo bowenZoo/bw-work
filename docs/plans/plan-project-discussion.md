@@ -16,6 +16,9 @@
 7. 策划案生成 (F-45) - 每个模块讨论后生成结构化策划案
 8. 策划案汇总 (F-46) - 所有模块完成后生成项目级汇总文档
 9. 讨论进度追踪 (F-47) - 实时显示讨论进度和状态
+10. 模块依赖校验与自动排序 - 保证顺序合法
+11. 长任务可恢复 - 服务重启后可继续批量讨论
+12. 存储与推送规模控制 - 控制断点体积与 WS 频率
 
 ## 前置依赖
 
@@ -31,6 +34,7 @@
 backend/src/
 ├── project/                          # 项目级讨论模块 (新增)
 │   ├── __init__.py
+│   ├── registry.py                   # 项目/批量讨论注册表（持久化）
 │   ├── gdd/                          # GDD 处理
 │   │   ├── __init__.py
 │   │   ├── parser.py                 # GDD 解析器 (统一入口)
@@ -43,6 +47,7 @@ backend/src/
 │   ├── discussion/                   # 批量讨论
 │   │   ├── __init__.py
 │   │   ├── batch_runner.py           # 批量讨论执行器
+│   │   ├── executor.py               # 后台执行与恢复
 │   │   ├── checkpoint.py             # 断点管理
 │   │   └── project_memory.py         # 项目级记忆
 │   ├── output/                       # 输出生成
@@ -84,29 +89,40 @@ data/projects/{project_id}/
 | 模块识别 | LLM (Claude/GPT) | 需要语义理解能力 |
 | 进度追踪 | WebSocket | 实时推送 |
 
+> 说明：扫描件 PDF 不支持 OCR（如需支持，后续可引入 Tesseract）。
+
 ### 状态机
 
-**项目讨论状态**:
+**项目讨论状态**（与现有 `pending/running/completed/failed` 对齐）:
 ```
-PENDING → IN_PROGRESS → COMPLETED
-              ↓              ↓
-           PAUSED        ERROR
-              ↓
-          IN_PROGRESS (恢复)
+pending → running → completed
+             ↓          ↓
+          paused      failed
+             ↓
+          running (恢复)
 ```
 
 **模块讨论状态**:
 ```
-PENDING → IN_PROGRESS → COMPLETED
-              ↓              ↓
-           PAUSED        SKIPPED
-              ↓           (用户跳过)
-          IN_PROGRESS
+pending → running → completed
+             ↓          ↓
+          paused      skipped
+             ↓          ↓
+          running     failed
 ```
 
 ### 数据模型
 
 ```python
+# 项目
+@dataclass
+class Project:
+    id: str
+    name: str
+    description: str | None
+    created_at: datetime
+    updated_at: datetime
+
 # GDD 文档
 @dataclass
 class GDDDocument:
@@ -114,8 +130,11 @@ class GDDDocument:
     project_id: str
     filename: str
     upload_time: datetime
-    raw_content: str                  # 原始文本内容
-    parsed_content: ParsedGDD
+    raw_content_path: str             # 原始文本路径（避免大文本入库）
+    parsed_content_path: str          # 解析结果路径
+    content_hash: str                 # 文件 hash，用于缓存/版本识别
+    parser_version: str               # 解析器版本
+    parsed_content: Optional[ParsedGDD]
     status: Literal["uploading", "parsing", "ready", "error"]
     error: Optional[str]
 
@@ -143,7 +162,7 @@ class ProjectDiscussion:
     gdd_id: str
     selected_modules: List[str]
     module_order: List[str]
-    status: Literal["pending", "in_progress", "paused", "completed", "error"]
+    status: Literal["pending", "running", "paused", "completed", "failed"]
     progress: DiscussionProgress
     checkpoint: Optional[DiscussionCheckpoint]
     created_at: datetime
@@ -173,7 +192,8 @@ class ModuleState:
     module_id: str
     discussion_id: str
     round: int
-    messages: List[Message]
+    message_count: int
+    last_message_id: Optional[str]    # 仅保存游标，不保存全量消息
 
 @dataclass
 class CompletedModule:
@@ -187,7 +207,7 @@ class ModuleDiscussionResult:
     module_id: str
     module_name: str
     discussion_id: str
-    status: Literal["completed", "skipped", "error"]
+    status: Literal["completed", "skipped", "failed"]
     design_doc: DesignDoc
     key_decisions: List[Decision]
     duration_minutes: float
@@ -202,6 +222,10 @@ class DesignDoc:
 ```
 
 ### WebSocket 消息格式
+
+**WebSocket 路由建议**:
+- 项目级进度：`/ws/projects/{project_id}`
+- 模块级消息复用现有 `/ws/{discussion_id}`（与单讨论兼容）
 
 ```typescript
 // 项目讨论开始
@@ -229,7 +253,9 @@ class DesignDoc:
   module_id: string,
   round: number,
   speaker: string,
-  message: string
+  message_id: string,
+  summary: string,         // 默认推送摘要
+  message?: string         // 可选：按需推送全文
 }
 
 // 模块讨论完成
@@ -274,12 +300,33 @@ class DesignDoc:
 
 ---
 
+### Task 8.0: 实现项目实体与最小项目 API
+
+**执行**:
+- 创建 `backend/src/project/registry.py`
+- 定义 `Project` 模型与持久化（SQLite 或 JSON 索引）
+- 实现 `POST /api/projects` 创建项目
+- 实现 `GET /api/projects` 列表
+- 实现 `GET /api/projects/{project_id}` 获取详情
+- 约束 `project_id` 规则（可读 slug 或 UUID）
+
+**验证**:
+- `cd backend && python -c "from src.project.registry import ProjectRegistry"` → exit_code == 0
+- 项目创建/查询流程正常
+
+**输出文件**:
+- `backend/src/project/registry.py`
+- `backend/src/api/routes/project.py` (更新)
+
+---
+
 ### Task 8.1: 定义项目讨论数据模型
 
 **执行**:
 - 创建 `backend/src/project/__init__.py`
 - 创建 `backend/src/project/models.py`
 - 定义数据模型：
+  - `Project` - 项目实体
   - `GDDDocument` - GDD 文档
   - `ParsedGDD` - 解析后的 GDD
   - `GDDModule` - 识别的模块
@@ -305,6 +352,7 @@ class DesignDoc:
 - 创建 `backend/src/project/gdd/parsers/pdf.py` - PDF 解析 (PyMuPDF)
 - 创建 `backend/src/project/gdd/parsers/docx.py` - Word 解析 (python-docx)
 - 每个解析器返回统一的 `ParsedText` 结构
+- PDF 解析器检测“文本过少”并提示可能为扫描件（不支持 OCR）
 
 **接口定义**:
 ```python
@@ -332,6 +380,7 @@ class ParsedText:
 - Markdown 解析测试通过
 - PDF 解析测试通过
 - Word 解析测试通过
+- 扫描件 PDF 能返回可理解的错误提示
 
 **输出文件**:
 - `backend/src/project/gdd/__init__.py`
@@ -352,6 +401,7 @@ class ParsedText:
   - 调用格式解析器获取文本
   - 保存原始文件到 `data/projects/{project_id}/gdd/original/`
   - 保存解析结果到 `data/projects/{project_id}/gdd/parsed/`
+  - 计算文件 hash（用于缓存与版本识别）
 - 实现文件大小限制（10MB）
 
 **验证**:
@@ -374,7 +424,7 @@ class ParsedText:
   - 分析模块间依赖关系
   - 预估讨论轮数
 - 定义识别 Prompt 模板
-- 实现结果缓存（避免重复识别）
+- 实现结果缓存（key = content_hash + prompt_version）
 
 **Prompt 设计要点**:
 - 输入：GDD 完整文本 + 章节结构
@@ -400,7 +450,9 @@ class ParsedText:
 - 实现 `POST /api/projects/{project_id}/gdd` - GDD 上传
   - 接收 multipart/form-data 文件
   - 验证文件格式和大小
+  - 验证 project 存在
   - 异步解析和模块识别
+  - 扫描件 PDF 返回明确错误（提示需可复制文本）
   - 返回 gdd_id 和解析状态
 - 实现 `GET /api/projects/{project_id}/gdd/{gdd_id}` - 获取 GDD 状态
 - 实现 `GET /api/projects/{project_id}/gdd/{gdd_id}/modules` - 获取识别的模块
@@ -456,7 +508,7 @@ Response:
   - 维护项目术语表
   - 存储约束条件
   - 提供记忆检索接口（供 Agent 使用）
-- 实现一致性检查接口
+- 实现一致性检查接口（检测跨模块冲突）
 
 **记忆类型**:
 | 类型 | 内容 | 用途 |
@@ -489,8 +541,9 @@ Response:
   - 当前模块索引
   - 当前讨论轮数
   - 已完成模块列表
-  - 消息历史
+  - 消息游标（last_message_id / message_count），不保存全文
 - 实现原子写（写临时文件后 rename，防止中断导致损坏）
+- 断点体积限制与保留策略（按数量/时间）
 
 **验证**:
 - `cd backend && python -c "from src.project.discussion.checkpoint import CheckpointManager"` → exit_code == 0
@@ -518,22 +571,26 @@ Response:
     3. 保存断点状态
   - 支持暂停/恢复
   - 集成 WebSocket 进度推送
+- 集成后台执行器 `executor.py`：
+  - 任务持久化注册（可恢复）
+  - 服务启动时扫描 pending/running 任务并恢复
+  - 并发数与队列长度可配置
 
 **状态机实现**:
 ```python
 class BatchRunnerState(Enum):
     PENDING = "pending"
-    IN_PROGRESS = "in_progress"
+    RUNNING = "running"
     PAUSED = "paused"
     COMPLETED = "completed"
-    ERROR = "error"
+    FAILED = "failed"
 
 # 状态转换
-PENDING → IN_PROGRESS (start)
-IN_PROGRESS → PAUSED (pause)
-IN_PROGRESS → COMPLETED (all modules done)
-IN_PROGRESS → ERROR (unrecoverable error)
-PAUSED → IN_PROGRESS (resume)
+PENDING → RUNNING (start)
+RUNNING → PAUSED (pause)
+RUNNING → COMPLETED (all modules done)
+RUNNING → FAILED (unrecoverable error)
+PAUSED → RUNNING (resume)
 ```
 
 **验证**:
@@ -543,6 +600,7 @@ PAUSED → IN_PROGRESS (resume)
 
 **输出文件**:
 - `backend/src/project/discussion/batch_runner.py`
+- `backend/src/project/discussion/executor.py`
 - `backend/tests/test_batch_runner.py`
 
 ---
@@ -552,8 +610,11 @@ PAUSED → IN_PROGRESS (resume)
 **执行**:
 - 更新 `backend/src/api/routes/project.py`
 - 实现 `POST /api/projects/{project_id}/discussions/batch` - 启动批量讨论
+  - 校验模块依赖关系（拓扑排序）
+  - 若未提供 order，则按依赖自动排序
 - 实现 `POST /api/projects/{project_id}/discussions/{id}/pause` - 暂停讨论
 - 实现 `POST /api/projects/{project_id}/discussions/{id}/resume` - 恢复讨论
+- 实现 `POST /api/projects/{project_id}/discussions/{id}/skip` - 跳过当前模块
 - 实现 `GET /api/projects/{project_id}/discussions/{id}` - 获取讨论状态
 - 实现 `GET /api/projects/{project_id}/checkpoints` - 获取断点列表
 
@@ -564,7 +625,7 @@ Request:
 {
   "gdd_id": "gdd_001",
   "modules": ["combat", "economy", "progression"],
-  "order": ["combat", "economy", "progression"]
+  "order": ["combat", "economy", "progression"] // 可选，缺省自动拓扑排序
 }
 Response:
 {
@@ -586,6 +647,14 @@ Response:
   "status": "resumed",
   "current_module": "economy",
   "completed_modules": 1
+}
+
+POST /api/projects/{project_id}/discussions/{id}/skip
+Response:
+{
+  "status": "skipped",
+  "skipped_module": "economy",
+  "current_module": "progression"
 }
 ```
 
@@ -729,7 +798,7 @@ Response:
 - 实现 `GET /api/projects/{project_id}/design/{module_id}` - 获取模块策划案
 - 实现 `GET /api/projects/{project_id}/design/export` - 导出策划案 (Markdown/PDF)
   - Markdown: 直接返回
-  - PDF: 使用 weasyprint 或 markdown-pdf 转换
+  - PDF: 优先使用 markdown-pdf（如使用 weasyprint 需声明系统依赖）
 
 **验证**:
 - API 接口正常响应
@@ -776,6 +845,7 @@ Response:
   - 显示模块依赖关系
   - 显示预估总耗时
   - 智能排序建议（按依赖关系）
+  - 校验当前顺序是否合法（依赖冲突提示）
 
 **验证**:
 - 模块列表显示正确
@@ -867,6 +937,8 @@ Response:
   - `DiscussionPausedEvent`
 - 更新 `backend/src/api/websocket/handlers.py`
 - 实现 WebSocket 房间机制（按项目隔离）
+- 进度推送节流（如 200-500ms）以避免洪泛
+- 保持 `/ws/{discussion_id}` 兼容现有讨论流
 
 **验证**:
 - WebSocket 事件正确推送
@@ -901,7 +973,10 @@ Response:
 - GDD 解析流程（Markdown/PDF/Word）
 - 模块识别准确性
 - 批量讨论完整流程
+- 依赖校验与自动排序
 - 断点保存/恢复
+- 跳过模块流程
+- 服务重启后的任务恢复
 - 策划案生成格式
 - 并发安全性
 
@@ -922,16 +997,21 @@ Response:
   - 添加 PyMuPDF (fitz)
   - 添加 python-docx
   - 添加 markdown-it-py
+  - 如需 PDF 导出：添加 weasyprint（并记录系统依赖）
 - 更新 `backend/src/config/settings.py`
   - 添加项目讨论相关配置
     ```python
     # GDD 配置
     GDD_MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
     GDD_SUPPORTED_FORMATS: List[str] = [".md", ".pdf", ".docx"]
+    GDD_TEXT_MIN_CHARS: int = 500             # 检测扫描件/无文本
 
     # 讨论配置
     PROJECT_DISCUSSION_MAX_ROUNDS_PER_MODULE: int = 10
     PROJECT_DISCUSSION_CHECKPOINT_RETENTION: int = 5
+    PROJECT_DISCUSSION_CHECKPOINT_MESSAGE_LIMIT: int = 2000
+    PROJECT_DISCUSSION_WS_THROTTLE_MS: int = 300
+    PROJECT_DISCUSSION_MAX_CONCURRENCY: int = 2
 
     # 输出配置
     DESIGN_DOC_OUTPUT_PATH: str = "data/projects/{project_id}/design"
@@ -959,6 +1039,10 @@ Response:
 - [ ] 策划案输出到 `data/projects/{project_id}/design/` 目录 (Spec AC-37)
 - [ ] 策划案只包含策划内容，不含技术规格 (Spec AC-38)
 - [ ] 支持导出策划案为 Markdown/PDF 格式 (Spec AC-39)
+- [ ] 批量讨论顺序符合模块依赖关系（自动排序或拒绝非法顺序）
+- [ ] 可跳过模块并继续后续讨论
+- [ ] 服务重启后可从断点恢复批量讨论
+- [ ] WebSocket 进度推送可节流，避免洪泛
 - [ ] 所有单元测试和集成测试通过
 
 ## 暂不实现（P2 或后续迭代）
