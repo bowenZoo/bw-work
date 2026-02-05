@@ -20,6 +20,14 @@ _discussion_memory = DiscussionMemory(data_dir="data/projects")
 _doc_generator = DocumentGenerator(data_dir="data/projects")
 
 
+def _extract_discussion_id(content: str) -> str | None:
+    """Extract discussion_id from document metadata header."""
+    for line in content.splitlines()[:20]:
+        if line.lower().startswith("> source discussion:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
 class GenerateDocRequest(BaseModel):
     """Request body for generating a document."""
 
@@ -163,8 +171,10 @@ async def get_document(document_id: str) -> DocumentResponse:
             if content is None:
                 continue
 
+            discussion_id = _extract_discussion_id(content)
+
             return DocumentResponse(
-                discussion_id=document_id.split("-")[0] if "-" in document_id else document_id,
+                discussion_id=discussion_id or document_id,
                 project_id=project_dir.name,
                 title=f"{project_dir.name} - Planning Document",
                 version=document_id,

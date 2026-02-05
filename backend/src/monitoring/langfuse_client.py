@@ -1,9 +1,16 @@
 """Langfuse client for observability and tracing."""
 
 import logging
-from typing import Any
+from contextlib import contextmanager, nullcontext
+from typing import Any, Iterator
 
-from langfuse import Langfuse, observe
+try:
+    from langfuse import Langfuse, observe, propagate_attributes
+except ImportError:  # pragma: no cover - fallback for older SDKs
+    from langfuse import Langfuse, observe
+
+    def propagate_attributes(**_kwargs):  # type: ignore[override]
+        return nullcontext()
 
 from src.config.settings import settings
 
@@ -109,22 +116,74 @@ def create_trace(
     if client is None:
         return None
 
-    try:
-        if not hasattr(client, "start_span"):
-            logger.warning("Langfuse client missing start_span; tracing disabled.")
+    if hasattr(client, "start_span"):
+        try:
+            span = client.start_span(name=name, metadata=metadata or {})
+            if hasattr(span, "update_trace"):
+                span.update_trace(
+                    name=name,
+                    session_id=session_id,
+                    user_id=user_id,
+                    metadata=metadata or {},
+                )
+            return span
+        except Exception as e:
+            logger.error(f"Failed to create trace: {e}")
             return None
 
-        span = client.start_span(name=name, metadata=metadata or {})
-        span.update_trace(
-            name=name,
-            session_id=session_id,
-            user_id=user_id,
-            metadata=metadata or {},
-        )
-        return span
-    except Exception as e:
-        logger.error(f"Failed to create trace: {e}")
-        return None
+    logger.warning(
+        "create_trace is deprecated for the current Langfuse SDK; "
+        "use start_trace_context() instead."
+    )
+    return None
+
+
+def _stringify_metadata(metadata: dict[str, Any] | None) -> dict[str, str]:
+    """Ensure metadata values are strings for Langfuse propagation."""
+    if not metadata:
+        return {}
+    output: dict[str, str] = {}
+    for key, value in metadata.items():
+        if value is None:
+            continue
+        text = value if isinstance(value, str) else str(value)
+        if len(text) > 200:
+            text = text[:197] + "..."
+        output[str(key)] = text
+    return output
+
+
+@contextmanager
+def start_trace_context(
+    name: str,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Iterator[Any | None]:
+    """Start a Langfuse trace as the current observation context.
+
+    Uses the official start_as_current_observation + propagate_attributes flow.
+    """
+    client = init_langfuse()
+    if client is None or not hasattr(client, "start_as_current_observation"):
+        yield None
+        return
+
+    try:
+        with client.start_as_current_observation(as_type="span", name=name) as span:
+            if metadata:
+                span.update(metadata=metadata)
+
+            with propagate_attributes(
+                session_id=session_id,
+                user_id=user_id,
+                trace_name=name,
+                metadata=_stringify_metadata(metadata),
+            ):
+                yield span
+    except Exception as exc:
+        logger.error("Failed to start trace context: %s", exc)
+        yield None
 
 
 def record_agent_step(
@@ -153,18 +212,35 @@ def record_agent_step(
 
     try:
         step_name = f"{agent_role}:{step_type}"
-        child_span = trace_span.start_span(
-            name=step_name,
-            input=input_data or {},
-            metadata={
-                "agent_role": agent_role,
-                "step_type": step_type,
-                **(metadata or {}),
-            },
-        )
-        if output_data:
-            child_span.update(output=output_data)
-        child_span.end()
+        if hasattr(trace_span, "start_span"):
+            child_span = trace_span.start_span(
+                name=step_name,
+                input=input_data or {},
+                metadata={
+                    "agent_role": agent_role,
+                    "step_type": step_type,
+                    **(metadata or {}),
+                },
+            )
+            if output_data:
+                child_span.update(output=output_data)
+            child_span.end()
+            return child_span
+
+        client = get_langfuse_client()
+        if client is None or not hasattr(client, "start_as_current_observation"):
+            return None
+
+        with client.start_as_current_observation(as_type="span", name=step_name) as child_span:
+            child_span.update(
+                input=input_data or {},
+                output=output_data,
+                metadata={
+                    "agent_role": agent_role,
+                    "step_type": step_type,
+                    **(metadata or {}),
+                },
+            )
         return child_span
     except Exception as e:
         logger.debug(f"Failed to record agent step: {e}")
@@ -194,16 +270,33 @@ def record_decision_point(
         return None
 
     try:
-        child_span = trace_span.start_span(
-            name=f"{agent_role}:decision",
-            input={"reasoning": reasoning, "alternatives": alternatives or []},
-            metadata={
-                "agent_role": agent_role,
-                "step_type": "decision",
-            },
-        )
-        child_span.update(output=decision)
-        child_span.end()
+        span_name = f"{agent_role}:decision"
+        if hasattr(trace_span, "start_span"):
+            child_span = trace_span.start_span(
+                name=span_name,
+                input={"reasoning": reasoning, "alternatives": alternatives or []},
+                metadata={
+                    "agent_role": agent_role,
+                    "step_type": "decision",
+                },
+            )
+            child_span.update(output=decision)
+            child_span.end()
+            return child_span
+
+        client = get_langfuse_client()
+        if client is None or not hasattr(client, "start_as_current_observation"):
+            return None
+
+        with client.start_as_current_observation(as_type="span", name=span_name) as child_span:
+            child_span.update(
+                input={"reasoning": reasoning, "alternatives": alternatives or []},
+                output=decision,
+                metadata={
+                    "agent_role": agent_role,
+                    "step_type": "decision",
+                },
+            )
         return child_span
     except Exception as e:
         logger.debug(f"Failed to record decision point: {e}")
@@ -224,15 +317,13 @@ def get_session_cost(session_id: str) -> dict[str, Any] | None:
         return None
 
     try:
-        # Langfuse API to get session data
-        # Note: This is a simplified implementation. The actual Langfuse API
-        # may require different methods depending on the version.
+        if not hasattr(client, "api"):
+            raise RuntimeError("Langfuse client missing api interface")
 
-        # Try to fetch traces for this session
-        # In Langfuse v3, we need to use the API directly
-        traces = client.fetch_traces(session_id=session_id)
+        traces_response = client.api.trace.list(session_id=session_id, limit=100)
+        trace_items = getattr(traces_response, "data", traces_response) or []
 
-        if not traces or not hasattr(traces, "data"):
+        if not trace_items:
             return {
                 "discussion_id": session_id,
                 "total_tokens": 0,
@@ -243,27 +334,48 @@ def get_session_cost(session_id: str) -> dict[str, Any] | None:
                 "status": "no_data",
             }
 
-        # Aggregate token counts
         total_tokens = 0
         prompt_tokens = 0
         completion_tokens = 0
         model_breakdown: dict[str, int] = {}
 
-        for trace in traces.data:
-            if hasattr(trace, "observations"):
-                for obs in trace.observations:
-                    if hasattr(obs, "usage") and obs.usage:
-                        usage = obs.usage
-                        total = getattr(usage, "total", 0) or 0
-                        prompt = getattr(usage, "input", 0) or 0
-                        completion = getattr(usage, "output", 0) or 0
+        for trace in trace_items:
+            trace_id = getattr(trace, "id", None) or trace.get("id")
+            if not trace_id:
+                continue
 
-                        total_tokens += total
-                        prompt_tokens += prompt
-                        completion_tokens += completion
+            observations_response = client.api.observations.get_many(
+                trace_id=trace_id,
+                type="GENERATION",
+                limit=200,
+            )
+            observations = getattr(observations_response, "data", observations_response) or []
 
-                        model = getattr(obs, "model", "unknown")
-                        model_breakdown[model] = model_breakdown.get(model, 0) + total
+            for obs in observations:
+                usage = getattr(obs, "usage", None) or obs.get("usage")
+                if not usage:
+                    continue
+
+                total = getattr(usage, "total", None)
+                if total is None and isinstance(usage, dict):
+                    total = usage.get("total", 0)
+                prompt = getattr(usage, "input", None)
+                if prompt is None and isinstance(usage, dict):
+                    prompt = usage.get("input", 0)
+                completion = getattr(usage, "output", None)
+                if completion is None and isinstance(usage, dict):
+                    completion = usage.get("output", 0)
+
+                total = total or 0
+                prompt = prompt or 0
+                completion = completion or 0
+
+                total_tokens += total
+                prompt_tokens += prompt
+                completion_tokens += completion
+
+                model = getattr(obs, "model", None) or obs.get("model") or "unknown"
+                model_breakdown[model] = model_breakdown.get(model, 0) + total
 
         return {
             "discussion_id": session_id,
@@ -324,6 +436,7 @@ __all__ = [
     "get_langfuse_client",
     "get_langfuse_handler",
     "create_trace",
+    "start_trace_context",
     "record_agent_step",
     "record_decision_point",
     "get_session_cost",

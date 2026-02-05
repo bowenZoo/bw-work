@@ -18,7 +18,7 @@ const agent = computed(() => {
   return role ? agentsStore.getAgentByRole(role) : undefined;
 });
 
-const displayName = computed(() => agent.value?.name ?? props.message.agentRole || 'Unknown');
+const displayName = computed(() => agent.value?.name ?? props.message.agentRole ?? 'Unknown');
 
 // Format timestamp
 const formattedTime = computed(() => {
@@ -63,11 +63,17 @@ const roleBadgeClass = computed(() => {
     <div class="flex-shrink-0">
       <div
         :class="[
-          'w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm',
+          'w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm overflow-hidden',
           roleBadgeClass,
         ]"
       >
-        {{ displayName.charAt(0) ?? '?' }}
+        <img
+          v-if="agent?.avatarUrl"
+          :src="agent.avatarUrl"
+          :alt="displayName"
+          class="w-full h-full object-cover"
+        />
+        <span v-else>{{ displayName.charAt(0) ?? '?' }}</span>
       </div>
     </div>
 

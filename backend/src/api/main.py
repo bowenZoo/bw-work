@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.api.routes import (
     discussion_router,
     document_router,
+    image_router,
     intervention_router,
     memory_router,
     monitoring_router,
@@ -61,6 +62,7 @@ async def health_check() -> dict[str, str]:
 # Include routers
 app.include_router(discussion_router)
 app.include_router(document_router)
+app.include_router(image_router)
 app.include_router(intervention_router)
 app.include_router(memory_router)
 app.include_router(monitoring_router)

@@ -4,6 +4,10 @@ import type { DiscussionSummary } from '@/types';
 import { getDiscussionHistory } from '@/api/discussion';
 import HistoryCard from './HistoryCard.vue';
 
+const props = defineProps<{
+  searchQuery?: string;
+}>();
+
 const emit = defineEmits<{
   select: [discussion: DiscussionSummary];
 }>();
@@ -19,7 +23,18 @@ const error = ref<string | null>(null);
 const PAGE_SIZE = 20;
 
 // Computed
-const isEmpty = computed(() => !isLoading.value && discussions.value.length === 0);
+const normalizedQuery = computed(() => (props.searchQuery ?? '').trim().toLowerCase());
+const filteredDiscussions = computed(() => {
+  if (!normalizedQuery.value) return discussions.value;
+
+  return discussions.value.filter((discussion) => {
+    const topic = discussion.topic?.toLowerCase() ?? '';
+    const summary = discussion.summary?.toLowerCase() ?? '';
+    return topic.includes(normalizedQuery.value) || summary.includes(normalizedQuery.value);
+  });
+});
+
+const isEmpty = computed(() => !isLoading.value && filteredDiscussions.value.length === 0);
 
 // Load discussions
 async function loadDiscussions(reset: boolean = false) {
@@ -110,8 +125,12 @@ defineExpose({
           d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
         />
       </svg>
-      <p class="text-lg font-medium">No discussions yet</p>
-      <p class="text-sm mt-1">Start a new discussion to see it here</p>
+      <p class="text-lg font-medium">
+        {{ normalizedQuery ? 'No matching discussions' : 'No discussions yet' }}
+      </p>
+      <p class="text-sm mt-1">
+        {{ normalizedQuery ? 'Try a different keyword' : 'Start a new discussion to see it here' }}
+      </p>
     </div>
 
     <!-- Discussion list -->
@@ -120,7 +139,7 @@ defineExpose({
       class="divide-y divide-gray-200"
     >
       <HistoryCard
-        v-for="discussion in discussions"
+        v-for="discussion in filteredDiscussions"
         :key="discussion.id"
         :discussion="discussion"
         @click="handleSelect(discussion)"

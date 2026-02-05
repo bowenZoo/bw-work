@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { DiscussionSummary } from '@/types';
+import { useAgentsStore } from '@/stores';
+import AgentAvatar from '@/components/agent/AgentAvatar.vue';
 
 const props = defineProps<{
   discussion: DiscussionSummary;
 }>();
+
+const agentsStore = useAgentsStore();
 
 // Format date
 const formattedDate = computed(() => {
@@ -38,36 +42,7 @@ const truncatedSummary = computed(() => {
   return summary.slice(0, 100) + '...';
 });
 
-// Agent avatars - mock data for now (in real app, would get from discussion metadata)
-const agentRoles = ['system_designer', 'number_designer', 'player_advocate'];
-
-// Get avatar color
-function getAvatarColor(role: string): string {
-  switch (role) {
-    case 'system_designer':
-      return 'bg-blue-500';
-    case 'number_designer':
-      return 'bg-green-500';
-    case 'player_advocate':
-      return 'bg-orange-500';
-    default:
-      return 'bg-gray-500';
-  }
-}
-
-// Get avatar initial
-function getAvatarInitial(role: string): string {
-  switch (role) {
-    case 'system_designer':
-      return 'S';
-    case 'number_designer':
-      return 'N';
-    case 'player_advocate':
-      return 'P';
-    default:
-      return '?';
-  }
-}
+const agentList = computed(() => agentsStore.agents);
 </script>
 
 <template>
@@ -96,17 +71,12 @@ function getAvatarInitial(role: string): string {
     <div class="mt-3 flex items-center justify-between">
       <!-- Agent avatars -->
       <div class="flex -space-x-2">
-        <div
-          v-for="role in agentRoles"
-          :key="role"
-          :class="[
-            'w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-medium ring-2 ring-white',
-            getAvatarColor(role),
-          ]"
-          :title="role"
-        >
-          {{ getAvatarInitial(role) }}
-        </div>
+        <AgentAvatar
+          v-for="agent in agentList"
+          :key="agent.id"
+          :agent="agent"
+          size="sm"
+        />
       </div>
 
       <!-- Message count -->

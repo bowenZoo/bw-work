@@ -3,6 +3,7 @@ import { useRouter } from 'vue-router';
 import { useDiscussionStore, useAgentsStore } from '@/stores';
 import { useWebSocket } from './useWebSocket';
 import * as discussionApi from '@/api/discussion';
+import { getInterventionStatus } from '@/api/intervention';
 import type { Discussion, Message, ServerMessage } from '@/types';
 import { normalizeAgentRole } from '@/utils/agents';
 
@@ -14,6 +15,7 @@ export function useDiscussion() {
   // Internal state
   const isCreating = ref(false);
   const isStarting = ref(false);
+  const isPaused = ref(false);
 
   // Current discussion ID
   const discussionId = computed(() => discussionStore.discussionId);
@@ -75,6 +77,7 @@ export function useDiscussion() {
 
     isStarting.value = true;
     discussionStore.setLoading(true);
+    isPaused.value = false;
 
     try {
       await discussionApi.startDiscussion(discussionId.value);
@@ -104,9 +107,10 @@ export function useDiscussion() {
     discussionStore.setError(null);
 
     try {
-      const [statusResponse, messagesResponse] = await Promise.all([
+      const [statusResponse, messagesResponse, interventionStatus] = await Promise.all([
         discussionApi.getDiscussionStatus(id),
         discussionApi.getDiscussionMessages(id).catch(() => null),
+        getInterventionStatus(id).catch(() => null),
       ]);
 
       const messages: Message[] = (messagesResponse?.messages ?? []).map((msg) => {
@@ -131,6 +135,7 @@ export function useDiscussion() {
       };
 
       discussionStore.setDiscussion(discussion);
+      isPaused.value = Boolean(interventionStatus?.is_paused);
 
       // Connect WebSocket if discussion is in progress
       if (discussion.status === 'running') {
@@ -175,9 +180,17 @@ export function useDiscussion() {
         if (message.data.agent_role === 'discussion' || message.data.agent_id === 'discussion') {
           if (message.data.content === 'discussion_completed') {
             discussionStore.endDiscussion();
+            isPaused.value = false;
           }
           if (message.data.content === 'discussion_failed') {
             discussionStore.setStatus('failed');
+            isPaused.value = false;
+          }
+          if (message.data.content === 'discussion_paused') {
+            isPaused.value = true;
+          }
+          if (message.data.content === 'discussion_resumed') {
+            isPaused.value = false;
           }
           break;
         }
@@ -195,6 +208,7 @@ export function useDiscussion() {
       case 'error':
         discussionStore.setError(message.data.content ?? 'Unknown error');
         discussionStore.setStatus('failed');
+        isPaused.value = false;
         break;
     }
   }
@@ -215,6 +229,11 @@ export function useDiscussion() {
     disconnect();
     agentsStore.resetAllAgentsStatus();
     discussionStore.clearDiscussion();
+    isPaused.value = false;
+  }
+
+  function setPaused(value: boolean) {
+    isPaused.value = value;
   }
 
   watch(lastMessage, (message) => {
@@ -239,6 +258,8 @@ export function useDiscussion() {
     error: computed(() => discussionStore.error),
     isInProgress: computed(() => discussionStore.isInProgress),
     isCompleted: computed(() => discussionStore.isCompleted),
+    isPaused: computed(() => isPaused.value),
+    setError: discussionStore.setError,
     // Actions
     createDiscussion,
     startDiscussion,
@@ -246,6 +267,7 @@ export function useDiscussion() {
     handleMessage,
     endDiscussion,
     reset,
+    setPaused,
     connect,
     disconnect,
   };

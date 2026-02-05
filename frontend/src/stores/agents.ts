@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import type { Agent, AgentStatus } from '@/types';
+import systemAvatar from '@/assets/avatars/system_designer.svg';
+import numberAvatar from '@/assets/avatars/number_designer.svg';
+import playerAvatar from '@/assets/avatars/player_advocate.svg';
 
 export const useAgentsStore = defineStore('agents', () => {
   // State
@@ -10,18 +13,21 @@ export const useAgentsStore = defineStore('agents', () => {
       name: '系统策划',
       role: 'system_designer',
       status: 'idle',
+      avatarUrl: systemAvatar,
     },
     {
       id: 'number_designer',
       name: '数值策划',
       role: 'number_designer',
       status: 'idle',
+      avatarUrl: numberAvatar,
     },
     {
       id: 'player_advocate',
       name: '玩家代言人',
       role: 'player_advocate',
       status: 'idle',
+      avatarUrl: playerAvatar,
     },
   ]);
 

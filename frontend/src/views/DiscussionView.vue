@@ -28,11 +28,14 @@ const {
   isLoading: liveLoading,
   error: liveError,
   isInProgress,
+  isPaused,
   connectionStatus,
+  setError,
   createDiscussion,
   startDiscussion,
   loadDiscussion: loadLiveDiscussion,
   reset: resetLiveDiscussion,
+  setPaused,
 } = useDiscussion();
 
 const isRunning = computed(() => discussion.value?.status === 'running');
@@ -105,8 +108,23 @@ async function handleSubmit(topic: string) {
   if (isPlaybackMode.value) return;
   const newId = await createDiscussion(topic);
   if (newId) {
+    setPaused(false);
     await startDiscussion();
   }
+}
+
+function handlePaused() {
+  setPaused(true);
+}
+
+function handleResumed() {
+  setPaused(false);
+}
+
+function handleInterventionError(message: string) {
+  // Surface intervention errors in the same toast channel
+  console.error('Intervention error:', message);
+  setError(message);
 }
 
 // Handle playback controls
@@ -199,9 +217,12 @@ onUnmounted(() => {
           :disabled="isInProgress"
           :discussion-id="discussion?.id ?? undefined"
           :is-running="isRunning"
-          :is-paused="false"
+          :is-paused="isPaused"
           placeholder="Enter a topic for discussion..."
           @submit="handleSubmit"
+          @paused="handlePaused"
+          @resumed="handleResumed"
+          @error="handleInterventionError"
         />
       </main>
 

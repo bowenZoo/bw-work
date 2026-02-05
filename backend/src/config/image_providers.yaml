@@ -1,0 +1,53 @@
+# Image Generation Provider Configuration
+#
+# This file defines the available image generation providers.
+# Each provider specifies a backend type and its configuration.
+#
+# Backend types:
+#   - openai: Direct OpenAI Images API
+#   - openai_compatible: OpenAI-compatible API (configurable endpoint)
+#   - task_polling: Async task-based API with polling
+#
+# Environment variables are referenced using the api_key_env field.
+
+providers:
+  # OpenAI Default Provider
+  openai_default:
+    backend: openai
+    api_base: "https://api.openai.com/v1"
+    api_key_env: "OPENAI_API_KEY"
+    model: "gpt-image-1"
+    default_size: "1024x1024"
+    default_quality: "standard"
+    timeout: 120
+
+  # Example: OpenAI-compatible provider (e.g., self-hosted or third-party)
+  # Uncomment and configure as needed
+  # openai_compatible_example:
+  #   backend: openai_compatible
+  #   api_base: "https://your-api-endpoint.com/v1"
+  #   api_key_env: "CUSTOM_API_KEY"
+  #   model: "your-model-name"
+  #   extra_params:
+  #     style: "vivid"
+  #   default_size: "1024x1024"
+  #   timeout: 120
+
+  # Example: Task polling provider
+  # Uncomment and configure as needed
+  # async_provider_example:
+  #   backend: task_polling
+  #   api_base: "https://your-async-api.com"
+  #   api_key_env: "ASYNC_API_KEY"
+  #   submit_path: "/api/v1/generate"
+  #   status_path: "/api/v1/tasks/{task_id}"
+  #   result_path: "/api/v1/tasks/{task_id}/result"
+  #   poll_interval_sec: 2
+  #   poll_timeout_sec: 120
+  #   task_id_field: "task_id"
+  #   status_field: "status"
+  #   status_completed: "success"
+  #   status_failed: "failed"
+
+# Default provider to use when none is specified
+default_provider: openai_default

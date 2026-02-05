@@ -54,6 +54,25 @@ class Settings(BaseSettings):
     config_dir: Path = Path(__file__).parent
     roles_dir: Path = Path(__file__).parent / "roles"
 
+    # Image Service Configuration
+    image_storage_type: str = Field(default="local", alias="IMAGE_STORAGE_TYPE")
+    image_storage_path: str = Field(default="data/projects", alias="IMAGE_STORAGE_PATH")
+    image_providers_path: str = Field(
+        default="config/image_providers.yaml", alias="IMAGE_PROVIDERS_PATH"
+    )
+    image_styles_path: str = Field(
+        default="config/image_styles.yaml", alias="IMAGE_STYLES_PATH"
+    )
+    image_default_provider: str = Field(
+        default="openai_default", alias="IMAGE_DEFAULT_PROVIDER"
+    )
+    image_generation_timeout: int = Field(
+        default=120, alias="IMAGE_GENERATION_TIMEOUT"
+    )
+    image_enable_prompt_enhancement: bool = Field(
+        default=False, alias="IMAGE_ENABLE_PROMPT_ENHANCEMENT"
+    )
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

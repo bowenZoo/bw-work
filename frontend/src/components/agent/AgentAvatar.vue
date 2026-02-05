@@ -70,6 +70,8 @@ const iconComponent = computed(() => {
       return UserCircle;
   }
 });
+
+const hasAvatar = computed(() => Boolean(props.agent.avatarUrl));
 </script>
 
 <template>
@@ -77,12 +79,18 @@ const iconComponent = computed(() => {
     <!-- Avatar with icon -->
     <div
       :class="[
-        'rounded-full flex items-center justify-center text-white',
+        'rounded-full flex items-center justify-center text-white overflow-hidden',
         sizeClasses,
         bgColorClass,
       ]"
     >
-      <component :is="iconComponent" :class="iconSizeClasses" />
+      <img
+        v-if="hasAvatar"
+        :src="agent.avatarUrl"
+        :alt="agent.name"
+        class="w-full h-full object-cover"
+      />
+      <component v-else :is="iconComponent" :class="iconSizeClasses" />
     </div>
 
     <!-- Status indicator -->

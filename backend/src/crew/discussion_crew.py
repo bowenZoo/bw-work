@@ -1,18 +1,21 @@
 """Discussion Crew - Orchestrates multi-agent design discussions."""
 
+import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from crewai import Crew, Process, Task
 from crewai.tasks.task_output import TaskOutput
 
-from src.agents import NumberDesigner, PlayerAdvocate, SystemDesigner
+from src.agents import NumberDesigner, PlayerAdvocate, SystemDesigner, VisualConceptAgent
 from src.api.websocket.events import (
     AgentStatus,
     create_error_event,
@@ -23,7 +26,7 @@ from src.api.websocket.manager import broadcast_sync
 from src.memory.base import Discussion, Message
 from src.memory.decision_tracker import DecisionTracker
 from src.memory.discussion_memory import DiscussionMemory
-from src.monitoring.langfuse_client import create_trace
+from src.monitoring.langfuse_client import get_langfuse_client, start_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +39,60 @@ class DiscussionState(str, Enum):
     FINISHED = "finished"
 
 
+class DiscussionTimeoutError(RuntimeError):
+    """Raised when a discussion times out while paused."""
+
+
 # Global registry for discussion states and injected messages
 # Key: discussion_id, Value: dict with state and injected messages
 _discussion_states: dict[str, dict] = {}
 _state_lock = threading.Lock()
+_STATE_DIR = Path(os.environ.get("DISCUSSION_STATE_DIR", "data/projects/.intervention_state"))
+
+
+def _state_path(discussion_id: str) -> Path:
+    return _STATE_DIR / f"{discussion_id}.json"
+
+
+def _serialize_state(state_info: dict) -> dict:
+    state = state_info.get("state")
+    if isinstance(state, DiscussionState):
+        state_value = state.value
+    else:
+        state_value = str(state) if state is not None else DiscussionState.RUNNING.value
+    return {
+        "state": state_value,
+        "injected_messages": state_info.get("injected_messages", []),
+        "current_task_index": state_info.get("current_task_index", 0),
+    }
+
+
+def _persist_state(discussion_id: str, state_info: dict) -> None:
+    try:
+        _STATE_DIR.mkdir(parents=True, exist_ok=True)
+        _state_path(discussion_id).write_text(
+            json.dumps(_serialize_state(state_info), ensure_ascii=True),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        logger.debug("Failed to persist discussion state: %s", exc)
+
+
+def _load_state_from_disk(discussion_id: str) -> dict | None:
+    path = _state_path(discussion_id)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        state_value = data.get("state", DiscussionState.RUNNING.value)
+        return {
+            "state": DiscussionState(state_value),
+            "injected_messages": data.get("injected_messages", []),
+            "current_task_index": data.get("current_task_index", 0),
+        }
+    except Exception as exc:
+        logger.debug("Failed to load discussion state: %s", exc)
+        return None
 
 
 def get_discussion_state(discussion_id: str) -> dict | None:
@@ -52,7 +105,13 @@ def get_discussion_state(discussion_id: str) -> dict | None:
         Discussion state dict or None if not found.
     """
     with _state_lock:
-        return _discussion_states.get(discussion_id)
+        state = _discussion_states.get(discussion_id)
+        if state is None:
+            loaded = _load_state_from_disk(discussion_id)
+            if loaded:
+                _discussion_states[discussion_id] = loaded
+                state = loaded
+        return state
 
 
 def set_discussion_state(discussion_id: str, state: DiscussionState) -> None:
@@ -71,6 +130,7 @@ def set_discussion_state(discussion_id: str, state: DiscussionState) -> None:
             }
         else:
             _discussion_states[discussion_id]["state"] = state
+        _persist_state(discussion_id, _discussion_states[discussion_id])
 
 
 def add_injected_message(discussion_id: str, message: dict) -> None:
@@ -83,6 +143,7 @@ def add_injected_message(discussion_id: str, message: dict) -> None:
     with _state_lock:
         if discussion_id in _discussion_states:
             _discussion_states[discussion_id]["injected_messages"].append(message)
+            _persist_state(discussion_id, _discussion_states[discussion_id])
 
 
 def get_and_clear_injected_messages(discussion_id: str) -> list[dict]:
@@ -98,6 +159,7 @@ def get_and_clear_injected_messages(discussion_id: str) -> list[dict]:
         if discussion_id in _discussion_states:
             messages = _discussion_states[discussion_id]["injected_messages"]
             _discussion_states[discussion_id]["injected_messages"] = []
+            _persist_state(discussion_id, _discussion_states[discussion_id])
             return messages
         return []
 
@@ -111,6 +173,10 @@ def cleanup_discussion_state(discussion_id: str) -> None:
     with _state_lock:
         if discussion_id in _discussion_states:
             del _discussion_states[discussion_id]
+    try:
+        _state_path(discussion_id).unlink(missing_ok=True)
+    except Exception as exc:
+        logger.debug("Failed to remove discussion state file: %s", exc)
 
 
 class DiscussionCrew:
@@ -127,6 +193,7 @@ class DiscussionCrew:
         discussion_id: str | None = None,
         project_id: str | None = None,
         data_dir: str = "data/projects",
+        enable_visual_concept: bool = False,
     ) -> None:
         """Initialize the discussion crew.
 
@@ -137,12 +204,14 @@ class DiscussionCrew:
             discussion_id: Optional discussion ID for WebSocket broadcasting.
             project_id: Optional project ID for memory storage.
             data_dir: Data directory for memory storage.
+            enable_visual_concept: Whether to include the Visual Concept Agent.
         """
         self._llm = llm
         self._callback = callback
         self._discussion_id = discussion_id or str(uuid4())
         self._project_id = project_id or "default"
         self._data_dir = data_dir
+        self._enable_visual_concept = enable_visual_concept
 
         # Initialize agents
         self._system_designer = SystemDesigner(llm=llm)
@@ -155,6 +224,16 @@ class DiscussionCrew:
             self._player_advocate,
         ]
 
+        # Optionally add Visual Concept Agent
+        if enable_visual_concept:
+            self._visual_concept = VisualConceptAgent(
+                llm=llm,
+                project_id=self._project_id,
+            )
+            self._agents.append(self._visual_concept)
+        else:
+            self._visual_concept = None
+
         # Initialize memory systems
         self._discussion_memory = DiscussionMemory(data_dir=data_dir)
         self._decision_tracker = DecisionTracker(data_dir=data_dir)
@@ -164,6 +243,7 @@ class DiscussionCrew:
         self._messages: list[Message] = []
         self._task_agent_roles: list[str] = []
         self._task_index = 0
+        self._abort_reason: str | None = None
 
         # Pause/resume state
         self._pause_check_interval = 0.5  # seconds
@@ -232,7 +312,8 @@ class DiscussionCrew:
                     self._discussion_id,
                 )
                 set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
-                break
+                self._abort_reason = "Discussion paused timeout"
+                raise DiscussionTimeoutError(self._abort_reason)
 
             time.sleep(self._pause_check_interval)
 
@@ -622,6 +703,8 @@ class DiscussionCrew:
 
             # Check for pause between agent turns (intervention checkpoint)
             injected_messages = self._check_pause_and_wait()
+            if self._abort_reason:
+                raise DiscussionTimeoutError(self._abort_reason)
             if injected_messages:
                 self._inject_user_messages(injected_messages)
 
@@ -641,47 +724,46 @@ class DiscussionCrew:
                 return
 
             try:
+                langfuse_client = get_langfuse_client()
+                if langfuse_client is None or not hasattr(
+                    langfuse_client, "start_as_current_observation"
+                ):
+                    return
+
                 span_name = task_output.name or f"task:{task_output.agent}"
-                span = trace_span.start_span(
+                with langfuse_client.start_as_current_observation(
+                    as_type="span",
                     name=span_name,
-                    input={
-                        "description": task_output.description,
-                        "expected_output": task_output.expected_output,
-                    },
-                    metadata={
-                        "agent": task_output.agent,
-                        "output_format": str(task_output.output_format),
-                    },
-                )
-                span.update(output=task_output.raw)
-                span.end()
+                ) as span:
+                    span.update(
+                        input={
+                            "description": task_output.description,
+                            "expected_output": task_output.expected_output,
+                        },
+                        output=task_output.raw,
+                        metadata={
+                            "agent": task_output.agent,
+                            "output_format": str(task_output.output_format),
+                        },
+                    )
             except Exception as exc:
                 logger.debug("Failed to record Langfuse span: %s", exc)
 
         return _callback
 
-    def _prepare_trace(
+    def _prepare_trace_metadata(
         self,
         topic: str,
         rounds: int,
-    ) -> tuple[Any | None, Callable[[TaskOutput], None]]:
-        """Create a root trace span and task callback.
-
-        Uses discussion_id as session_id to enable cost tracking and
-        trace aggregation per discussion.
-        """
-        trace_span = create_trace(
-            name="discussion",
-            session_id=self._discussion_id,  # Enable per-discussion cost tracking
-            metadata={
-                "topic": topic,
-                "rounds": rounds,
-                "agents": [agent.role for agent in self._agents],
-                "discussion_id": self._discussion_id,
-                "project_id": self._project_id,
-            },
-        )
-        return trace_span, self._build_task_callback(trace_span)
+    ) -> dict[str, Any]:
+        """Prepare trace metadata for Langfuse."""
+        return {
+            "topic": topic,
+            "rounds": rounds,
+            "agents": [agent.role for agent in self._agents],
+            "discussion_id": self._discussion_id,
+            "project_id": self._project_id,
+        }
 
     def _finalize_trace(
         self,
@@ -702,7 +784,6 @@ class DiscussionCrew:
                 )
             elif result is not None:
                 trace_span.update(output=str(result))
-            trace_span.end()
         except Exception as exc:
             logger.debug("Failed to finalize Langfuse trace: %s", exc)
 
@@ -728,25 +809,38 @@ class DiscussionCrew:
         # Initialize discussion state for pause/resume
         set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
 
+        self._abort_reason = None
         tasks = self.create_discussion_tasks(topic, rounds)
-        trace_span, task_callback = self._prepare_trace(topic, rounds)
+        trace_metadata = self._prepare_trace_metadata(topic, rounds)
 
         # Broadcast initial thinking status for first agent
         if self._agents:
             first_agent = self._agents[0]
             self._broadcast_status(first_agent.role, AgentStatus.THINKING)
 
+        trace_span: Any | None = None
         try:
-            crew = Crew(
-                agents=[agent.build_agent() for agent in self._agents],
-                tasks=tasks,
-                process=Process.sequential,
-                verbose=verbose,
-                task_callback=task_callback,
-            )
+            with start_trace_context(
+                name="discussion",
+                session_id=self._discussion_id,
+                metadata=trace_metadata,
+            ) as span:
+                trace_span = span
+                task_callback = self._build_task_callback(trace_span)
+                crew = Crew(
+                    agents=[agent.build_agent() for agent in self._agents],
+                    tasks=tasks,
+                    process=Process.sequential,
+                    verbose=verbose,
+                    task_callback=task_callback,
+                )
 
-            result = crew.kickoff()
-            self._finalize_trace(trace_span, result=result)
+                result = crew.kickoff()
+
+                if self._abort_reason:
+                    raise DiscussionTimeoutError(self._abort_reason)
+
+                self._finalize_trace(trace_span, result=result)
 
             # Save discussion to memory with summary
             self._save_discussion(summary=str(result))
@@ -796,25 +890,38 @@ class DiscussionCrew:
         # Initialize discussion state for pause/resume
         set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
 
+        self._abort_reason = None
         tasks = self.create_discussion_tasks(topic, rounds)
-        trace_span, task_callback = self._prepare_trace(topic, rounds)
+        trace_metadata = self._prepare_trace_metadata(topic, rounds)
 
         # Broadcast initial thinking status for first agent
         if self._agents:
             first_agent = self._agents[0]
             self._broadcast_status(first_agent.role, AgentStatus.THINKING)
 
+        trace_span: Any | None = None
         try:
-            crew = Crew(
-                agents=[agent.build_agent() for agent in self._agents],
-                tasks=tasks,
-                process=Process.sequential,
-                verbose=verbose,
-                task_callback=task_callback,
-            )
+            with start_trace_context(
+                name="discussion",
+                session_id=self._discussion_id,
+                metadata=trace_metadata,
+            ) as span:
+                trace_span = span
+                task_callback = self._build_task_callback(trace_span)
+                crew = Crew(
+                    agents=[agent.build_agent() for agent in self._agents],
+                    tasks=tasks,
+                    process=Process.sequential,
+                    verbose=verbose,
+                    task_callback=task_callback,
+                )
 
-            result = await crew.kickoff_async()
-            self._finalize_trace(trace_span, result=result)
+                result = await crew.kickoff_async()
+
+                if self._abort_reason:
+                    raise DiscussionTimeoutError(self._abort_reason)
+
+                self._finalize_trace(trace_span, result=result)
 
             # Save discussion to memory with summary
             self._save_discussion(summary=str(result))

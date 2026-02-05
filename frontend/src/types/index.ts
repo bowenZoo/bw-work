@@ -9,6 +9,7 @@ export interface Agent {
   name: string;
   role: AgentRole;
   status: AgentStatus;
+  avatarUrl?: string;
 }
 
 // Message interface

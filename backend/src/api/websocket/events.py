@@ -20,6 +20,10 @@ class ServerMessageType(str, Enum):
     STATUS = "status"
     ERROR = "error"
     PONG = "pong"
+    # Image generation events
+    IMAGE_GENERATION_START = "image_generation_start"
+    IMAGE_GENERATION_COMPLETE = "image_generation_complete"
+    IMAGE_GENERATION_ERROR = "image_generation_error"
 
 
 class AgentStatus(str, Enum):
@@ -167,5 +171,122 @@ def create_error_event(
         data=MessageData(
             discussion_id=discussion_id,
             content=content,
+        )
+    )
+
+
+# Image generation event models
+class ImageGenerationEventData(BaseModel):
+    """Data payload for image generation events."""
+
+    request_id: str
+    prompt: str | None = None
+    style: str | None = None
+    provider_id: str | None = None
+    image_url: str | None = None
+    error: str | None = None
+    metadata: dict[str, Any] | None = None
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+class ImageGenerationEvent(BaseModel):
+    """Base event for image generation."""
+
+    type: ServerMessageType
+    data: ImageGenerationEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return self.model_dump(mode="json")
+
+
+class ImageGenerationStartEvent(ImageGenerationEvent):
+    """Event when image generation starts."""
+
+    type: ServerMessageType = ServerMessageType.IMAGE_GENERATION_START
+
+
+class ImageGenerationCompleteEvent(ImageGenerationEvent):
+    """Event when image generation completes."""
+
+    type: ServerMessageType = ServerMessageType.IMAGE_GENERATION_COMPLETE
+
+
+class ImageGenerationErrorEvent(ImageGenerationEvent):
+    """Event when image generation fails."""
+
+    type: ServerMessageType = ServerMessageType.IMAGE_GENERATION_ERROR
+
+
+def create_image_generation_start_event(
+    request_id: str,
+    prompt: str,
+    style: str,
+    provider_id: str,
+) -> ImageGenerationStartEvent:
+    """Create an image generation start event.
+
+    Args:
+        request_id: The image request ID.
+        prompt: The generation prompt.
+        style: The style template used.
+        provider_id: The provider ID.
+
+    Returns:
+        An ImageGenerationStartEvent instance.
+    """
+    return ImageGenerationStartEvent(
+        data=ImageGenerationEventData(
+            request_id=request_id,
+            prompt=prompt,
+            style=style,
+            provider_id=provider_id,
+        )
+    )
+
+
+def create_image_generation_complete_event(
+    request_id: str,
+    image_url: str,
+    metadata: dict[str, Any] | None = None,
+) -> ImageGenerationCompleteEvent:
+    """Create an image generation complete event.
+
+    Args:
+        request_id: The image request ID.
+        image_url: URL to access the generated image.
+        metadata: Optional metadata about the generation.
+
+    Returns:
+        An ImageGenerationCompleteEvent instance.
+    """
+    return ImageGenerationCompleteEvent(
+        data=ImageGenerationEventData(
+            request_id=request_id,
+            image_url=image_url,
+            metadata=metadata,
+        )
+    )
+
+
+def create_image_generation_error_event(
+    request_id: str,
+    error: str,
+) -> ImageGenerationErrorEvent:
+    """Create an image generation error event.
+
+    Args:
+        request_id: The image request ID.
+        error: The error message.
+
+    Returns:
+        An ImageGenerationErrorEvent instance.
+    """
+    return ImageGenerationErrorEvent(
+        data=ImageGenerationEventData(
+            request_id=request_id,
+            error=error,
         )
     )

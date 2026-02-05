@@ -230,9 +230,40 @@ Use proper Markdown formatting including headers, bullet points, and tables.
             Version string in format {discussion_id}-{yyyyMMdd-HHmm}.
         """
         timestamp = datetime.now().strftime("%Y%m%d-%H%M")
-        # Take first 8 chars of discussion_id for brevity
-        short_id = discussion_id[:8] if len(discussion_id) > 8 else discussion_id
-        return f"{short_id}-{timestamp}"
+        return f"{discussion_id}-{timestamp}"
+
+    def _ensure_metadata_header(
+        self,
+        content: str,
+        discussion: Discussion,
+        project_name: str,
+        version: str,
+    ) -> str:
+        """Ensure the document contains a metadata header with source discussion info."""
+        lines = content.splitlines()
+        for line in lines[:10]:
+            if line.lower().startswith("> source discussion:"):
+                return content
+
+        effective_name = project_name or discussion.project_id
+        metadata_block = [
+            f"> Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            f"> Source Discussion: {discussion.id}",
+            f"> Version: {version}",
+            "",
+        ]
+
+        if content.lstrip().startswith("#") and lines:
+            header = lines[0]
+            rest = lines[1:]
+            return "\n".join([header, "", *metadata_block, *rest]).strip() + "\n"
+
+        header = [
+            f"# {effective_name} - Planning Document",
+            "",
+            *metadata_block,
+        ]
+        return "\n".join(header) + "\n" + content
 
     def _get_drafts_dir(self, project_id: str) -> Path:
         """Get the drafts directory for a project.
@@ -271,17 +302,7 @@ Use proper Markdown formatting including headers, bullet points, and tables.
         filename = f"{version}.md"
         file_path = drafts_dir / filename
 
-        # Add metadata header if not present
-        if not content.startswith("# "):
-            effective_name = project_name or discussion.project_id
-            header = f"""# {effective_name} - Planning Document
-
-> Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}
-> Source Discussion: {discussion.id}
-> Version: {version}
-
-"""
-            content = header + content
+        content = self._ensure_metadata_header(content, discussion, project_name, version)
 
         # Write file
         with open(file_path, "w", encoding="utf-8") as f:
@@ -320,7 +341,7 @@ Use proper Markdown formatting including headers, bullet points, and tables.
             # Filter by discussion_id if provided
             if discussion_id:
                 short_id = discussion_id[:8] if len(discussion_id) > 8 else discussion_id
-                if not version.startswith(short_id):
+                if not (version.startswith(discussion_id) or version.startswith(short_id)):
                     continue
 
             versions.append({

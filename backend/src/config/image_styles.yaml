@@ -1,0 +1,110 @@
+# Image Style Templates Configuration
+#
+# This file defines style templates for image generation.
+# Each style includes prompt modifiers and recommended backends.
+#
+# Style parameters:
+#   name: Human-readable name
+#   description: Description of the style
+#   prompt_prefix: Text to prepend to the prompt
+#   prompt_suffix: Text to append to the prompt
+#   negative_prompt: Elements to avoid (list or string)
+#   recommended_backends: Preferred providers for this style
+#   default_params: Default generation parameters (size, quality, etc.)
+
+styles:
+  # Game Concept Art - Characters
+  concept_character:
+    name: "游戏概念图-角色"
+    description: "适用于游戏角色设计概念图"
+    prompt_prefix: "game character concept art, detailed design sheet, professional quality,"
+    prompt_suffix: "artstation, highly detailed, intricate design"
+    negative_prompt:
+      - "amateur"
+      - "low detail"
+      - "simple"
+    recommended_backends:
+      - openai_default
+    default_params:
+      size: "1024x1792"  # Portrait orientation for characters
+      quality: "hd"
+
+  # Game Concept Art - Scenes/Environments
+  concept_scene:
+    name: "游戏概念图-场景"
+    description: "适用于游戏场景和环境设计"
+    prompt_prefix: "game environment concept art, atmospheric scene,"
+    prompt_suffix: "cinematic lighting, matte painting, detailed background, trending on artstation"
+    negative_prompt:
+      - "flat lighting"
+      - "empty"
+    recommended_backends:
+      - openai_default
+    default_params:
+      size: "1792x1024"  # Landscape orientation for scenes
+      quality: "hd"
+
+  # Game Concept Art - Items/Props
+  concept_item:
+    name: "游戏概念图-道具"
+    description: "适用于游戏道具、武器、装备设计"
+    prompt_prefix: "game item design, detailed prop concept,"
+    prompt_suffix: "professional game art, clean background, multiple angles"
+    negative_prompt:
+      - "cluttered background"
+      - "messy"
+    recommended_backends:
+      - openai_default
+    default_params:
+      size: "1024x1024"
+      quality: "standard"
+
+  # UI Design - Icons
+  ui_icon:
+    name: "UI图标"
+    description: "适用于游戏UI图标设计"
+    prompt_prefix: "game UI icon, clean vector style,"
+    prompt_suffix: "simple background, glossy, professional mobile game icon"
+    negative_prompt:
+      - "complex background"
+      - "realistic"
+      - "photographic"
+    recommended_backends:
+      - openai_default
+    default_params:
+      size: "512x512"
+      quality: "standard"
+
+  # Storyboard/Comic Style
+  storyboard:
+    name: "分镜/漫画风格"
+    description: "适用于游戏剧情分镜和漫画风格插图"
+    prompt_prefix: "storyboard frame, comic style illustration,"
+    prompt_suffix: "clear composition, expressive, manga style"
+    negative_prompt:
+      - "photorealistic"
+      - "3D render"
+    recommended_backends:
+      - openai_default
+    default_params:
+      size: "1024x1024"
+      quality: "standard"
+
+  # Realistic/Photo Style
+  realistic:
+    name: "写实风格"
+    description: "适用于写实风格的游戏素材"
+    prompt_prefix: "photorealistic, highly detailed,"
+    prompt_suffix: "8K, professional photography, cinematic"
+    negative_prompt:
+      - "cartoon"
+      - "anime"
+      - "stylized"
+    recommended_backends:
+      - openai_default
+    default_params:
+      size: "1024x1024"
+      quality: "hd"
+
+# Default style to use when none is specified
+default_style: concept_character

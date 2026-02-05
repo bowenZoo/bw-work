@@ -88,6 +88,7 @@ function clearSearch() {
         <HistoryList
           ref="historyListRef"
           class="flex-1"
+          :search-query="filteredQuery"
           @select="handleSelectDiscussion"
         />
       </main>
