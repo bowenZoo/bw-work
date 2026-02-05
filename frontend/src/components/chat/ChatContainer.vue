@@ -6,16 +6,30 @@ import MessageBubble from './MessageBubble.vue';
 const props = defineProps<{
   messages: Message[];
   isLoading?: boolean;
+  maxMessages?: number;
 }>();
 
 const containerRef = ref<HTMLElement | null>(null);
+
+const showAll = ref(false);
+const maxMessages = computed(() => props.maxMessages ?? 300);
+const isTruncated = computed(() => props.messages.length > maxMessages.value && !showAll.value);
+const renderedMessages = computed(() => {
+  if (!isTruncated.value) return props.messages;
+  return props.messages.slice(-maxMessages.value);
+});
+const hiddenCount = computed(() =>
+  isTruncated.value ? props.messages.length - renderedMessages.value.length : 0
+);
 
 // Auto-scroll to bottom when new messages arrive
 watch(
   () => props.messages.length,
   async () => {
     await nextTick();
-    scrollToBottom();
+    if (!showAll.value) {
+      scrollToBottom();
+    }
   }
 );
 
@@ -25,7 +39,7 @@ function scrollToBottom() {
   }
 }
 
-const isEmpty = computed(() => props.messages.length === 0 && !props.isLoading);
+const isEmpty = computed(() => renderedMessages.value.length === 0 && !props.isLoading);
 </script>
 
 <template>
@@ -64,8 +78,20 @@ const isEmpty = computed(() => props.messages.length === 0 && !props.isLoading);
 
     <!-- Messages list -->
     <div v-else class="divide-y divide-gray-100">
+      <div
+        v-if="hiddenCount > 0"
+        class="p-3 text-center text-xs text-gray-500 bg-gray-50 border-b border-gray-100"
+      >
+        {{ hiddenCount }} earlier messages hidden for performance.
+        <button
+          class="ml-2 text-blue-600 hover:text-blue-700 underline"
+          @click="showAll = true"
+        >
+          Show all
+        </button>
+      </div>
       <MessageBubble
-        v-for="message in messages"
+        v-for="message in renderedMessages"
         :key="message.id"
         :message="message"
       />

@@ -5,6 +5,13 @@ import systemAvatar from '@/assets/avatars/system_designer.svg';
 import numberAvatar from '@/assets/avatars/number_designer.svg';
 import playerAvatar from '@/assets/avatars/player_advocate.svg';
 
+const systemAvatarUrl =
+  (import.meta.env.VITE_AVATAR_SYSTEM_DESIGNER as string | undefined) || systemAvatar;
+const numberAvatarUrl =
+  (import.meta.env.VITE_AVATAR_NUMBER_DESIGNER as string | undefined) || numberAvatar;
+const playerAvatarUrl =
+  (import.meta.env.VITE_AVATAR_PLAYER_ADVOCATE as string | undefined) || playerAvatar;
+
 export const useAgentsStore = defineStore('agents', () => {
   // State
   const agents = ref<Agent[]>([
@@ -13,21 +20,21 @@ export const useAgentsStore = defineStore('agents', () => {
       name: '系统策划',
       role: 'system_designer',
       status: 'idle',
-      avatarUrl: systemAvatar,
+      avatarUrl: systemAvatarUrl,
     },
     {
       id: 'number_designer',
       name: '数值策划',
       role: 'number_designer',
       status: 'idle',
-      avatarUrl: numberAvatar,
+      avatarUrl: numberAvatarUrl,
     },
     {
       id: 'player_advocate',
       name: '玩家代言人',
       role: 'player_advocate',
       status: 'idle',
-      avatarUrl: playerAvatar,
+      avatarUrl: playerAvatarUrl,
     },
   ]);
 

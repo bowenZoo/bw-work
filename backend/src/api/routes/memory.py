@@ -268,7 +268,7 @@ async def list_discussions(
     return DiscussionListResponse(items=items, hasMore=has_more)
 
 
-@router.get("/discussions/{discussion_id}", response_model=DiscussionDetailResponse)
+@router.get("/history/discussions/{discussion_id}", response_model=DiscussionDetailResponse)
 async def get_discussion(discussion_id: str) -> DiscussionDetailResponse:
     """Get discussion detail by ID."""
     discussion = _discussion_memory.load(discussion_id)

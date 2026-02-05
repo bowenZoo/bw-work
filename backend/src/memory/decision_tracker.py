@@ -29,6 +29,9 @@ class DecisionTracker(MemoryStore[Decision]):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._decisions_cache: dict[str, Decision] = {}
+        self._project_cache: dict[str, list[Decision]] = {}
+        self._file_mtimes: dict[str, float] = {}
+        self._decision_project: dict[str, str] = {}
 
     def _get_decisions_file(self, project_id: str) -> Path:
         """获取决策文件路径"""
@@ -61,8 +64,19 @@ class DecisionTracker(MemoryStore[Decision]):
         if not file_path.exists():
             return []
 
+        mtime = file_path.stat().st_mtime
+        cached = self._project_cache.get(project_id)
+        if cached is not None and self._file_mtimes.get(project_id) == mtime:
+            return cached
+
         content = file_path.read_text(encoding="utf-8")
         decisions = []
+
+        # Clear previous cache for this project
+        for decision_id, pid in list(self._decision_project.items()):
+            if pid == project_id:
+                self._decisions_cache.pop(decision_id, None)
+                self._decision_project.pop(decision_id, None)
 
         # 匹配每个决策块
         pattern = r"### (.+?)\n\n- \*\*ID\*\*: (.+?)\n- \*\*讨论\*\*: (.+?)\n- \*\*决策者\*\*: (.+?)\n- \*\*时间\*\*: (.+?)\n\n\*\*内容\*\*:\n(.*?)\n\n\*\*原因\*\*:\n(.*?)\n\n---"
@@ -86,6 +100,10 @@ class DecisionTracker(MemoryStore[Decision]):
             )
             decisions.append(decision)
             self._decisions_cache[decision.id] = decision
+            self._decision_project[decision.id] = project_id
+
+        self._project_cache[project_id] = decisions
+        self._file_mtimes[project_id] = mtime
 
         return decisions
 
@@ -124,6 +142,9 @@ class DecisionTracker(MemoryStore[Decision]):
 
         # 更新缓存
         self._decisions_cache[decision.id] = decision
+        self._decision_project[decision.id] = project_id
+        self._project_cache.pop(project_id, None)
+        self._file_mtimes.pop(project_id, None)
 
         return decision.id
 
@@ -235,6 +256,10 @@ class DecisionTracker(MemoryStore[Decision]):
         # 更新缓存
         if decision_id in self._decisions_cache:
             del self._decisions_cache[decision_id]
+        if decision_id in self._decision_project:
+            del self._decision_project[decision_id]
+        self._project_cache.pop(project_id, None)
+        self._file_mtimes.pop(project_id, None)
 
         return True
 

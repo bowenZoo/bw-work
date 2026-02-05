@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from src.agents import DocumentGenerator
-from src.api.routes.discussion import DiscussionStatus, _discussions
+from src.api.routes.discussion import DiscussionStatus, get_discussion_state
 from src.memory.base import Discussion, Message
 from src.memory.discussion_memory import DiscussionMemory
 
@@ -74,7 +74,7 @@ async def generate_document(
     The discussion must be in COMPLETED state. The generated document
     is saved to data/projects/{project_id}/drafts/ with version naming.
     """
-    discussion = _discussions.get(discussion_id)
+    discussion = get_discussion_state(discussion_id)
     if discussion is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 

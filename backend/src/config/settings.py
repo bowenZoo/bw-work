@@ -19,6 +19,28 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 18000
 
+    # CORS
+    cors_allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:18000",
+            "http://127.0.0.1:18000",
+        ],
+        alias="CORS_ALLOWED_ORIGINS",
+    )
+    cors_allow_credentials: bool = Field(
+        default=False, alias="CORS_ALLOW_CREDENTIALS"
+    )
+    cors_allowed_methods: list[str] = Field(
+        default_factory=lambda: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        alias="CORS_ALLOWED_METHODS",
+    )
+    cors_allowed_headers: list[str] = Field(
+        default_factory=lambda: ["*"],
+        alias="CORS_ALLOWED_HEADERS",
+    )
+
     # WebSocket
     websocket_allowed_origin_prefixes: list[str] = Field(
         default_factory=lambda: [

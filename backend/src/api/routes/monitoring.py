@@ -3,10 +3,13 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from src.api.routes.discussion import _discussions
+from src.api.routes.discussion import get_discussion_state
+from src.memory.discussion_memory import DiscussionMemory
 from src.monitoring.langfuse_client import get_session_cost
 
 router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
+
+_discussion_memory = DiscussionMemory(data_dir="data/projects")
 
 
 class CostResponse(BaseModel):
@@ -34,9 +37,11 @@ async def get_discussion_cost(discussion_id: str) -> CostResponse:
     due to Langfuse's asynchronous data processing.
     """
     # Verify discussion exists
-    discussion = _discussions.get(discussion_id)
+    discussion = get_discussion_state(discussion_id)
     if discussion is None:
-        raise HTTPException(status_code=404, detail="Discussion not found")
+        stored_discussion = _discussion_memory.load(discussion_id)
+        if stored_discussion is None:
+            raise HTTPException(status_code=404, detail="Discussion not found")
 
     # Get cost data from Langfuse
     cost_data = get_session_cost(discussion_id)

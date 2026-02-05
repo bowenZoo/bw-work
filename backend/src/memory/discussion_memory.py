@@ -48,7 +48,7 @@ class DiscussionMemory(MemoryStore[Discussion]):
 
     def _init_db(self) -> None:
         """初始化 SQLite 索引数据库"""
-        conn = sqlite3.connect(self._db_path)
+        conn = self._connect()
         cursor = conn.cursor()
 
         cursor.execute(
@@ -79,6 +79,37 @@ class DiscussionMemory(MemoryStore[Discussion]):
         """
         )
 
+        # Add content_text column for message search if missing
+        cursor.execute("PRAGMA table_info(discussions)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "content_text" not in columns:
+            cursor.execute("ALTER TABLE discussions ADD COLUMN content_text TEXT")
+
+        conn.commit()
+        conn.close()
+
+    def _connect(self) -> sqlite3.Connection:
+        """Create a SQLite connection with safer concurrency defaults."""
+        conn = sqlite3.connect(self._db_path, timeout=5)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
+
+    def _build_content_text(self, discussion: Discussion) -> str:
+        parts = [discussion.topic or ""]
+        if discussion.summary:
+            parts.append(discussion.summary)
+        parts.extend([msg.content for msg in discussion.messages if msg.content])
+        return "\n".join(p for p in parts if p)
+
+    def _update_content_text(self, discussion: Discussion) -> None:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE discussions SET content_text = ? WHERE id = ?",
+            (self._build_content_text(discussion), discussion.id),
+        )
         conn.commit()
         conn.close()
 
@@ -156,14 +187,25 @@ class DiscussionMemory(MemoryStore[Discussion]):
             json.dump(self._discussion_to_dict(discussion), f, ensure_ascii=False, indent=2)
 
         # 更新 SQLite 索引
-        conn = sqlite3.connect(self._db_path)
+        conn = self._connect()
         cursor = conn.cursor()
 
         cursor.execute(
             """
             INSERT OR REPLACE INTO discussions
-            (id, project_id, topic, summary, message_count, created_at, updated_at, archived, file_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (
+                id,
+                project_id,
+                topic,
+                summary,
+                message_count,
+                created_at,
+                updated_at,
+                archived,
+                file_path,
+                content_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 discussion.id,
@@ -175,6 +217,7 @@ class DiscussionMemory(MemoryStore[Discussion]):
                 discussion.updated_at.isoformat(),
                 0,
                 str(file_path),
+                self._build_content_text(discussion),
             ),
         )
 
@@ -197,7 +240,7 @@ class DiscussionMemory(MemoryStore[Discussion]):
             讨论对象，不存在时返回 None
         """
         # 先从索引查找文件路径
-        conn = sqlite3.connect(self._db_path)
+        conn = self._connect()
         cursor = conn.cursor()
 
         cursor.execute(
@@ -218,7 +261,9 @@ class DiscussionMemory(MemoryStore[Discussion]):
         with open(file_path, encoding="utf-8") as f:
             data = json.load(f)
 
-        return self._dict_to_discussion(data)
+        discussion = self._dict_to_discussion(data)
+        self._update_content_text(discussion)
+        return discussion
 
     def search(self, query: str, limit: int = 10) -> list[Discussion]:
         """
@@ -234,19 +279,19 @@ class DiscussionMemory(MemoryStore[Discussion]):
             匹配的讨论列表
         """
         query_lower = query.lower()
-        conn = sqlite3.connect(self._db_path)
+        conn = self._connect()
         cursor = conn.cursor()
 
         try:
             cursor.execute(
                 """
                 SELECT id FROM discussions
-                WHERE (topic LIKE ? OR summary LIKE ?)
+                WHERE (topic LIKE ? OR summary LIKE ? OR content_text LIKE ?)
                 AND archived = 0
                 ORDER BY updated_at DESC
                 LIMIT ?
             """,
-                (f"%{query}%", f"%{query}%", limit),
+                (f"%{query}%", f"%{query}%", f"%{query}%", limit),
             )
 
             rows = cursor.fetchall()
@@ -263,12 +308,16 @@ class DiscussionMemory(MemoryStore[Discussion]):
 
             # If not enough results, scan message content for matches (fallback)
             if len(results) < limit:
+                scan_limit = max(limit * 5, 50)
                 cursor.execute(
                     """
                     SELECT id FROM discussions
                     WHERE archived = 0
                     ORDER BY updated_at DESC
+                    LIMIT ?
                 """
+                ,
+                    (scan_limit,),
                 )
                 all_rows = cursor.fetchall()
 
@@ -304,7 +353,7 @@ class DiscussionMemory(MemoryStore[Discussion]):
             是否成功删除
         """
         # 获取文件路径
-        conn = sqlite3.connect(self._db_path)
+        conn = self._connect()
         cursor = conn.cursor()
 
         cursor.execute(
@@ -341,7 +390,7 @@ class DiscussionMemory(MemoryStore[Discussion]):
         Returns:
             讨论列表
         """
-        conn = sqlite3.connect(self._db_path)
+        conn = self._connect()
         cursor = conn.cursor()
 
         cursor.execute(
@@ -379,7 +428,7 @@ class DiscussionMemory(MemoryStore[Discussion]):
         Returns:
             讨论列表
         """
-        conn = sqlite3.connect(self._db_path)
+        conn = self._connect()
         cursor = conn.cursor()
 
         cursor.execute(
@@ -428,7 +477,7 @@ class DiscussionMemory(MemoryStore[Discussion]):
 
         当项目讨论数量超过阈值时，将旧讨论移至 archive/
         """
-        conn = sqlite3.connect(self._db_path)
+        conn = self._connect()
         cursor = conn.cursor()
 
         # 获取项目讨论数量

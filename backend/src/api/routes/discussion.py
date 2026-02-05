@@ -1,10 +1,16 @@
 """Discussion API routes."""
+import asyncio
+import json
+import os
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 
 from crewai import Crew, Process
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from src.agents import Summarizer
@@ -100,17 +106,67 @@ class SummaryResponse(BaseModel):
     generated_at: str
 
 
-# NOTE: In-memory storage is per-process and resets on restart.
-# This is a temporary scaffold until persistent storage is added.
+# Discussion state persistence
+_STATE_DIR = Path(os.environ.get("DISCUSSION_STATUS_DIR", "data/projects/.discussion_state"))
+_state_lock = threading.Lock()
+_DISCUSSION_EXECUTOR = ThreadPoolExecutor(
+    max_workers=int(os.environ.get("DISCUSSION_MAX_WORKERS", "4"))
+)
+
+# In-memory cache for quick reads (also persisted to disk)
 _discussions: dict[str, DiscussionState] = {}
 
 # Store generated summaries
 _summaries: dict[str, SummaryResponse] = {}
 
 
+def _state_path(discussion_id: str) -> Path:
+    return _STATE_DIR / f"{discussion_id}.json"
+
+
+def _persist_discussion_state(discussion: DiscussionState) -> None:
+    try:
+        _STATE_DIR.mkdir(parents=True, exist_ok=True)
+        _state_path(discussion.id).write_text(
+            json.dumps(discussion.model_dump(), ensure_ascii=True),
+            encoding="utf-8",
+        )
+    except Exception:
+        # Persistence failures should not block API flow
+        pass
+
+
+def _load_discussion_state(discussion_id: str) -> DiscussionState | None:
+    path = _state_path(discussion_id)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return DiscussionState(**data)
+    except Exception:
+        return None
+
+
+def get_discussion_state(discussion_id: str) -> DiscussionState | None:
+    with _state_lock:
+        discussion = _discussions.get(discussion_id)
+        if discussion is not None:
+            return discussion
+        discussion = _load_discussion_state(discussion_id)
+        if discussion is not None:
+            _discussions[discussion_id] = discussion
+        return discussion
+
+
+def save_discussion_state(discussion: DiscussionState) -> None:
+    with _state_lock:
+        _discussions[discussion.id] = discussion
+        _persist_discussion_state(discussion)
+
+
 def _run_discussion_sync(discussion_id: str) -> None:
     """Run a discussion synchronously (for background task)."""
-    discussion = _discussions.get(discussion_id)
+    discussion = get_discussion_state(discussion_id)
     if discussion is None:
         return
 
@@ -119,6 +175,7 @@ def _run_discussion_sync(discussion_id: str) -> None:
             # Defensive: allow direct invocation without /start setting status.
             discussion.status = DiscussionStatus.RUNNING
             discussion.started_at = datetime.utcnow().isoformat()
+            save_discussion_state(discussion)
 
         crew = DiscussionCrew(discussion_id=discussion_id)
         result = crew.run(
@@ -130,10 +187,18 @@ def _run_discussion_sync(discussion_id: str) -> None:
         discussion.result = result
         discussion.status = DiscussionStatus.COMPLETED
         discussion.completed_at = datetime.utcnow().isoformat()
+        save_discussion_state(discussion)
     except Exception as e:
         discussion.status = DiscussionStatus.FAILED
         discussion.error = str(e)
         discussion.completed_at = datetime.utcnow().isoformat()
+        save_discussion_state(discussion)
+
+
+async def _run_discussion_async(discussion_id: str) -> None:
+    """Run discussion in a dedicated thread pool to avoid blocking the event loop."""
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(_DISCUSSION_EXECUTOR, _run_discussion_sync, discussion_id)
 
 
 @router.post("", response_model=CreateDiscussionResponse)
@@ -152,7 +217,7 @@ async def create_discussion(request: CreateDiscussionRequest) -> CreateDiscussio
         status=DiscussionStatus.PENDING,
         created_at=now,
     )
-    _discussions[discussion_id] = discussion
+    save_discussion_state(discussion)
 
     return CreateDiscussionResponse(
         id=discussion_id,
@@ -166,7 +231,7 @@ async def create_discussion(request: CreateDiscussionRequest) -> CreateDiscussio
 @router.get("/{discussion_id}", response_model=GetDiscussionResponse)
 async def get_discussion(discussion_id: str) -> GetDiscussionResponse:
     """Get the status and result of a discussion."""
-    discussion = _discussions.get(discussion_id)
+    discussion = get_discussion_state(discussion_id)
     if discussion is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
@@ -186,14 +251,13 @@ async def get_discussion(discussion_id: str) -> GetDiscussionResponse:
 @router.post("/{discussion_id}/start", response_model=StartDiscussionResponse)
 async def start_discussion(
     discussion_id: str,
-    background_tasks: BackgroundTasks,
 ) -> StartDiscussionResponse:
     """Start a discussion.
 
     The discussion will run in the background. Poll GET /discussions/{id}
     to check the status and get the result.
     """
-    discussion = _discussions.get(discussion_id)
+    discussion = get_discussion_state(discussion_id)
     if discussion is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
@@ -206,9 +270,10 @@ async def start_discussion(
     # Mark as running before enqueuing to avoid duplicate starts.
     discussion.status = DiscussionStatus.RUNNING
     discussion.started_at = datetime.utcnow().isoformat()
+    save_discussion_state(discussion)
 
     # Run in background
-    background_tasks.add_task(_run_discussion_sync, discussion_id)
+    asyncio.create_task(_run_discussion_async(discussion_id))
 
     return StartDiscussionResponse(
         id=discussion_id,
@@ -301,7 +366,7 @@ async def summarize_discussion(
     The discussion must be in COMPLETED state. Summaries are cached
     and can be regenerated with the regenerate flag.
     """
-    discussion = _discussions.get(discussion_id)
+    discussion = get_discussion_state(discussion_id)
     if discussion is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
@@ -336,7 +401,7 @@ async def get_discussion_summary(discussion_id: str) -> SummaryResponse:
     Returns the cached summary if available. Call POST /summarize first
     to generate a summary.
     """
-    discussion = _discussions.get(discussion_id)
+    discussion = get_discussion_state(discussion_id)
     if discussion is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 

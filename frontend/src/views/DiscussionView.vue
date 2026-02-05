@@ -39,6 +39,7 @@ const {
 } = useDiscussion();
 
 const isRunning = computed(() => discussion.value?.status === 'running');
+const sidebarDiscussionId = computed(() => discussionId.value ?? discussion.value?.id ?? null);
 
 // Playback composable (only used in playback mode)
 const {
@@ -227,7 +228,7 @@ onUnmounted(() => {
       </main>
 
       <!-- Sidebar -->
-      <Sidebar :is-open="true" />
+      <Sidebar :is-open="true" :discussion-id="sidebarDiscussionId" />
     </div>
 
     <!-- Error toast -->

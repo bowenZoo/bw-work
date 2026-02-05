@@ -6,12 +6,12 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from src.api.routes.discussion import DiscussionStatus, _discussions
+from src.api.routes.discussion import DiscussionStatus, get_discussion_state
 from src.crew.discussion_crew import (
     DiscussionState,
     add_injected_message,
-    get_discussion_state,
-    set_discussion_state,
+    get_discussion_state as get_crew_state,
+    set_discussion_state as set_crew_state,
 )
 
 router = APIRouter(prefix="/api/discussions", tags=["intervention"])
@@ -65,7 +65,7 @@ async def pause_discussion(discussion_id: str) -> PauseResponse:
     inject messages before resuming. The pause takes effect at the next
     agent turn boundary.
     """
-    discussion = _discussions.get(discussion_id)
+    discussion = get_discussion_state(discussion_id)
     if discussion is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
@@ -76,7 +76,7 @@ async def pause_discussion(discussion_id: str) -> PauseResponse:
         )
 
     # Get current crew state
-    state_info = get_discussion_state(discussion_id)
+    state_info = get_crew_state(discussion_id)
     if state_info is not None and state_info["state"] == DiscussionState.PAUSED:
         raise HTTPException(
             status_code=400,
@@ -86,7 +86,7 @@ async def pause_discussion(discussion_id: str) -> PauseResponse:
     now = datetime.utcnow().isoformat()
 
     # Request pause through the crew's state management
-    set_discussion_state(discussion_id, DiscussionState.PAUSED)
+    set_crew_state(discussion_id, DiscussionState.PAUSED)
 
     return PauseResponse(
         id=discussion_id,
@@ -106,11 +106,11 @@ async def inject_message(
     The injected message will be included as context when the discussion
     resumes, allowing human input to guide the agents' responses.
     """
-    discussion = _discussions.get(discussion_id)
+    discussion = get_discussion_state(discussion_id)
     if discussion is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
-    state_info = get_discussion_state(discussion_id)
+    state_info = get_crew_state(discussion_id)
     if state_info is None or state_info["state"] != DiscussionState.PAUSED:
         raise HTTPException(
             status_code=400,
@@ -131,7 +131,7 @@ async def inject_message(
     add_injected_message(discussion_id, injected_message)
 
     # Get updated count
-    state_info = get_discussion_state(discussion_id)
+    state_info = get_crew_state(discussion_id)
     msg_count = len(state_info.get("injected_messages", [])) if state_info else 1
 
     return InjectMessageResponse(
@@ -149,11 +149,11 @@ async def resume_discussion(discussion_id: str) -> ResumeResponse:
     If messages were injected while paused, they will be incorporated
     into the discussion context when agents continue.
     """
-    discussion = _discussions.get(discussion_id)
+    discussion = get_discussion_state(discussion_id)
     if discussion is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
-    state_info = get_discussion_state(discussion_id)
+    state_info = get_crew_state(discussion_id)
     if state_info is None or state_info["state"] != DiscussionState.PAUSED:
         raise HTTPException(
             status_code=400,
@@ -166,7 +166,7 @@ async def resume_discussion(discussion_id: str) -> ResumeResponse:
     injected_count = len(state_info.get("injected_messages", []))
 
     # Resume the discussion through the crew's state management
-    set_discussion_state(discussion_id, DiscussionState.RUNNING)
+    set_crew_state(discussion_id, DiscussionState.RUNNING)
 
     return ResumeResponse(
         id=discussion_id,
@@ -183,11 +183,11 @@ async def get_intervention_status(discussion_id: str) -> dict:
     Returns information about whether the discussion is paused and
     any queued injected messages.
     """
-    discussion = _discussions.get(discussion_id)
+    discussion = get_discussion_state(discussion_id)
     if discussion is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
-    state_info = get_discussion_state(discussion_id)
+    state_info = get_crew_state(discussion_id)
 
     is_paused = state_info is not None and state_info["state"] == DiscussionState.PAUSED
 
