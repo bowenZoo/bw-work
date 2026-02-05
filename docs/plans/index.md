@@ -2,7 +2,8 @@
 
 > **对应 Spec**: [docs/spec.md](../spec.md)
 > **创建时间**: 2026-02-04
-> **总任务数**: 52 个
+> **更新时间**: 2026-02-05
+> **总任务数**: 67 个
 
 ## 执行批次
 
@@ -14,6 +15,7 @@
 | 3 | [plan-frontend.md](./plan-frontend.md) | 13 | pending | Batch 1 |
 | 4 | [plan-history.md](./plan-history.md) | 7 | pending | Batch 3 |
 | 5 | [plan-advanced.md](./plan-advanced.md) | 10 | pending | Batch 2, 3 |
+| 6 | [plan-image-generation.md](./plan-image-generation.md) | 15 | pending | Batch 2 |
 
 ## Plan 列表
 
@@ -65,6 +67,18 @@
   - 策划案生成
   - **10 个任务**，预计 2-3 天
 
+### Batch 6: 图像生成系统 (Phase 4)
+
+- **[plan-image-generation.md](./plan-image-generation.md)** - 图像生成系统
+  - 视觉概念 Agent（F-30）
+  - Prompt 工程模块（F-31）
+  - 多后端图像服务（F-32）- kie.ai、wenwen-ai、nanobanana、DALL-E
+  - 风格模板系统（F-33）
+  - 主动请求配图（F-34）
+  - 图像存储管理（F-36）
+  - 异步图像生成（F-37）
+  - **15 个任务**，预计 3-4 天
+
 ## 依赖关系图
 
 ```
@@ -72,8 +86,10 @@ Batch 1: plan-backend-core (基础)
     │
     ├──→ Batch 2: plan-websocket
     │         │
-    │         └──────────────────┐
-    │                            │
+    │         ├──────────────────┐
+    │         │                  │
+    │         └──→ Batch 6: plan-image-generation
+    │
     ├──→ Batch 3: plan-memory ───┼──→ Batch 5: plan-advanced
     │         │                  │
     │         └──→ Batch 4: plan-history
@@ -88,7 +104,8 @@ Batch 1: plan-backend-core (基础)
 | Phase 1: MVP | plan-backend-core, plan-websocket | 3-4 天 |
 | Phase 2: 可视化 | plan-frontend, plan-history | 4-5 天 |
 | Phase 3: 记忆系统 | plan-memory | 2 天 |
-| Phase 4: 高级功能 | plan-advanced | 2-3 天 |
+| Phase 4: 图像生成系统 | plan-image-generation | 3-4 天 |
+| Phase 5: 高级功能 | plan-advanced | 2-3 天 |
 
 ## 下一步
 
@@ -102,3 +119,4 @@ Batch 1: plan-backend-core (基础)
 | 日期 | 变更 |
 |------|------|
 | 2026-02-04 | 初始版本，生成 6 个 Plan |
+| 2026-02-05 | 新增 plan-image-generation.md (15 tasks)，对应 Spec 2.7 图像生成系统 |
