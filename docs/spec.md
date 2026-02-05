@@ -1,6 +1,6 @@
 # 游戏策划 AI 团队 规格文档
 
-> **版本**: 1.2
+> **版本**: 1.3
 > **创建时间**: 2026-02-04
 > **更新时间**: 2026-02-05
 
@@ -364,6 +364,563 @@ data/projects/{project_id}/images/
 - 图生图功能（基于已有图片生成变体）
 - 批量生成功能
 
+### 2.8 项目级策划讨论
+
+#### 概述
+
+项目级策划讨论是一个完整的工作流，支持用户上传 GDD（Game Design Document），系统自动识别功能模块，用户批量选择模块后依次进行 AI 策划讨论，最终输出结构化的策划案文档。
+
+与普通讨论的区别：
+- **输入**：基于完整的 GDD 文档，而非单个话题
+- **范围**：覆盖多个功能模块，保持跨模块一致性
+- **输出**：结构化的策划案文档，可直接交付给开发团队
+- **记忆**：项目级记忆贯穿所有模块讨论
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    项目级策划讨论流程                             │
+│                                                                 │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐      │
+│  │ GDD上传  │───→│ 模块识别 │───→│ 批量选择 │───→│ 依次讨论 │      │
+│  └─────────┘    └─────────┘    └─────────┘    └────┬────┘      │
+│                                                    │            │
+│                                              ┌─────▼─────┐      │
+│                                              │  策划案生成 │      │
+│                                              └─────┬─────┘      │
+│                                                    │            │
+│                                              ┌─────▼─────┐      │
+│                                              │  输出到     │      │
+│                                              │  design/   │      │
+│                                              └───────────┘      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 用户故事
+
+- US-22: 作为用户，我希望上传 GDD 文档，让系统自动识别功能模块，以便快速开始策划讨论
+- US-23: 作为用户，我希望一次选择多个模块，系统依次自动讨论，以便提高效率
+- US-24: 作为用户，我希望讨论中断后可以恢复，以便不丢失进度
+- US-25: 作为用户，我希望各模块讨论保持一致性，以便生成连贯的策划案
+- US-26: 作为用户，我希望得到纯策划内容的文档，以便交付给开发团队自行生成技术规格
+
+#### 功能点
+
+| ID | 功能 | 优先级 | 描述 |
+|----|------|--------|------|
+| F-38 | GDD 上传 | P0 | Web 界面上传 GDD 文件（支持 Markdown/PDF/Word） |
+| F-39 | GDD 解析 | P0 | 解析 GDD 内容，提取结构化信息 |
+| F-40 | 模块自动识别 | P0 | AI 识别 GDD 中的功能模块列表 |
+| F-41 | 批量模块选择 | P0 | 用户一次选择多个模块，设置讨论顺序 |
+| F-42 | 依次自动讨论 | P0 | 按顺序自动进行每个模块的讨论 |
+| F-43 | 讨论断点恢复 | P1 | 支持中断后从上次位置继续 |
+| F-44 | 项目级记忆 | P0 | 跨模块共享上下文，保持一致性 |
+| F-45 | 策划案生成 | P0 | 每个模块讨论后生成结构化策划案 |
+| F-46 | 策划案汇总 | P1 | 所有模块完成后生成项目级汇总文档 |
+| F-47 | 讨论进度追踪 | P1 | 实时显示讨论进度和状态 |
+
+#### 详细流程
+
+##### 1. GDD 上传与解析
+
+**上传界面**：
+- 支持拖拽上传或点击选择
+- 支持格式：`.md`、`.pdf`、`.docx`
+- 文件大小限制：10MB
+- 上传后显示解析进度
+
+**解析流程**：
+```
+GDD 文件 → 格式转换 → 文本提取 → 结构分析 → 模块识别
+```
+
+**数据结构**：
+```typescript
+interface GDDDocument {
+  id: string;
+  filename: string;
+  upload_time: string;
+  raw_content: string;      // 原始文本内容
+  parsed_content: {
+    title: string;          // 项目名称
+    overview: string;       // 项目概述
+    modules: GDDModule[];   // 识别的模块列表
+  };
+  status: "uploading" | "parsing" | "ready" | "error";
+}
+
+interface GDDModule {
+  id: string;
+  name: string;             // 模块名称
+  description: string;      // 模块简述
+  source_section: string;   // GDD 中的原始章节
+  keywords: string[];       // 关键词（用于记忆检索）
+  dependencies: string[];   // 依赖的其他模块 ID
+  estimated_rounds: number; // 预估讨论轮数
+}
+```
+
+##### 2. 模块自动识别
+
+**识别策略**：
+- 基于 GDD 章节结构识别
+- 基于关键词匹配（如"战斗系统"、"经济系统"等）
+- AI 分析识别潜在模块
+
+**识别结果示例**：
+```yaml
+modules:
+  - id: "combat"
+    name: "战斗系统"
+    description: "核心战斗机制，包括技能、伤害计算、状态效果"
+    estimated_rounds: 5
+
+  - id: "economy"
+    name: "经济系统"
+    description: "游戏货币、商店、交易系统"
+    dependencies: ["combat"]  # 依赖战斗系统（掉落相关）
+    estimated_rounds: 4
+
+  - id: "progression"
+    name: "成长系统"
+    description: "角色升级、装备强化、天赋树"
+    dependencies: ["combat", "economy"]
+    estimated_rounds: 4
+```
+
+##### 3. 批量模块选择
+
+**选择界面**：
+- 显示识别出的所有模块
+- 支持多选（Checkbox）
+- 支持拖拽调整讨论顺序
+- 显示模块依赖关系（推荐先讨论被依赖的模块）
+- 显示预估总耗时
+
+**智能排序建议**：
+- 按依赖关系拓扑排序
+- 被依赖多的模块优先
+- 用户可手动调整
+
+##### 4. 依次自动讨论
+
+**讨论流程**：
+```
+┌─────────────────────────────────────────────────────────────┐
+│  模块讨论循环                                                 │
+│                                                             │
+│  for each module in selected_modules:                       │
+│      1. 加载项目级记忆                                        │
+│      2. 注入 GDD 模块上下文                                   │
+│      3. 启动策划团队讨论                                      │
+│      4. 实时推送讨论进度                                      │
+│      5. 讨论结束，生成策划案                                  │
+│      6. 更新项目级记忆                                        │
+│      7. 保存断点状态                                         │
+│                                                             │
+│  end for                                                    │
+│                                                             │
+│  生成项目汇总文档                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**讨论上下文注入**：
+每个模块讨论开始时，系统会注入：
+- GDD 中该模块的原始描述
+- 已完成模块的关键决策摘要
+- 项目级约束和一致性要求
+
+##### 5. 讨论断点恢复
+
+**断点数据结构**：
+```typescript
+interface DiscussionCheckpoint {
+  project_id: string;
+  gdd_id: string;
+  selected_modules: string[];
+  current_module_index: number;
+  current_module_state: {
+    module_id: string;
+    discussion_id: string;
+    round: number;
+    messages: Message[];
+  };
+  completed_modules: {
+    module_id: string;
+    design_doc_path: string;
+    key_decisions: string[];
+  }[];
+  created_at: string;
+  updated_at: string;
+}
+```
+
+**恢复流程**：
+1. 检测未完成的项目讨论
+2. 显示恢复提示（上次位置、已完成模块数）
+3. 用户确认恢复或重新开始
+4. 加载断点状态，继续讨论
+
+##### 6. 项目级记忆
+
+**记忆类型**：
+
+| 类型 | 内容 | 用途 |
+|------|------|------|
+| GDD 上下文 | 完整 GDD 内容 | 确保讨论符合总体设计 |
+| 模块决策 | 已完成模块的关键决策 | 保持跨模块一致性 |
+| 术语表 | 项目专有名词定义 | 统一术语使用 |
+| 约束条件 | 技术/资源约束 | 确保方案可行性 |
+
+**记忆检索**：
+- 讨论时自动检索相关记忆
+- 使用向量相似度 + 关键词匹配
+- 注入到 Agent 上下文中
+
+**一致性检查**：
+- 讨论结束前检查与已有决策的冲突
+- 冲突时提醒 Agent 重新讨论
+- 记录冲突解决过程
+
+#### 策划案输出规范
+
+##### 输出位置
+
+```
+data/projects/{project_id}/design/
+├── index.md                    # 项目策划案索引
+├── combat-system.md            # 战斗系统策划案
+├── economy-system.md           # 经济系统策划案
+├── progression-system.md       # 成长系统策划案
+└── assets/                     # 配图资源
+    ├── combat-flow.png
+    └── economy-flow.png
+```
+
+##### 策划案文档结构
+
+每个模块的策划案采用统一格式：
+
+```markdown
+# {模块名} 策划案
+
+> **版本**: 1.0
+> **生成时间**: {timestamp}
+> **讨论 ID**: {discussion_id}
+> **基于 GDD**: {gdd_filename}
+
+## 1. 功能概述
+
+### 1.1 设计目标
+{该模块要达成的核心目标}
+
+### 1.2 核心体验
+{玩家的核心体验是什么}
+
+### 1.3 与其他系统的关系
+{与其他模块的依赖和交互}
+
+## 2. 玩法描述
+
+### 2.1 基础玩法
+{核心玩法机制描述}
+
+### 2.2 进阶玩法
+{深度玩法和策略空间}
+
+### 2.3 玩法示例
+{具体的玩法场景示例}
+
+## 3. 界面流程
+
+### 3.1 主要界面
+{界面列表和功能说明}
+
+### 3.2 操作流程
+{用户操作流程图/描述}
+
+### 3.3 界面跳转
+{界面间的跳转关系}
+
+## 4. 数值框架
+
+### 4.1 核心公式
+{关键数值公式，如伤害计算}
+
+### 4.2 参数表
+{可配置的数值参数}
+
+### 4.3 平衡目标
+{数值平衡的设计目标}
+
+## 5. 边界处理
+
+### 5.1 异常情况
+{各种边界和异常情况的处理}
+
+### 5.2 防作弊
+{防止利用的设计考虑}
+
+### 5.3 容错机制
+{出错时的回退方案}
+
+## 6. 附录
+
+### 6.1 讨论记录摘要
+{AI 讨论的关键点摘要}
+
+### 6.2 设计决策记录
+{重要决策及其原因}
+
+### 6.3 待确认事项
+{需要人工确认的问题}
+```
+
+##### 策划案特点说明
+
+**只包含策划内容**：
+- 不包含技术实现细节
+- 不包含数据库设计
+- 不包含 API 接口定义
+- 不包含代码结构
+
+**交付方式**：
+- 策划案输出到 `data/projects/{project_id}/design/`
+- 可导出为 Markdown/PDF
+- 交付给 bw-game 后，由其自行生成 spec 和代码
+
+#### 数据结构定义
+
+##### 项目讨论状态
+
+```typescript
+interface ProjectDiscussion {
+  id: string;
+  project_id: string;
+  gdd: GDDDocument;
+  selected_modules: string[];
+  module_order: string[];
+  status: "pending" | "in_progress" | "paused" | "completed" | "error";
+  progress: {
+    total_modules: number;
+    completed_modules: number;
+    current_module: string | null;
+    current_round: number;
+  };
+  checkpoint: DiscussionCheckpoint | null;
+  created_at: string;
+  updated_at: string;
+}
+```
+
+##### 模块讨论结果
+
+```typescript
+interface ModuleDiscussionResult {
+  module_id: string;
+  module_name: string;
+  discussion_id: string;
+  status: "completed" | "skipped" | "error";
+  design_doc: {
+    path: string;
+    version: string;
+    sections: string[];
+  };
+  key_decisions: {
+    id: string;
+    topic: string;
+    decision: string;
+    reason: string;
+    participants: string[];
+  }[];
+  duration_minutes: number;
+  token_usage: number;
+}
+```
+
+#### WebSocket 消息
+
+##### 项目讨论进度
+
+```typescript
+// 项目讨论开始
+{
+  type: "project_discussion_start",
+  project_id: string,
+  total_modules: number,
+  module_order: string[]
+}
+
+// 模块讨论开始
+{
+  type: "module_discussion_start",
+  project_id: string,
+  module_id: string,
+  module_name: string,
+  module_index: number,
+  total_modules: number
+}
+
+// 模块讨论进度
+{
+  type: "module_discussion_progress",
+  project_id: string,
+  module_id: string,
+  round: number,
+  speaker: string,
+  message: string
+}
+
+// 模块讨论完成
+{
+  type: "module_discussion_complete",
+  project_id: string,
+  module_id: string,
+  design_doc_path: string,
+  key_decisions: string[]
+}
+
+// 项目讨论完成
+{
+  type: "project_discussion_complete",
+  project_id: string,
+  total_duration_minutes: number,
+  design_docs: string[],
+  summary_path: string
+}
+
+// 讨论暂停（断点保存）
+{
+  type: "discussion_paused",
+  project_id: string,
+  checkpoint_id: string,
+  current_module: string,
+  completed_modules: number
+}
+```
+
+#### API 接口
+
+##### GDD 上传
+
+```
+POST /api/projects/{project_id}/gdd
+Content-Type: multipart/form-data
+
+Request:
+  file: File (GDD 文档)
+
+Response:
+{
+  "gdd_id": "gdd_001",
+  "filename": "my-game-gdd.md",
+  "status": "parsing",
+  "message": "GDD 上传成功，正在解析..."
+}
+```
+
+##### 获取识别的模块
+
+```
+GET /api/projects/{project_id}/gdd/{gdd_id}/modules
+
+Response:
+{
+  "gdd_id": "gdd_001",
+  "status": "ready",
+  "modules": [
+    {
+      "id": "combat",
+      "name": "战斗系统",
+      "description": "核心战斗机制...",
+      "dependencies": [],
+      "estimated_rounds": 5
+    },
+    ...
+  ],
+  "suggested_order": ["combat", "economy", "progression"]
+}
+```
+
+##### 启动批量讨论
+
+```
+POST /api/projects/{project_id}/discussions/batch
+
+Request:
+{
+  "gdd_id": "gdd_001",
+  "modules": ["combat", "economy", "progression"],
+  "order": ["combat", "economy", "progression"]
+}
+
+Response:
+{
+  "discussion_id": "disc_batch_001",
+  "status": "started",
+  "websocket_url": "/ws/projects/{project_id}/discussions/disc_batch_001"
+}
+```
+
+##### 暂停/恢复讨论
+
+```
+POST /api/projects/{project_id}/discussions/{discussion_id}/pause
+
+Response:
+{
+  "status": "paused",
+  "checkpoint_id": "cp_001"
+}
+
+POST /api/projects/{project_id}/discussions/{discussion_id}/resume
+
+Response:
+{
+  "status": "resumed",
+  "current_module": "economy",
+  "completed_modules": 1
+}
+```
+
+##### 获取策划案
+
+```
+GET /api/projects/{project_id}/design/{module_id}
+
+Response:
+{
+  "module_id": "combat",
+  "module_name": "战斗系统",
+  "design_doc": {
+    "path": "data/projects/proj_001/design/combat-system.md",
+    "content": "# 战斗系统策划案\n...",
+    "version": "1.0",
+    "created_at": "2026-02-05T10:00:00Z"
+  }
+}
+```
+
+#### 验收标准
+
+- [ ] AC-30: 支持上传 Markdown/PDF/Word 格式的 GDD 文件
+- [ ] AC-31: GDD 解析后能正确识别功能模块列表
+- [ ] AC-32: 用户可批量选择模块并调整讨论顺序
+- [ ] AC-33: 系统按顺序自动进行各模块讨论
+- [ ] AC-34: 讨论中断后可从断点恢复
+- [ ] AC-35: 各模块讨论能访问项目级记忆，保持一致性
+- [ ] AC-36: 每个模块讨论后生成符合规范的策划案文档
+- [ ] AC-37: 策划案输出到 `data/projects/{project_id}/design/` 目录
+- [ ] AC-38: 策划案只包含策划内容，不含技术规格
+- [ ] AC-39: 支持导出策划案为 Markdown/PDF 格式
+
+#### 暂不实现
+
+- 多人协作编辑 GDD
+- GDD 版本对比
+- 策划案在线编辑
+- 与外部项目管理工具集成（如 Jira）
+- 自动生成技术规格（由 bw-game 负责）
+
 ## 3. 技术约束
 
 ### 3.1 两层 Agent 架构
@@ -415,6 +972,8 @@ data/projects/{project_id}/images/
 | Chroma | latest | 向量数据库 |
 | Langfuse SDK | latest | 监控追踪 |
 | httpx/aiohttp | latest | 异步 HTTP 客户端（图像服务调用） |
+| python-docx | latest | Word 文档解析 |
+| PyMuPDF | latest | PDF 文档解析 |
 
 **前端:**
 | 技术 | 版本 | 用途 |
@@ -435,6 +994,8 @@ data/projects/{project_id}/images/
 | 并发讨论数 | 支持 3+ |
 | 历史记录存储 | 最近 100 条讨论，超出自动归档到 `archive/` |
 | 图像生成超时 | 同步模式 < 30s，异步模式 < 120s |
+| GDD 解析时间 | < 30s（10MB 文件） |
+| 单模块讨论时间 | < 10min（5 轮讨论） |
 
 ### 3.4 兼容性
 
@@ -450,9 +1011,17 @@ data/
 ├── projects/{project_id}/
 │   ├── discussions/          # 讨论记录
 │   ├── drafts/               # 策划案版本
-│   ├── images/               # 生成的图片 (新增)
+│   ├── images/               # 生成的图片
 │   │   ├── img_001.png
 │   │   └── metadata.json
+│   ├── design/               # 策划案输出 (新增)
+│   │   ├── index.md          # 项目策划案索引
+│   │   ├── combat-system.md  # 模块策划案
+│   │   └── assets/           # 策划案配图
+│   ├── gdd/                  # GDD 文档 (新增)
+│   │   ├── original/         # 原始上传文件
+│   │   └── parsed/           # 解析后的结构化数据
+│   ├── checkpoints/          # 讨论断点 (新增)
 │   ├── decisions.md          # 决策记录
 │   └── config.yaml           # 项目配置
 └── knowledge/                # 全局知识库
@@ -513,7 +1082,7 @@ data/
 - 设计决策追踪 (F-22)
 - 知识库管理 (F-20)
 
-### Phase 4: 图像生成系统 (新增)
+### Phase 4: 图像生成系统
 - 视觉概念 Agent (F-30)
 - Prompt 工程模块 (F-31)
 - 多后端图像服务集成 (F-32)
@@ -522,9 +1091,19 @@ data/
 - 图像存储管理 (F-36)
 - 异步图像生成 (F-37)
 
-### Phase 5: 高级功能
+### Phase 5: 项目级策划讨论 (新增)
+- GDD 上传与解析 (F-38, F-39)
+- 模块自动识别 (F-40)
+- 批量模块选择 (F-41)
+- 依次自动讨论 (F-42)
+- 讨论断点恢复 (F-43)
+- 项目级记忆 (F-44)
+- 策划案生成 (F-45)
+- 策划案汇总 (F-46)
+- 讨论进度追踪 (F-47)
+
+### Phase 6: 高级功能
 - 人工介入节点 (F-11)
-- 策划案自动生成 (F-27)
 - 自动配图 (F-35)
 - 多项目并行
 - 成本控制
@@ -545,6 +1124,10 @@ data/
 | 视觉概念 Agent | 负责图像生成的 Agent，可作为团队成员或服务 |
 | Prompt 工程 | 将自然语言描述转化为图像生成 prompt 的过程 |
 | 风格模板 | 预定义的图像生成参数集合 |
+| GDD | Game Design Document，游戏设计文档 |
+| 项目级记忆 | 跨模块共享的上下文记忆，保持讨论一致性 |
+| 断点恢复 | 中断后从上次位置继续讨论的能力 |
+| 策划案 | 纯策划内容的设计文档，不含技术规格 |
 
 ### B. 文档版本历史
 
@@ -553,3 +1136,4 @@ data/
 | 1.0 | 2026-02-04 | 初始版本，基于 README.md 生成 |
 | 1.1 | 2026-02-04 | 补充"两层 Agent 架构"说明，修正存储上限约束 |
 | 1.2 | 2026-02-05 | 新增图像生成系统模块 (2.7)，更新里程碑规划 |
+| 1.3 | 2026-02-05 | 新增项目级策划讨论模块 (2.8)，支持 GDD 上传、批量模块讨论、策划案生成 |
