@@ -1,11 +1,36 @@
 """Application settings and configuration."""
 
+import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 import yaml
 from pydantic import Field
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
+
+# Config change callbacks registry
+_config_callbacks: dict[str, list[Callable[[], None]]] = {
+    "llm": [],
+    "langfuse": [],
+    "image": [],
+}
+
+
+def register_config_callback(category: str, callback: Callable[[], None]) -> None:
+    """Register a callback to be called when config changes."""
+    if category in _config_callbacks:
+        _config_callbacks[category].append(callback)
+
+
+def _notify_config_change(category: str) -> None:
+    """Notify all callbacks for a config category."""
+    for callback in _config_callbacks.get(category, []):
+        try:
+            callback()
+        except Exception as e:
+            logger.error(f"Config callback error for {category}: {e}")
 
 
 class Settings(BaseSettings):
@@ -126,3 +151,135 @@ def load_role_config(role_name: str, settings: Settings | None = None) -> dict[s
 
 # Global settings instance
 settings = Settings()
+
+
+def reload_config(category: Optional[str] = None) -> None:
+    """
+    Reload configuration from ConfigStore.
+
+    This function reads config from the admin database and updates
+    the settings object, then notifies relevant modules to refresh.
+
+    Args:
+        category: Optional specific category to reload (llm, langfuse, image).
+                  If None, reloads all categories.
+    """
+    # Lazy import to avoid circular dependency
+    try:
+        from src.admin.config_store import ConfigStore
+
+        store = ConfigStore()
+    except ImportError:
+        logger.warning("ConfigStore not available, skipping reload")
+        return
+
+    categories_to_reload = [category] if category else ["llm", "langfuse", "image"]
+
+    for cat in categories_to_reload:
+        if cat == "llm":
+            _reload_llm_config(store)
+        elif cat == "langfuse":
+            _reload_langfuse_config(store)
+        elif cat == "image":
+            _reload_image_config(store)
+
+        # Notify callbacks
+        _notify_config_change(cat)
+
+
+def _reload_llm_config(store) -> None:
+    """Reload LLM configuration."""
+    global settings
+
+    api_key = store.get_raw("llm", "openai_api_key")
+    if api_key:
+        settings.openai_api_key = api_key
+
+    model = store.get_raw("llm", "openai_model")
+    if model:
+        settings.openai_model = model
+
+    logger.info("LLM config reloaded from ConfigStore")
+
+
+def _reload_langfuse_config(store) -> None:
+    """Reload Langfuse configuration."""
+    global settings
+
+    public_key = store.get_raw("langfuse", "public_key")
+    if public_key:
+        settings.langfuse_public_key = public_key
+
+    secret_key = store.get_raw("langfuse", "secret_key")
+    if secret_key:
+        settings.langfuse_secret_key = secret_key
+
+    host = store.get_raw("langfuse", "host")
+    if host:
+        settings.langfuse_host = host
+
+    logger.info("Langfuse config reloaded from ConfigStore")
+
+
+def _reload_image_config(store) -> None:
+    """Reload image service configuration."""
+    global settings
+
+    default_provider = store.get_raw("image", "default_provider")
+    if default_provider:
+        settings.image_default_provider = default_provider
+
+    logger.info("Image config reloaded from ConfigStore")
+
+
+def get_effective_config(category: str) -> dict:
+    """
+    Get effective configuration with priority:
+    environment variable > database config > default value
+
+    Args:
+        category: Configuration category (llm, langfuse, image)
+
+    Returns:
+        Dict of effective configuration values
+    """
+    import os
+
+    try:
+        from src.admin.config_store import ConfigStore
+
+        store = ConfigStore()
+    except ImportError:
+        store = None
+
+    if category == "llm":
+        return {
+            "openai_api_key": os.environ.get("OPENAI_API_KEY")
+            or (store.get_raw("llm", "openai_api_key") if store else None)
+            or settings.openai_api_key,
+            "openai_model": os.environ.get("OPENAI_MODEL")
+            or (store.get_raw("llm", "openai_model") if store else None)
+            or settings.openai_model,
+        }
+    elif category == "langfuse":
+        return {
+            "public_key": os.environ.get("LANGFUSE_PUBLIC_KEY")
+            or (store.get_raw("langfuse", "public_key") if store else None)
+            or settings.langfuse_public_key,
+            "secret_key": os.environ.get("LANGFUSE_SECRET_KEY")
+            or (store.get_raw("langfuse", "secret_key") if store else None)
+            or settings.langfuse_secret_key,
+            "host": os.environ.get("LANGFUSE_HOST")
+            or (store.get_raw("langfuse", "host") if store else None)
+            or settings.langfuse_host,
+            "enabled": (store.get_raw("langfuse", "enabled") if store else "false")
+            == "true",
+        }
+    elif category == "image":
+        return {
+            "default_provider": os.environ.get("IMAGE_DEFAULT_PROVIDER")
+            or (store.get_raw("image", "default_provider") if store else None)
+            or settings.image_default_provider,
+        }
+
+    return {}

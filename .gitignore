@@ -24,6 +24,7 @@ dist/
 backend/data/
 data/projects/*
 !data/projects/.gitkeep
+data/admin/
 data/chroma/
 data/knowledge/templates/*
 !data/knowledge/templates/.gitkeep
