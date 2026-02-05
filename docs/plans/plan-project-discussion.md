@@ -424,7 +424,7 @@ class ParsedText:
   - 分析模块间依赖关系
   - 预估讨论轮数
 - 定义识别 Prompt 模板
-- 实现结果缓存（key = content_hash + prompt_version）
+- 实现结果缓存（key = content_hash + parser_version + prompt_version）
 
 **Prompt 设计要点**:
 - 输入：GDD 完整文本 + 章节结构
@@ -630,8 +630,8 @@ Request:
 Response:
 {
   "discussion_id": "disc_batch_001",
-  "status": "started",
-  "websocket_url": "/ws/projects/{project_id}/discussions/disc_batch_001"
+  "status": "running",
+  "project_ws_url": "/ws/projects/{project_id}"
 }
 
 POST /api/projects/{project_id}/discussions/{id}/pause
@@ -1009,7 +1009,7 @@ Response:
     # 讨论配置
     PROJECT_DISCUSSION_MAX_ROUNDS_PER_MODULE: int = 10
     PROJECT_DISCUSSION_CHECKPOINT_RETENTION: int = 5
-    PROJECT_DISCUSSION_CHECKPOINT_MESSAGE_LIMIT: int = 2000
+    PROJECT_DISCUSSION_CHECKPOINT_MESSAGE_LIMIT: int = 2000  # 恢复时加载的消息上限
     PROJECT_DISCUSSION_WS_THROTTLE_MS: int = 300
     PROJECT_DISCUSSION_MAX_CONCURRENCY: int = 2
 

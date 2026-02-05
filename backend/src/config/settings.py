@@ -120,6 +120,35 @@ class Settings(BaseSettings):
         default=False, alias="IMAGE_ENABLE_PROMPT_ENHANCEMENT"
     )
 
+    # Project Discussion Configuration
+    project_data_dir: str = Field(
+        default="data/projects", alias="PROJECT_DATA_DIR"
+    )
+    project_max_gdd_size_mb: int = Field(
+        default=10, alias="PROJECT_MAX_GDD_SIZE_MB"
+    )
+    project_max_rounds_per_module: int = Field(
+        default=10, alias="PROJECT_MAX_ROUNDS_PER_MODULE"
+    )
+    project_checkpoint_interval_seconds: int = Field(
+        default=60, alias="PROJECT_CHECKPOINT_INTERVAL_SECONDS"
+    )
+    project_checkpoint_retention_count: int = Field(
+        default=5, alias="PROJECT_CHECKPOINT_RETENTION_COUNT"
+    )
+    project_checkpoint_max_age_days: int = Field(
+        default=30, alias="PROJECT_CHECKPOINT_MAX_AGE_DAYS"
+    )
+    project_ws_throttle_ms: int = Field(
+        default=300, alias="PROJECT_WS_THROTTLE_MS"
+    )
+    project_module_detection_model: str = Field(
+        default="gpt-4", alias="PROJECT_MODULE_DETECTION_MODEL"
+    )
+    project_design_doc_model: str = Field(
+        default="gpt-4", alias="PROJECT_DESIGN_DOC_MODEL"
+    )
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

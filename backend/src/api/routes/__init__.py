@@ -6,6 +6,7 @@ from src.api.routes.image import router as image_router
 from src.api.routes.intervention import router as intervention_router
 from src.api.routes.memory import router as memory_router
 from src.api.routes.monitoring import router as monitoring_router
+from src.api.routes.project import router as project_router
 
 __all__ = [
     "discussion_router",
@@ -14,4 +15,5 @@ __all__ = [
     "intervention_router",
     "memory_router",
     "monitoring_router",
+    "project_router",
 ]

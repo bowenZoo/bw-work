@@ -4,6 +4,9 @@ import DiscussionView from '@/views/DiscussionView.vue';
 import HistoryView from '@/views/HistoryView.vue';
 import { useAdminStore } from '@/stores/admin';
 
+// Lazy load project view
+const ProjectView = () => import('@/views/ProjectView.vue');
+
 // Lazy load admin views
 const AdminLayout = () => import('@/views/admin/AdminLayout.vue');
 const AdminLoginView = () => import('@/views/admin/LoginView.vue');
@@ -42,6 +45,11 @@ const router = createRouter({
       path: '/history',
       name: 'history',
       component: HistoryView,
+    },
+    {
+      path: '/project/:id',
+      name: 'project',
+      component: ProjectView,
     },
     {
       path: '/discussion/:id/playback',

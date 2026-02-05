@@ -15,6 +15,7 @@ from src.api.routes import (
     intervention_router,
     memory_router,
     monitoring_router,
+    project_router,
 )
 from src.api.websocket import connection_manager, websocket_router
 from src.api.websocket.manager import set_event_loop
@@ -106,5 +107,6 @@ app.include_router(image_router)
 app.include_router(intervention_router)
 app.include_router(memory_router)
 app.include_router(monitoring_router)
+app.include_router(project_router)
 app.include_router(websocket_router)
 app.include_router(admin_router)
