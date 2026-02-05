@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { MessageSquare, Users, Zap, Paperclip, X } from 'lucide-vue-next';
+import { MessageSquare, Users, Zap, Paperclip, X, History } from 'lucide-vue-next';
 
 const router = useRouter();
 const topicInput = ref('');
@@ -74,11 +74,20 @@ function removeAttachment() {
   <div class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex flex-col">
     <!-- Header -->
     <header class="p-6">
-      <div class="max-w-4xl mx-auto flex items-center gap-3">
-        <div class="w-8 h-8 bg-gray-900 rounded-md flex items-center justify-center">
-          <span class="text-white font-bold text-sm">BW</span>
+      <div class="max-w-4xl mx-auto flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 bg-gray-900 rounded-md flex items-center justify-center">
+            <span class="text-white font-bold text-sm">BW</span>
+          </div>
+          <h1 class="text-xl font-semibold text-gray-900">Game Design</h1>
         </div>
-        <h1 class="text-xl font-semibold text-gray-900">Game Design</h1>
+        <router-link
+          to="/history"
+          class="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 hover:bg-white/50 rounded-lg transition-colors"
+        >
+          <History class="w-5 h-5" />
+          <span>历史记录</span>
+        </router-link>
       </div>
     </header>
 
