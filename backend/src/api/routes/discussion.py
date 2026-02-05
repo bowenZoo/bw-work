@@ -33,11 +33,19 @@ class DiscussionStatus(str, Enum):
     FAILED = "failed"
 
 
+class AttachmentInfo(BaseModel):
+    """Attachment file info."""
+
+    filename: str = Field(..., description="Original filename")
+    content: str = Field(..., description="File content")
+
+
 class CreateDiscussionRequest(BaseModel):
     """Request body for creating a discussion."""
 
     topic: str = Field(..., min_length=1, description="The discussion topic")
     rounds: int = Field(default=3, ge=1, le=10, description="Number of discussion rounds")
+    attachment: AttachmentInfo | None = Field(default=None, description="Optional markdown attachment")
 
 
 class CreateDiscussionResponse(BaseModel):
@@ -62,6 +70,7 @@ class DiscussionState(BaseModel):
     completed_at: str | None = None
     result: str | None = None
     error: str | None = None
+    attachment: AttachmentInfo | None = None
 
 
 class GetDiscussionResponse(BaseModel):
@@ -182,6 +191,7 @@ def _run_discussion_sync(discussion_id: str) -> None:
             topic=discussion.topic,
             rounds=discussion.rounds,
             verbose=False,
+            attachment=discussion.attachment.content if discussion.attachment else None,
         )
 
         discussion.result = result
@@ -216,6 +226,7 @@ async def create_discussion(request: CreateDiscussionRequest) -> CreateDiscussio
         rounds=request.rounds,
         status=DiscussionStatus.PENDING,
         created_at=now,
+        attachment=request.attachment,
     )
     save_discussion_state(discussion)
 

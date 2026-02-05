@@ -2,8 +2,8 @@
   <div class="space-y-6">
     <!-- Header -->
     <div>
-      <h1 class="text-2xl font-bold text-white">Audit Logs</h1>
-      <p class="text-gray-400 mt-1">View system activity and security events</p>
+      <h1 class="text-2xl font-bold text-white">操作日志</h1>
+      <p class="text-gray-400 mt-1">查看系统活动和安全事件</p>
     </div>
 
     <!-- Filters -->
@@ -11,37 +11,37 @@
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
         <!-- Action Filter -->
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1">Action</label>
+          <label class="block text-sm font-medium text-gray-300 mb-1">操作类型</label>
           <select
             v-model="filters.action"
             @change="loadLogs"
             class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            <option value="">All Actions</option>
-            <option value="login">Login</option>
-            <option value="login_failed">Login Failed</option>
-            <option value="logout">Logout</option>
-            <option value="config_update">Config Update</option>
-            <option value="config_delete">Config Delete</option>
-            <option value="bootstrap_setup">Bootstrap Setup</option>
+            <option value="">全部操作</option>
+            <option value="login">登录</option>
+            <option value="login_failed">登录失败</option>
+            <option value="logout">退出</option>
+            <option value="config_update">配置更新</option>
+            <option value="config_delete">配置删除</option>
+            <option value="bootstrap_setup">初始设置</option>
           </select>
         </div>
 
         <!-- Username Filter -->
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1">Username</label>
+          <label class="block text-sm font-medium text-gray-300 mb-1">用户名</label>
           <input
             v-model="filters.username"
             @input="debouncedLoadLogs"
             type="text"
-            placeholder="Filter by username..."
+            placeholder="按用户名筛选..."
             class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
         <!-- Start Date -->
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1">Start Date</label>
+          <label class="block text-sm font-medium text-gray-300 mb-1">开始日期</label>
           <input
             v-model="filters.start_date"
             @change="loadLogs"
@@ -52,7 +52,7 @@
 
         <!-- End Date -->
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1">End Date</label>
+          <label class="block text-sm font-medium text-gray-300 mb-1">结束日期</label>
           <input
             v-model="filters.end_date"
             @change="loadLogs"
@@ -68,7 +68,7 @@
           @click="clearFilters"
           class="text-sm text-gray-400 hover:text-white transition-colors"
         >
-          Clear Filters
+          清除筛选
         </button>
       </div>
     </div>
@@ -84,18 +84,18 @@
     <!-- Logs Table -->
     <div v-else class="bg-gray-800 rounded-lg overflow-hidden">
       <div v-if="logs.length === 0" class="text-center py-12 text-gray-400">
-        No audit logs found
+        暂无日志记录
       </div>
 
       <table v-else class="w-full">
         <thead class="bg-gray-700/50">
           <tr>
-            <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">Time</th>
-            <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">Action</th>
-            <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">User</th>
-            <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">Target</th>
-            <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">IP Address</th>
-            <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">Details</th>
+            <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">时间</th>
+            <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">操作</th>
+            <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">用户</th>
+            <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">目标</th>
+            <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">IP 地址</th>
+            <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">详情</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-700">
@@ -132,7 +132,7 @@
                 @click="showDetails(log)"
                 class="text-blue-400 hover:text-blue-300 transition-colors"
               >
-                View
+                查看
               </button>
               <span v-else class="text-gray-500">-</span>
             </td>
@@ -144,7 +144,7 @@
     <!-- Pagination -->
     <div v-if="totalPages > 1" class="flex items-center justify-between">
       <div class="text-sm text-gray-400">
-        Showing {{ (currentPage - 1) * pageSize + 1 }} to {{ Math.min(currentPage * pageSize, totalItems) }} of {{ totalItems }} entries
+        显示第 {{ (currentPage - 1) * pageSize + 1 }} 至 {{ Math.min(currentPage * pageSize, totalItems) }} 条，共 {{ totalItems }} 条
       </div>
       <div class="flex items-center space-x-2">
         <button
@@ -152,17 +152,17 @@
           :disabled="currentPage === 1"
           class="px-3 py-1 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          Previous
+          上一页
         </button>
         <span class="text-gray-400">
-          Page {{ currentPage }} of {{ totalPages }}
+          第 {{ currentPage }} / {{ totalPages }} 页
         </span>
         <button
           @click="goToPage(currentPage + 1)"
           :disabled="currentPage === totalPages"
           class="px-3 py-1 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          Next
+          下一页
         </button>
       </div>
     </div>
@@ -175,7 +175,7 @@
     >
       <div class="bg-gray-800 rounded-lg p-6 max-w-lg w-full mx-4">
         <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold text-white">Log Details</h3>
+          <h3 class="text-lg font-semibold text-white">日志详情</h3>
           <button
             @click="selectedLog = null"
             class="text-gray-400 hover:text-white transition-colors"
@@ -188,28 +188,28 @@
 
         <div class="space-y-4">
           <div v-if="selectedLog.before_value">
-            <label class="block text-sm font-medium text-gray-400 mb-1">Before</label>
+            <label class="block text-sm font-medium text-gray-400 mb-1">修改前</label>
             <div class="p-3 bg-gray-900 rounded-lg text-red-400 font-mono text-sm break-all">
               {{ selectedLog.before_value }}
             </div>
           </div>
 
           <div v-if="selectedLog.after_value">
-            <label class="block text-sm font-medium text-gray-400 mb-1">After</label>
+            <label class="block text-sm font-medium text-gray-400 mb-1">修改后</label>
             <div class="p-3 bg-gray-900 rounded-lg text-green-400 font-mono text-sm break-all">
               {{ selectedLog.after_value }}
             </div>
           </div>
 
           <div v-if="selectedLog.details">
-            <label class="block text-sm font-medium text-gray-400 mb-1">Details</label>
+            <label class="block text-sm font-medium text-gray-400 mb-1">详细信息</label>
             <div class="p-3 bg-gray-900 rounded-lg text-gray-300 text-sm">
               {{ selectedLog.details }}
             </div>
           </div>
 
           <div v-if="selectedLog.user_agent">
-            <label class="block text-sm font-medium text-gray-400 mb-1">User Agent</label>
+            <label class="block text-sm font-medium text-gray-400 mb-1">用户代理</label>
             <div class="p-3 bg-gray-900 rounded-lg text-gray-400 text-xs break-all">
               {{ selectedLog.user_agent }}
             </div>

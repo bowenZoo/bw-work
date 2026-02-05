@@ -59,9 +59,16 @@ export interface ServerMessage {
 // Connection status
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
+// Attachment type
+export interface AttachmentInfo {
+  filename: string;
+  content: string;
+}
+
 // API response types
 export interface CreateDiscussionRequest {
   topic: string;
+  attachment?: AttachmentInfo;
 }
 
 export interface CreateDiscussionResponse {

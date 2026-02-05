@@ -1,14 +1,27 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { MessageSquare, Users, Zap } from 'lucide-vue-next';
+import { MessageSquare, Users, Zap, Paperclip, X } from 'lucide-vue-next';
 
 const router = useRouter();
 const topicInput = ref('');
+const attachmentFile = ref<File | null>(null);
+const attachmentContent = ref('');
+const fileInputRef = ref<HTMLInputElement | null>(null);
 
 function startDiscussion() {
   if (topicInput.value.trim()) {
-    // Navigate to discussion page with topic as query param
+    // Store attachment in sessionStorage (URL has length limit)
+    if (attachmentContent.value) {
+      sessionStorage.setItem('discussion_attachment', JSON.stringify({
+        filename: attachmentFile.value?.name || 'attachment.md',
+        content: attachmentContent.value,
+      }));
+    } else {
+      sessionStorage.removeItem('discussion_attachment');
+    }
+
+    // Navigate to discussion page with topic
     router.push({
       name: 'discussion',
       query: { topic: topicInput.value.trim() },
@@ -19,6 +32,40 @@ function startDiscussion() {
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter') {
     startDiscussion();
+  }
+}
+
+function triggerFileInput() {
+  fileInputRef.value?.click();
+}
+
+async function handleFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (file) {
+    if (!file.name.endsWith('.md')) {
+      alert('请上传 .md 格式的文件');
+      return;
+    }
+
+    attachmentFile.value = file;
+
+    try {
+      attachmentContent.value = await file.text();
+    } catch (error) {
+      console.error('Failed to read file:', error);
+      alert('读取文件失败');
+      removeAttachment();
+    }
+  }
+}
+
+function removeAttachment() {
+  attachmentFile.value = null;
+  attachmentContent.value = '';
+  if (fileInputRef.value) {
+    fileInputRef.value.value = '';
   }
 }
 </script>
@@ -68,6 +115,40 @@ function handleKeydown(event: KeyboardEvent) {
               @click="startDiscussion"
             >
               开始讨论
+            </button>
+          </div>
+
+          <!-- Attachment section -->
+          <div class="mt-4">
+            <input
+              ref="fileInputRef"
+              type="file"
+              accept=".md"
+              class="hidden"
+              @change="handleFileSelect"
+            />
+
+            <div v-if="attachmentFile" class="flex items-center gap-2 p-3 bg-blue-50 rounded-lg">
+              <Paperclip class="w-4 h-4 text-blue-500" />
+              <span class="text-sm text-gray-700 flex-1">{{ attachmentFile.name }}</span>
+              <span class="text-xs text-gray-500">{{ (attachmentFile.size / 1024).toFixed(1) }} KB</span>
+              <button
+                type="button"
+                class="p-1 hover:bg-blue-100 rounded transition-colors"
+                @click="removeAttachment"
+              >
+                <X class="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+
+            <button
+              v-else
+              type="button"
+              class="flex items-center gap-2 text-sm text-gray-500 hover:text-blue-500 transition-colors"
+              @click="triggerFileInput"
+            >
+              <Paperclip class="w-4 h-4" />
+              <span>添加附件（.md 文件）</span>
             </button>
           </div>
         </div>

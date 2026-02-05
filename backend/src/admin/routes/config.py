@@ -24,7 +24,21 @@ router = APIRouter(prefix="/config", tags=["config"])
 
 # Allowed domains for SSRF protection in test endpoints
 ALLOWED_TEST_DOMAINS = [
+    # OpenAI
     "api.openai.com",
+    # Moonshot (Kimi)
+    "api.moonshot.ai",
+    "api.moonshot.cn",
+    # DeepSeek
+    "api.deepseek.com",
+    # 智谱 AI (GLM)
+    "open.bigmodel.cn",
+    # 通义千问 (Qwen/DashScope)
+    "dashscope.aliyuncs.com",
+    "dashscope-intl.aliyuncs.com",
+    # MiniMax
+    "api.minimaxi.com",
+    # Langfuse
     "cloud.langfuse.com",
     "us.cloud.langfuse.com",
     "eu.cloud.langfuse.com",
@@ -260,7 +274,7 @@ async def _test_llm_config(store: ConfigStore, start_time: float) -> ConfigTestR
             latency_ms=0,
         )
 
-    base_url = store.get_raw("llm", "openai_base_url") or "https://api.openai.com"
+    base_url = store.get_raw("llm", "openai_base_url") or "https://api.openai.com/v1"
 
     # Validate domain for SSRF protection
     if not validate_domain(base_url):
@@ -270,10 +284,14 @@ async def _test_llm_config(store: ConfigStore, start_time: float) -> ConfigTestR
             latency_ms=0,
         )
 
+    # Normalize base_url: remove trailing slash, user should provide full path (e.g., .../v1)
+    base_url = base_url.rstrip("/")
+    models_url = f"{base_url}/models"
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{base_url}/v1/models",
+                models_url,
                 headers={"Authorization": f"Bearer {api_key}"},
             )
 

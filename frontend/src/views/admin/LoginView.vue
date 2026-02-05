@@ -3,16 +3,15 @@
     <div class="max-w-md w-full space-y-8">
       <!-- Header -->
       <div class="text-center">
-        <h1 class="text-3xl font-bold text-white">Admin Login</h1>
-        <p class="mt-2 text-gray-400">Sign in to access the management dashboard</p>
+        <h1 class="text-3xl font-bold text-white">管理后台登录</h1>
+        <p class="mt-2 text-gray-400">登录以访问管理控制台</p>
       </div>
 
       <!-- Security Notice -->
       <div class="bg-blue-900/30 border border-blue-700 rounded-lg p-4 text-sm text-blue-300">
         <p>
-          <strong>Security Notice:</strong> This admin panel uses JWT authentication.
-          Tokens are stored in localStorage. For enhanced security, ensure you're on a
-          trusted device and log out when done.
+          <strong>安全提示：</strong>本管理后台使用 JWT 认证，令牌存储于 localStorage。
+          为确保安全，请在可信设备上使用，并在完成操作后退出登录。
         </p>
       </div>
 
@@ -30,7 +29,7 @@
           <!-- Username -->
           <div>
             <label for="username" class="block text-sm font-medium text-gray-300">
-              Username
+              用户名
             </label>
             <input
               id="username"
@@ -39,14 +38,14 @@
               required
               autocomplete="username"
               class="mt-1 block w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Enter your username"
+              placeholder="请输入用户名"
             />
           </div>
 
           <!-- Password -->
           <div>
             <label for="password" class="block text-sm font-medium text-gray-300">
-              Password
+              密码
             </label>
             <input
               id="password"
@@ -55,7 +54,7 @@
               required
               autocomplete="current-password"
               class="mt-1 block w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Enter your password"
+              placeholder="请输入密码"
             />
           </div>
         </div>
@@ -87,7 +86,7 @@
               d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
             />
           </svg>
-          {{ loading ? 'Signing in...' : 'Sign in' }}
+          {{ loading ? '登录中...' : '登录' }}
         </button>
       </form>
 
@@ -97,7 +96,7 @@
           to="/"
           class="text-sm text-gray-400 hover:text-gray-300 transition-colors"
         >
-          Back to main application
+          返回主应用
         </router-link>
       </div>
     </div>

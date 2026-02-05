@@ -511,12 +511,14 @@ class DiscussionCrew:
         self,
         topic: str,
         rounds: int = 3,
+        attachment: str | None = None,
     ) -> list[Task]:
         """Create discussion tasks for the given topic.
 
         Args:
             topic: The design topic to discuss.
             rounds: Number of discussion rounds.
+            attachment: Optional markdown attachment content.
 
         Returns:
             List of CrewAI Task objects.
@@ -529,6 +531,11 @@ class DiscussionCrew:
         history_section = ""
         if history_context:
             history_section = f"\n\n---\n参考历史信息：\n{history_context}\n---\n"
+
+        # Attachment section
+        attachment_section = ""
+        if attachment:
+            attachment_section = f"\n\n---\n附件内容：\n{attachment}\n---\n"
 
         # Build CrewAI agents
         system_agent = self._system_designer.build_agent()
@@ -548,7 +555,7 @@ class DiscussionCrew:
 作为{agent.role}，请针对以下话题发表你的初步看法和设计建议：
 
 话题：{topic}
-{history_section}
+{history_section}{attachment_section}
 请从你的专业角度出发，提出你认为重要的设计考虑点。
 输出应该包含：
 1. 你对这个话题的理解
@@ -792,6 +799,7 @@ class DiscussionCrew:
         topic: str,
         rounds: int = 3,
         verbose: bool = True,
+        attachment: str | None = None,
     ) -> str:
         """Run a design discussion on the given topic.
 
@@ -799,6 +807,7 @@ class DiscussionCrew:
             topic: The design topic to discuss.
             rounds: Number of discussion rounds (default: 3).
             verbose: Whether to print verbose output (default: True).
+            attachment: Optional markdown attachment content.
 
         Returns:
             The final discussion result/summary.
@@ -810,7 +819,7 @@ class DiscussionCrew:
         set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
 
         self._abort_reason = None
-        tasks = self.create_discussion_tasks(topic, rounds)
+        tasks = self.create_discussion_tasks(topic, rounds, attachment=attachment)
         trace_metadata = self._prepare_trace_metadata(topic, rounds)
 
         # Broadcast initial thinking status for first agent

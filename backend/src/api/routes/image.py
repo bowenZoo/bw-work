@@ -148,6 +148,35 @@ async def generate_image(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/styles", response_model=StyleListResponse)
+async def list_styles() -> StyleListResponse:
+    """List available image generation styles.
+
+    Returns:
+        List of available styles.
+    """
+    style_manager = get_style_manager_dep()
+
+    try:
+        styles = style_manager.get_all_styles()
+        return StyleListResponse(
+            styles=[
+                StyleResponse(
+                    id=s.id,
+                    name=s.name,
+                    description=s.description,
+                    recommended_backends=s.recommended_backends,
+                    default_params=s.default_params,
+                )
+                for s in styles
+            ],
+            default_style=style_manager.default_style,
+        )
+    except Exception as e:
+        logger.exception("Failed to list styles")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{request_id}", response_model=GenerationResponse)
 async def get_generation_status(
     request_id: str,
@@ -320,33 +349,4 @@ async def delete_image(
         raise
     except Exception as e:
         logger.exception("Failed to delete image")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/styles", response_model=StyleListResponse)
-async def list_styles() -> StyleListResponse:
-    """List available image generation styles.
-
-    Returns:
-        List of available styles.
-    """
-    style_manager = get_style_manager_dep()
-
-    try:
-        styles = style_manager.get_all_styles()
-        return StyleListResponse(
-            styles=[
-                StyleResponse(
-                    id=s.id,
-                    name=s.name,
-                    description=s.description,
-                    recommended_backends=s.recommended_backends,
-                    default_params=s.default_params,
-                )
-                for s in styles
-            ],
-            default_style=style_manager.default_style,
-        )
-    except Exception as e:
-        logger.exception("Failed to list styles")
         raise HTTPException(status_code=500, detail=str(e))

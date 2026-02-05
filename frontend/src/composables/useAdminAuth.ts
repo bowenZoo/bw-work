@@ -103,9 +103,9 @@ export function useAdminAuth() {
 
         if (response.status === 423) {
           // Account locked
-          store.setError('Account is locked due to too many failed attempts. Please try again later.')
+          store.setError('账号已锁定，登录失败次数过多，请稍后再试')
         } else {
-          store.setError(errorData.detail || 'Invalid username or password')
+          store.setError(errorData.detail === 'Invalid username or password' ? '用户名或密码错误' : (errorData.detail || '登录失败'))
         }
         return false
       }

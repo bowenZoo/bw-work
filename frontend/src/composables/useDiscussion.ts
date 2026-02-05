@@ -39,7 +39,19 @@ export function useDiscussion() {
     discussionStore.setError(null);
 
     try {
-      const response = await discussionApi.createDiscussion({ topic });
+      // Read attachment from sessionStorage
+      let attachment: { filename: string; content: string } | undefined;
+      const storedAttachment = sessionStorage.getItem('discussion_attachment');
+      if (storedAttachment) {
+        try {
+          attachment = JSON.parse(storedAttachment);
+          sessionStorage.removeItem('discussion_attachment'); // Clean up
+        } catch {
+          // Ignore invalid JSON
+        }
+      }
+
+      const response = await discussionApi.createDiscussion({ topic, attachment });
 
       const discussion: Discussion = {
         id: response.id,

@@ -198,22 +198,31 @@ class ConfigStore:
 
     def get_image_config(self) -> dict:
         """Get all image service configuration."""
-        providers = ["kie_ai", "wenwen_ai", "nanobanana", "dall_e"]
-        result = {
-            "default_provider": self.get("image", "default_provider", "dall_e"),
-            "providers": {},
+        # OpenAI 兼容接口配置
+        openai_api_key = self.get_masked("image", "openai_api_key")
+        openai_config = {
+            "base_url": self.get("image", "openai_base_url"),
+            "api_key": openai_api_key,
+            "model": self.get("image", "openai_model", "gemini-2.5-flash-image"),
+            "enabled": self.get("image", "openai_enabled", "false") == "true",
+            "configured": openai_api_key is not None,
         }
 
-        for provider in providers:
-            api_key = self.get_masked("image", f"{provider}_api_key")
-            enabled = self.get("image", f"{provider}_enabled", "false") == "true"
-            result["providers"][provider] = {
-                "api_key": api_key,
-                "enabled": enabled,
-                "configured": api_key is not None,
-            }
+        # MJ 接口配置
+        mj_api_key = self.get_masked("image", "mj_api_key")
+        mj_config = {
+            "base_url": self.get("image", "mj_base_url"),
+            "api_key": mj_api_key,
+            "mode": self.get("image", "mj_mode", "RELAX"),
+            "enabled": self.get("image", "mj_enabled", "false") == "true",
+            "configured": mj_api_key is not None,
+        }
 
-        return result
+        return {
+            "openai": openai_config,
+            "mj": mj_config,
+            "default_provider": self.get("image", "default_provider", "openai"),
+        }
 
     # =========================================================================
     # Raw value access (for internal use)
