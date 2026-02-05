@@ -92,9 +92,14 @@ def init_langfuse() -> Langfuse | None:
 def get_langfuse_client() -> Langfuse | None:
     """Get the global Langfuse client.
 
+    Automatically initializes the client if not already initialized.
+
     Returns:
-        Langfuse client instance if initialized, None otherwise.
+        Langfuse client instance if configured, None otherwise.
     """
+    global _langfuse_client
+    if _langfuse_client is None:
+        init_langfuse()
     return _langfuse_client
 
 
@@ -352,7 +357,15 @@ def get_session_cost(session_id: str) -> dict[str, Any] | None:
     """
     client = get_langfuse_client()
     if client is None:
-        return None
+        return {
+            "discussion_id": session_id,
+            "total_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "model_breakdown": {},
+            "source": "langfuse",
+            "error": "Langfuse 未配置或未启用",
+        }
 
     try:
         if not hasattr(client, "api"):
@@ -424,7 +437,15 @@ def get_session_cost(session_id: str) -> dict[str, Any] | None:
             "source": "langfuse",
         }
     except Exception as e:
-        logger.error(f"Failed to get session cost: {e}")
+        error_msg = str(e)
+        logger.error(f"Failed to get session cost: {error_msg}")
+
+        # Provide more helpful error messages
+        if "401" in error_msg or "Invalid credentials" in error_msg:
+            error_msg = "Langfuse 凭证无效，请检查密钥是否与所选区域（US/EU/默认）匹配"
+        elif "connection" in error_msg.lower() or "timeout" in error_msg.lower():
+            error_msg = "无法连接到 Langfuse 服务器"
+
         return {
             "discussion_id": session_id,
             "total_tokens": 0,
@@ -432,7 +453,7 @@ def get_session_cost(session_id: str) -> dict[str, Any] | None:
             "completion_tokens": 0,
             "model_breakdown": {},
             "source": "langfuse",
-            "error": str(e),
+            "error": error_msg,
         }
 
 

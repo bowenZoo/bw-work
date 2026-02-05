@@ -1,0 +1,470 @@
+/**
+ * OpenClaw 风格聊天样式
+ */
+
+/* =============================================
+   CSS 变量 (适配 Tailwind)
+   ============================================= */
+:root {
+  --chat-radius-lg: 12px;
+  --chat-radius-md: 8px;
+  --chat-radius-sm: 4px;
+  --chat-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+
+  /* 颜色 - 浅色模式 */
+  --chat-card: #ffffff;
+  --chat-card-highlight: rgba(255, 255, 255, 0.8);
+  --chat-bg: #f9fafb;
+  --chat-bg-hover: #f3f4f6;
+  --chat-border: #e5e7eb;
+  --chat-border-strong: #d1d5db;
+  --chat-border-hover: #9ca3af;
+  --chat-muted: #6b7280;
+  --chat-muted-strong: #4b5563;
+  --chat-accent: #f97316;
+  --chat-accent-subtle: rgba(249, 115, 22, 0.1);
+  --chat-secondary: #f3f4f6;
+  --chat-panel-strong: #e5e7eb;
+  --chat-ok: #22c55e;
+  --chat-ok-subtle: rgba(34, 197, 94, 0.1);
+  --chat-danger: #ef4444;
+  --chat-danger-subtle: rgba(239, 68, 68, 0.1);
+}
+
+/* 深色模式 */
+.dark {
+  --chat-card: #1f2937;
+  --chat-card-highlight: rgba(255, 255, 255, 0.05);
+  --chat-bg: #111827;
+  --chat-bg-hover: #374151;
+  --chat-border: #374151;
+  --chat-border-strong: #4b5563;
+  --chat-border-hover: #6b7280;
+  --chat-muted: #9ca3af;
+  --chat-muted-strong: #d1d5db;
+  --chat-accent: #fb923c;
+  --chat-accent-subtle: rgba(251, 146, 60, 0.15);
+  --chat-secondary: #374151;
+  --chat-panel-strong: #4b5563;
+}
+
+/* =============================================
+   GROUPED CHAT LAYOUT (Slack-style)
+   ============================================= */
+
+/* Chat Group Layout - default (assistant/other on left) */
+.chat-group {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  margin-left: 4px;
+  margin-right: 16px;
+}
+
+/* User messages on right */
+.chat-group.user {
+  flex-direction: row-reverse;
+  justify-content: flex-start;
+}
+
+.chat-group-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: min(900px, calc(100% - 60px));
+}
+
+/* User messages align content right */
+.chat-group.user .chat-group-messages {
+  align-items: flex-end;
+}
+
+.chat-group.user .chat-group-footer {
+  justify-content: flex-end;
+}
+
+/* Footer at bottom of message group (role + time) */
+.chat-group-footer {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-top: 6px;
+}
+
+.chat-sender-name {
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--chat-muted);
+}
+
+.chat-group-timestamp {
+  font-size: 11px;
+  color: var(--chat-muted);
+  opacity: 0.7;
+}
+
+/* Avatar Styles */
+.chat-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--chat-panel-strong);
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 14px;
+  flex-shrink: 0;
+  align-self: flex-end;
+  margin-bottom: 4px;
+}
+
+.chat-avatar.user {
+  background: var(--chat-accent-subtle);
+  color: var(--chat-accent);
+}
+
+.chat-avatar.assistant {
+  background: var(--chat-secondary);
+  color: var(--chat-muted);
+}
+
+.chat-avatar.system_designer {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.chat-avatar.number_designer {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.chat-avatar.player_advocate {
+  background: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+}
+
+.chat-avatar.other {
+  background: var(--chat-secondary);
+  color: var(--chat-muted);
+}
+
+/* Image avatar support */
+img.chat-avatar {
+  display: block;
+  object-fit: cover;
+  object-position: center;
+}
+
+/* Minimal Bubble Design - dynamic width based on content */
+.chat-bubble {
+  position: relative;
+  display: inline-block;
+  border: 1px solid transparent;
+  background: var(--chat-card);
+  border-radius: var(--chat-radius-lg);
+  padding: 10px 14px;
+  box-shadow: none;
+  transition:
+    background 150ms ease-out,
+    border-color 150ms ease-out;
+  max-width: 100%;
+  word-wrap: break-word;
+}
+
+.chat-bubble.has-copy {
+  padding-right: 36px;
+}
+
+/* Light mode: restore borders */
+.chat-bubble {
+  border-color: var(--chat-border);
+  box-shadow: inset 0 1px 0 var(--chat-card-highlight);
+}
+
+.dark .chat-bubble {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.chat-bubble:hover {
+  background: var(--chat-bg-hover);
+}
+
+/* User bubbles have different styling */
+.chat-group.user .chat-bubble {
+  border-color: rgba(234, 88, 12, 0.2);
+  background: rgba(251, 146, 60, 0.12);
+}
+
+.dark .chat-group.user .chat-bubble {
+  border-color: transparent;
+  background: var(--chat-accent-subtle);
+}
+
+.chat-group.user .chat-bubble:hover {
+  background: rgba(255, 77, 77, 0.15);
+}
+
+/* Role-specific bubble colors */
+.chat-group.system_designer .chat-bubble {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+.chat-group.number_designer .chat-bubble {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.chat-group.player_advocate .chat-bubble {
+  background: rgba(249, 115, 22, 0.08);
+  border-color: rgba(249, 115, 22, 0.2);
+}
+
+/* Copy button */
+.chat-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: 1px solid var(--chat-border);
+  background: var(--chat-bg);
+  color: var(--chat-muted);
+  border-radius: var(--chat-radius-md);
+  padding: 4px 6px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease-out,
+    background 120ms ease-out;
+}
+
+.chat-bubble:hover .chat-copy-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chat-copy-btn:hover {
+  background: var(--chat-bg-hover);
+}
+
+.chat-copy-btn.copied {
+  opacity: 1;
+  pointer-events: auto;
+  border-color: var(--chat-ok-subtle);
+  background: var(--chat-ok-subtle);
+  color: var(--chat-ok);
+}
+
+.chat-copy-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  outline: 2px solid var(--chat-accent);
+  outline-offset: 2px;
+}
+
+@media (hover: none) {
+  .chat-copy-btn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* Streaming animation */
+.chat-bubble.streaming {
+  animation: pulsing-border 1.5s ease-out infinite;
+}
+
+@keyframes pulsing-border {
+  0%,
+  100% {
+    border-color: var(--chat-border);
+  }
+  50% {
+    border-color: var(--chat-accent);
+  }
+}
+
+/* Fade-in animation for new messages */
+.chat-bubble.fade-in {
+  animation: chat-fade-in 200ms ease-out;
+}
+
+@keyframes chat-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* =============================================
+   CHAT TEXT STYLING (Markdown)
+   ============================================= */
+
+.chat-text {
+  font-size: 14px;
+  line-height: 1.5;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.chat-text :where(p, ul, ol, pre, blockquote, table) {
+  margin: 0;
+}
+
+.chat-text :where(p + p, p + ul, p + ol, p + pre, p + blockquote) {
+  margin-top: 0.75em;
+}
+
+.chat-text :where(ul, ol) {
+  padding-left: 1.5em;
+}
+
+.chat-text :where(li + li) {
+  margin-top: 0.25em;
+}
+
+.chat-text :where(a) {
+  color: var(--chat-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-text :where(a:hover) {
+  opacity: 0.8;
+}
+
+.chat-text :where(code) {
+  font-family: var(--chat-mono);
+  font-size: 0.9em;
+}
+
+.chat-text :where(:not(pre) > code) {
+  background: rgba(0, 0, 0, 0.08);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.dark .chat-text :where(:not(pre) > code) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.chat-text :where(pre) {
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+
+.dark .chat-text :where(pre) {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.chat-text :where(pre code) {
+  background: none;
+  padding: 0;
+  border: none;
+}
+
+.chat-text :where(blockquote) {
+  border-left: 3px solid var(--chat-border-strong);
+  padding-left: 12px;
+  margin-left: 0;
+  color: var(--chat-muted);
+  background: rgba(0, 0, 0, 0.03);
+  padding: 8px 12px;
+  border-radius: 0 var(--chat-radius-sm) var(--chat-radius-sm) 0;
+}
+
+.dark .chat-text :where(blockquote) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.chat-text :where(blockquote blockquote) {
+  margin-top: 8px;
+  border-left-color: var(--chat-border-hover);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.dark .chat-text :where(blockquote blockquote) {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.chat-text :where(hr) {
+  border: none;
+  border-top: 1px solid var(--chat-border);
+  margin: 1em 0;
+}
+
+.chat-text :where(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.chat-text :where(th, td) {
+  border: 1px solid var(--chat-border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.chat-text :where(th) {
+  background: var(--chat-secondary);
+  font-weight: 600;
+}
+
+.chat-text :where(h1, h2, h3, h4) {
+  margin: 0;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.chat-text :where(h1:first-child, h2:first-child, h3:first-child, h4:first-child) {
+  margin-top: 0;
+}
+
+.chat-text :where(h1) {
+  font-size: 1.5em;
+}
+
+.chat-text :where(h2) {
+  font-size: 1.25em;
+}
+
+.chat-text :where(h3) {
+  font-size: 1.1em;
+}
+
+.chat-text :where(h4) {
+  font-size: 1em;
+}
+
+/* Thinking block */
+.chat-thinking {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px dashed rgba(0, 0, 0, 0.15);
+  background: rgba(0, 0, 0, 0.03);
+  color: var(--chat-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.dark .chat-thinking {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+}

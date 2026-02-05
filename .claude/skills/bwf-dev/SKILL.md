@@ -38,6 +38,12 @@ context: fork
 | `--continue` | 从中断处继续 | false |
 | `--skip-review` | 跳过代码审核 | false |
 
+## UI 语言要求
+
+**重要**：开发前端页面时，所有用户可见的 UI 文字**必须使用中文**。
+
+详细规范参见 `.claude/agents/auto-developer.md` 中的「UI 语言规范」章节。
+
 ## 执行流程
 
 ```
@@ -61,6 +67,48 @@ context: fork
        ↓
 3. 输出完成报告
 ```
+
+## Git Commit 规范
+
+**必须使用中文**编写 commit message，格式如下：
+
+### 格式
+
+```
+<type>(<scope>): <description>
+```
+
+### 类型说明
+
+| 类型 | 说明 | 示例 |
+|------|------|------|
+| `feat` | 新功能 | `feat(认证): 实现用户登录 API` |
+| `fix` | 修复 Bug | `fix(认证): 修复 token 过期判断错误` |
+| `refactor` | 重构代码 | `refactor(用户): 优化查询逻辑` |
+| `docs` | 文档更新 | `docs(readme): 更新安装说明` |
+| `test` | 测试相关 | `test(认证): 添加登录单元测试` |
+| `chore` | 构建/工具 | `chore(deps): 升级依赖版本` |
+
+### 规则
+
+1. **scope**：使用中文模块名，如 `认证`、`用户`、`订单`
+2. **description**：简洁描述变更内容，不超过 50 字
+3. **禁止英文**：commit message 的 scope 和 description 必须使用中文
+
+### 示例
+
+```bash
+# ✅ 正确
+git commit -m "feat(用户管理): 实现用户列表分页查询"
+git commit -m "fix(认证): 修复 JWT 过期时间计算错误"
+git commit -m "refactor(订单): 抽取公共校验逻辑"
+
+# ❌ 错误
+git commit -m "feat: implement user login"
+git commit -m "fix(auth): fix token validation"
+```
+
+---
 
 ## 进度持久化
 

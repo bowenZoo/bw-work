@@ -1,3 +1,6 @@
+/* OpenClaw 风格聊天样式 - 必须在 @tailwind 之前 */
+@import './styles/chat.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

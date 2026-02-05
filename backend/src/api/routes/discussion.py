@@ -180,6 +180,8 @@ def save_discussion_state(discussion: DiscussionState) -> None:
 def _get_llm_from_config() -> Any | None:
     """Get LLM instance from admin config store.
 
+    Also sets OPENAI_API_KEY environment variable for CrewAI compatibility.
+
     Returns:
         LLM instance if configured, None otherwise.
     """
@@ -195,6 +197,17 @@ def _get_llm_from_config() -> Any | None:
 
         base_url = store.get_raw("llm", "openai_base_url")
         model = store.get_raw("llm", "openai_model") or "gpt-4"
+
+        # Set environment variables for CrewAI/LiteLLM compatibility
+        # CrewAI internally checks for these even when LLM is provided
+        os.environ["OPENAI_API_KEY"] = api_key
+        if base_url:
+            # Set all possible environment variable names for base URL
+            os.environ["OPENAI_API_BASE"] = base_url
+            os.environ["OPENAI_BASE_URL"] = base_url
+
+        # Set model name in environment for CrewAI
+        os.environ["OPENAI_MODEL_NAME"] = model
 
         # Use langchain's ChatOpenAI which is compatible with CrewAI
         from langchain_openai import ChatOpenAI

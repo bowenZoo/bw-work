@@ -359,9 +359,12 @@ async def _test_langfuse_config(
         credentials = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode()
 
         async with httpx.AsyncClient(timeout=10.0) as client:
+            # Use /api/public/sessions endpoint which requires authentication
+            # /api/public/health doesn't require auth and always returns 200
             response = await client.get(
-                f"{host}/api/public/health",
+                f"{host}/api/public/sessions",
                 headers={"Authorization": f"Basic {credentials}"},
+                params={"limit": 1},  # Minimal query to reduce load
             )
 
         latency = (time.time() - start_time) * 1000
@@ -369,19 +372,25 @@ async def _test_langfuse_config(
         if response.status_code == 200:
             return ConfigTestResponse(
                 success=True,
-                message="Langfuse connection successful",
+                message="Langfuse 连接成功，凭证有效",
                 latency_ms=latency,
             )
         elif response.status_code == 401:
             return ConfigTestResponse(
                 success=False,
-                message="Invalid Langfuse credentials",
+                message="Langfuse 凭证无效，请检查密钥是否与所选区域匹配",
+                latency_ms=latency,
+            )
+        elif response.status_code == 403:
+            return ConfigTestResponse(
+                success=False,
+                message="Langfuse 凭证无权限，请检查 API 密钥权限",
                 latency_ms=latency,
             )
         else:
             return ConfigTestResponse(
                 success=False,
-                message=f"Langfuse returned status {response.status_code}",
+                message=f"Langfuse 返回状态码 {response.status_code}",
                 latency_ms=latency,
             )
     except httpx.TimeoutException:

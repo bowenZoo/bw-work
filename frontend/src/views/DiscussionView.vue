@@ -146,6 +146,10 @@ function handleInterventionError(message: string) {
   setError(message);
 }
 
+function clearError() {
+  setError(null);
+}
+
 // Handle playback controls
 function handlePlay() {
   play();
@@ -218,18 +222,24 @@ onUnmounted(() => {
       </template>
     </Header>
 
-    <!-- Topic display (playback mode) -->
+    <!-- Topic display -->
     <div
-      v-if="isPlaybackMode && topicDisplay"
+      v-if="topicDisplay"
       class="bg-white border-b border-gray-200 px-4 py-3"
     >
-      <h2 class="text-lg font-medium text-gray-900">{{ topicDisplay }}</h2>
+      <div class="flex items-center gap-2">
+        <span class="text-gray-500 text-sm">讨论主题:</span>
+        <h2 class="text-lg font-medium text-gray-900">{{ topicDisplay }}</h2>
+        <span v-if="isPlaybackMode" class="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">
+          回放
+        </span>
+      </div>
     </div>
 
     <!-- Main content -->
     <div class="flex-1 flex overflow-hidden">
       <!-- Chat area -->
-      <main class="flex-1 flex flex-col">
+      <main class="flex-1 flex flex-col relative">
         <ChatContainer
           :messages="displayMessages"
           :is-loading="isLoading"
@@ -248,6 +258,32 @@ onUnmounted(() => {
           @seek="handleSeek"
           @speed-change="handleSpeedChange"
         />
+
+        <!-- Error display in center -->
+        <div
+          v-if="errorMessage"
+          class="absolute inset-0 flex items-center justify-center pointer-events-none z-10"
+        >
+          <div class="bg-red-50 border border-red-300 rounded-lg shadow-lg p-6 max-w-lg mx-4 pointer-events-auto">
+            <div class="flex items-start gap-3">
+              <svg class="w-6 h-6 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div class="flex-1">
+                <h3 class="text-red-800 font-medium mb-1">讨论出错</h3>
+                <p class="text-red-700 text-sm">{{ errorMessage }}</p>
+              </div>
+              <button
+                @click="clearError"
+                class="text-red-400 hover:text-red-600"
+              >
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
 
         <!-- Input box (live mode only) -->
         <InputBox
@@ -268,12 +304,5 @@ onUnmounted(() => {
       <Sidebar :is-open="true" :discussion-id="sidebarDiscussionId" />
     </div>
 
-    <!-- Error toast -->
-    <div
-      v-if="errorMessage"
-      class="fixed bottom-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg"
-    >
-      {{ errorMessage }}
-    </div>
   </div>
 </template>

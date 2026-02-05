@@ -6,8 +6,12 @@ Provides endpoints for:
 - Semantic search
 """
 
+import json
 import logging
+import os
 from collections.abc import Iterable
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -17,6 +21,9 @@ from src.memory.base import Decision, Discussion
 from src.memory.decision_tracker import DecisionTracker
 from src.memory.discussion_memory import DiscussionMemory
 from src.memory.vector_store import VectorStore
+
+# State directory for running/failed discussions
+_STATE_DIR = Path(os.environ.get("DISCUSSION_STATUS_DIR", "data/projects/.discussion_state"))
 
 router = APIRouter(prefix="/api", tags=["memory"])
 
@@ -96,6 +103,45 @@ class DiscussionListResponse(BaseModel):
 
     items: list[DiscussionSummaryResponse]
     hasMore: bool
+
+
+class DiscussionStateItem(BaseModel):
+    """Discussion state from .discussion_state directory."""
+
+    id: str
+    topic: str
+    status: str
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    error: str | None = None
+
+
+def _load_all_discussion_states() -> list[DiscussionStateItem]:
+    """Load all discussion states from the state directory."""
+    states = []
+    if not _STATE_DIR.exists():
+        return states
+
+    for state_file in _STATE_DIR.glob("*.json"):
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            states.append(DiscussionStateItem(
+                id=data["id"],
+                topic=data["topic"],
+                status=data["status"],
+                created_at=data["created_at"],
+                started_at=data.get("started_at"),
+                completed_at=data.get("completed_at"),
+                error=data.get("error"),
+            ))
+        except Exception as e:
+            logger.warning(f"Failed to load state file {state_file}: {e}")
+            continue
+
+    # Sort by created_at DESC
+    states.sort(key=lambda x: x.created_at, reverse=True)
+    return states
 
 
 class DiscussionMessagesResponse(BaseModel):
@@ -230,40 +276,77 @@ async def list_discussions(
     project_id: str | None = Query(None, description="Filter by project ID"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    include_running: bool = Query(True, description="Include running/failed discussions"),
 ) -> DiscussionListResponse:
     """Get list of discussion history.
 
     Returns a paginated list of discussions sorted by created_at DESC,
-    optionally filtered by project.
+    optionally filtered by project. By default includes running and failed
+    discussions from the state directory.
     """
-    offset = (page - 1) * limit
+    items: list[DiscussionSummaryResponse] = []
+    seen_ids: set[str] = set()
 
+    # First, load all discussion states (running, failed, etc.)
+    if include_running:
+        states = _load_all_discussion_states()
+        for state in states:
+            if state.id in seen_ids:
+                continue
+            seen_ids.add(state.id)
+
+            # Use completed_at or created_at as updated_at
+            updated_at = state.completed_at or state.started_at or state.created_at
+
+            items.append(DiscussionSummaryResponse(
+                id=state.id,
+                project_id="default",  # State doesn't track project_id
+                topic=state.topic,
+                summary=f"[{state.status}]" + (f" - {state.error[:50]}..." if state.error else ""),
+                message_count=0,  # Will be updated if found in memory
+                created_at=state.created_at,
+                updated_at=updated_at,
+            ))
+
+    # Then, load from discussion memory (completed discussions with messages)
     if project_id:
         discussions = _discussion_memory.list_by_project(
             project_id=project_id,
-            offset=offset,
-            limit=limit + 1,  # Fetch one extra to check hasMore
+            offset=0,
+            limit=1000,  # Get all to merge
         )
     else:
-        discussions = _discussion_memory.list_all(offset=offset, limit=limit + 1)
+        discussions = _discussion_memory.list_all(offset=0, limit=1000)
 
-    # Check if there are more items
-    has_more = len(discussions) > limit
-    if has_more:
-        discussions = discussions[:limit]
+    for d in discussions:
+        if d.id in seen_ids:
+            # Update existing item with message count
+            for item in items:
+                if item.id == d.id:
+                    item.message_count = len(d.messages)
+                    if d.summary:
+                        item.summary = d.summary
+                    break
+        else:
+            seen_ids.add(d.id)
+            items.append(DiscussionSummaryResponse(
+                id=d.id,
+                project_id=d.project_id,
+                topic=d.topic,
+                summary=d.summary,
+                message_count=len(d.messages),
+                created_at=d.created_at.isoformat(),
+                updated_at=d.updated_at.isoformat(),
+            ))
 
-    items = [
-        DiscussionSummaryResponse(
-            id=d.id,
-            project_id=d.project_id,
-            topic=d.topic,
-            summary=d.summary,
-            message_count=len(d.messages),
-            created_at=d.created_at.isoformat(),
-            updated_at=d.updated_at.isoformat(),
-        )
-        for d in discussions
-    ]
+    # Sort by created_at DESC
+    items.sort(key=lambda x: x.created_at, reverse=True)
+
+    # Apply pagination
+    offset = (page - 1) * limit
+    total = len(items)
+    has_more = offset + limit < total
+    items = items[offset:offset + limit]
 
     return DiscussionListResponse(items=items, hasMore=has_more)
 
@@ -308,6 +391,26 @@ async def get_discussion_messages(
     (chronological order for playback).
     """
     discussion = _discussion_memory.load(discussion_id)
+
+    # If not found in memory, try to load from state directory
+    if discussion is None:
+        state_file = _STATE_DIR / f"{discussion_id}.json"
+        if state_file.exists():
+            try:
+                data = json.loads(state_file.read_text(encoding="utf-8"))
+                # Create a minimal discussion object from state
+                from src.memory.base import Discussion
+                discussion = Discussion(
+                    id=data["id"],
+                    project_id="default",
+                    topic=data["topic"],
+                    messages=[],
+                    summary=f"[{data['status']}]" + (f" - {data.get('error', '')}" if data.get('error') else ""),
+                    created_at=datetime.fromisoformat(data["created_at"]),
+                    updated_at=datetime.fromisoformat(data.get("completed_at") or data.get("started_at") or data["created_at"]),
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load discussion state: {e}")
 
     if discussion is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
