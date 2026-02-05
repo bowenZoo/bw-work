@@ -9,11 +9,11 @@ const agentsStore = useAgentsStore();
 function getStatusText(status: string): string {
   switch (status) {
     case 'speaking':
-      return 'Speaking';
+      return '发言中';
     case 'thinking':
-      return 'Thinking...';
+      return '思考中...';
     default:
-      return 'Idle';
+      return '空闲';
   }
 }
 
@@ -34,11 +34,11 @@ const speakingAgent = computed(() => agentsStore.speakingAgent);
 
 <template>
   <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-    <h3 class="text-sm font-semibold text-gray-900 mb-4">Participants</h3>
+    <h3 class="text-sm font-semibold text-gray-900 mb-4">参与者</h3>
 
     <!-- Current speaker indicator -->
     <div v-if="speakingAgent" class="mb-4 p-3 bg-green-50 rounded-lg border border-green-200">
-      <p class="text-xs text-green-600 font-medium mb-2">Currently Speaking</p>
+      <p class="text-xs text-green-600 font-medium mb-2">当前发言者</p>
       <div class="flex items-center gap-3">
         <AgentAvatar :agent="speakingAgent" size="sm" />
         <span class="font-medium text-gray-900">{{ speakingAgent.name }}</span>

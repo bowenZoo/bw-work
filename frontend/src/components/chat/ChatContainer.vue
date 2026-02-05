@@ -51,7 +51,7 @@ const isEmpty = computed(() => renderedMessages.value.length === 0 && !props.isL
     <div v-if="isLoading && messages.length === 0" class="flex items-center justify-center h-full">
       <div class="text-center">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-        <p class="text-gray-500">Loading discussion...</p>
+        <p class="text-gray-500">加载讨论中...</p>
       </div>
     </div>
 
@@ -71,8 +71,8 @@ const isEmpty = computed(() => renderedMessages.value.length === 0 && !props.isL
             d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
           />
         </svg>
-        <p class="text-lg font-medium">No messages yet</p>
-        <p class="text-sm">Start a discussion to see the conversation</p>
+        <p class="text-lg font-medium">暂无消息</p>
+        <p class="text-sm">开始讨论以查看对话内容</p>
       </div>
     </div>
 
@@ -82,12 +82,12 @@ const isEmpty = computed(() => renderedMessages.value.length === 0 && !props.isL
         v-if="hiddenCount > 0"
         class="p-3 text-center text-xs text-gray-500 bg-gray-50 border-b border-gray-100"
       >
-        {{ hiddenCount }} earlier messages hidden for performance.
+        为提升性能，已隐藏 {{ hiddenCount }} 条早期消息。
         <button
           class="ml-2 text-blue-600 hover:text-blue-700 underline"
           @click="showAll = true"
         >
-          Show all
+          显示全部
         </button>
       </div>
       <MessageBubble
@@ -101,7 +101,7 @@ const isEmpty = computed(() => renderedMessages.value.length === 0 && !props.isL
     <div v-if="isLoading && messages.length > 0" class="p-4 text-center">
       <div class="inline-flex items-center gap-2 text-gray-500">
         <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-        <span>Agents are thinking...</span>
+        <span>智能体思考中...</span>
       </div>
     </div>
   </div>

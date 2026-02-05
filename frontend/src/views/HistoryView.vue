@@ -9,7 +9,6 @@ const router = useRouter();
 
 // Search filter
 const searchQuery = ref('');
-const historyListRef = ref<InstanceType<typeof HistoryList> | null>(null);
 
 // Filter discussions (client-side filtering)
 // Note: This works well for < 500 discussions. For larger datasets,
@@ -59,7 +58,7 @@ function clearSearch() {
             <input
               v-model="searchQuery"
               type="text"
-              placeholder="Search discussions..."
+              placeholder="搜索讨论..."
               class="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
             <button

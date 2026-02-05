@@ -55,7 +55,7 @@ async function loadDiscussions(reset: boolean = false) {
     hasMore.value = response.hasMore;
     page.value++;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to load discussions';
+    error.value = e instanceof Error ? e.message : '加载讨论失败';
     console.error('Failed to load discussions:', e);
   } finally {
     isLoading.value = false;
@@ -103,7 +103,7 @@ defineExpose({
         class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
         @click="loadDiscussions(true)"
       >
-        Retry
+        重试
       </button>
     </div>
 
@@ -126,10 +126,10 @@ defineExpose({
         />
       </svg>
       <p class="text-lg font-medium">
-        {{ normalizedQuery ? 'No matching discussions' : 'No discussions yet' }}
+        {{ normalizedQuery ? '没有匹配的讨论' : '暂无讨论' }}
       </p>
       <p class="text-sm mt-1">
-        {{ normalizedQuery ? 'Try a different keyword' : 'Start a new discussion to see it here' }}
+        {{ normalizedQuery ? '试试其他关键词' : '开始新讨论后会显示在这里' }}
       </p>
     </div>
 
@@ -172,7 +172,7 @@ defineExpose({
             d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
           />
         </svg>
-        <span>Loading...</span>
+        <span>加载中...</span>
       </div>
     </div>
 
@@ -181,7 +181,7 @@ defineExpose({
       v-if="hasMore && !isLoading"
       class="p-4 text-center text-gray-400 text-sm"
     >
-      Scroll for more
+      向下滚动加载更多
     </div>
   </div>
 </template>

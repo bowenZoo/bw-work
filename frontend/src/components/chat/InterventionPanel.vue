@@ -36,7 +36,7 @@ async function handlePause() {
     await pauseDiscussion(props.discussionId);
     emit('paused');
   } catch (error) {
-    emit('error', error instanceof Error ? error.message : 'Failed to pause discussion');
+    emit('error', error instanceof Error ? error.message : '暂停讨论失败');
   } finally {
     isLoading.value = false;
   }
@@ -52,7 +52,7 @@ async function handleResume() {
     inputValue.value = '';
     emit('resumed');
   } catch (error) {
-    emit('error', error instanceof Error ? error.message : 'Failed to resume discussion');
+    emit('error', error instanceof Error ? error.message : '恢复讨论失败');
   } finally {
     isLoading.value = false;
   }
@@ -64,12 +64,12 @@ async function handleInject() {
   const content = inputValue.value.trim();
   isLoading.value = true;
   try {
-    const response = await injectMessage(props.discussionId, content);
+    await injectMessage(props.discussionId, content);
     inputValue.value = '';
     injectedCount.value++;
     emit('messageInjected', content);
   } catch (error) {
-    emit('error', error instanceof Error ? error.message : 'Failed to inject message');
+    emit('error', error instanceof Error ? error.message : '注入消息失败');
   } finally {
     isLoading.value = false;
   }
@@ -89,9 +89,9 @@ function handleKeydown(event: KeyboardEvent) {
     <div v-if="isPaused" class="space-y-3">
       <div class="flex items-center gap-2 text-amber-600">
         <Pause class="w-4 h-4" />
-        <span class="text-sm font-medium">Discussion paused - You can intervene</span>
+        <span class="text-sm font-medium">讨论已暂停 - 你可以介入</span>
         <span v-if="injectedCount > 0" class="text-xs bg-amber-100 px-2 py-0.5 rounded-full">
-          {{ injectedCount }} message(s) queued
+          {{ injectedCount }} 条消息待发送
         </span>
       </div>
 
@@ -101,7 +101,7 @@ function handleKeydown(event: KeyboardEvent) {
           <input
             v-model="inputValue"
             type="text"
-            placeholder="Enter your feedback or guidance for the discussion..."
+            placeholder="输入你对讨论的反馈或指导..."
             :disabled="isLoading"
             class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
             @keydown="handleKeydown"
@@ -114,7 +114,7 @@ function handleKeydown(event: KeyboardEvent) {
           @click="handleInject"
         >
           <Send class="w-4 h-4" />
-          <span>Inject</span>
+          <span>注入</span>
         </button>
       </div>
 
@@ -126,14 +126,14 @@ function handleKeydown(event: KeyboardEvent) {
           @click="handleResume"
         >
           <Play class="w-4 h-4" />
-          <span>Resume Discussion</span>
+          <span>恢复讨论</span>
         </button>
       </div>
     </div>
 
     <!-- Running state: show pause button -->
     <div v-else-if="isRunning" class="flex items-center justify-between">
-      <span class="text-sm text-gray-500">Discussion in progress...</span>
+      <span class="text-sm text-gray-500">讨论进行中...</span>
       <button
         type="button"
         :disabled="!canPause"
@@ -141,7 +141,7 @@ function handleKeydown(event: KeyboardEvent) {
         @click="handlePause"
       >
         <Pause class="w-4 h-4" />
-        <span>Pause to Intervene</span>
+        <span>暂停并介入</span>
       </button>
     </div>
   </div>

@@ -46,7 +46,7 @@ async function fetchCostData() {
       error.value = costData.value.error;
     }
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to fetch cost data';
+    error.value = e instanceof Error ? e.message : '获取成本数据失败';
   } finally {
     isLoading.value = false;
   }
@@ -115,7 +115,7 @@ onUnmounted(() => {
     >
       <div class="flex items-center gap-2">
         <Coins class="w-4 h-4 text-gray-500" />
-        <span class="text-sm font-medium text-gray-700">Token Usage</span>
+        <span class="text-sm font-medium text-gray-700">Token 用量</span>
       </div>
       <div class="flex items-center gap-3">
         <div v-if="isLoading" class="flex items-center gap-1 text-gray-400">
@@ -136,8 +136,8 @@ onUnmounted(() => {
       <!-- Token breakdown bar -->
       <div class="mt-4">
         <div class="flex justify-between text-xs text-gray-500 mb-1">
-          <span>Prompt: {{ formatNumber(promptTokens) }}</span>
-          <span>Completion: {{ formatNumber(completionTokens) }}</span>
+          <span>提示词：{{ formatNumber(promptTokens) }}</span>
+          <span>回复：{{ formatNumber(completionTokens) }}</span>
         </div>
         <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
           <div
@@ -149,7 +149,7 @@ onUnmounted(() => {
 
       <!-- Model breakdown -->
       <div v-if="modelBreakdown.length > 0" class="mt-4">
-        <div class="text-xs font-medium text-gray-500 mb-2">By Model</div>
+        <div class="text-xs font-medium text-gray-500 mb-2">按模型</div>
         <div class="space-y-2">
           <div
             v-for="item in modelBreakdown"
@@ -176,7 +176,7 @@ onUnmounted(() => {
 
       <!-- Data source indicator -->
       <div class="mt-4 text-xs text-gray-400 flex items-center gap-1">
-        <span>Source:</span>
+        <span>数据源：</span>
         <span class="font-medium">{{ costData?.source ?? 'langfuse' }}</span>
       </div>
     </div>

@@ -104,7 +104,7 @@ function goToEnd() {
         <button
           class="p-2 text-gray-500 hover:text-gray-700 disabled:opacity-50"
           :disabled="currentIndex === 0"
-          title="Go to start"
+          title="回到开始"
           @click="goToStart"
         >
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -116,7 +116,7 @@ function goToEnd() {
         <button
           class="p-2 text-gray-500 hover:text-gray-700 disabled:opacity-50"
           :disabled="currentIndex === 0"
-          title="Previous message"
+          title="上一条消息"
           @click="stepBackward"
         >
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -154,7 +154,7 @@ function goToEnd() {
         <button
           class="p-2 text-gray-500 hover:text-gray-700 disabled:opacity-50"
           :disabled="currentIndex >= totalMessages - 1"
-          title="Next message"
+          title="下一条消息"
           @click="stepForward"
         >
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -166,7 +166,7 @@ function goToEnd() {
         <button
           class="p-2 text-gray-500 hover:text-gray-700 disabled:opacity-50"
           :disabled="currentIndex >= totalMessages - 1"
-          title="Go to end"
+          title="跳到结尾"
           @click="goToEnd"
         >
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -182,7 +182,7 @@ function goToEnd() {
 
       <!-- Right: Speed selector -->
       <div class="flex items-center gap-2">
-        <span class="text-sm text-gray-500">Speed:</span>
+        <span class="text-sm text-gray-500">速度：</span>
         <div class="flex gap-1">
           <button
             v-for="s in speedOptions"

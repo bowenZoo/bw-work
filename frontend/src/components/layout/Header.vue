@@ -10,15 +10,15 @@ const props = defineProps<{
 const connectionStatusText = computed(() => {
   switch (props.connectionStatus) {
     case 'connected':
-      return 'Connected';
+      return '已连接';
     case 'connecting':
-      return 'Connecting...';
+      return '连接中...';
     case 'disconnected':
-      return 'Disconnected';
+      return '已断开';
     case 'error':
-      return 'Connection Error';
+      return '连接错误';
     default:
-      return 'Offline';
+      return '离线';
   }
 });
 
@@ -43,12 +43,12 @@ const isConnected = computed(() => props.connectionStatus === 'connected');
     <div class="flex items-center justify-between">
       <!-- Logo and title -->
       <div class="flex items-center gap-3">
-        <div class="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
-          <span class="text-white font-bold text-sm">AI</span>
+        <div class="w-7 h-7 bg-gray-900 rounded-md flex items-center justify-center">
+          <span class="text-white font-bold text-xs">BW</span>
         </div>
         <div>
-          <h1 class="text-lg font-semibold text-gray-900">Game Planning AI Team</h1>
-          <p class="text-xs text-gray-500">Multi-agent discussion system</p>
+          <h1 class="text-lg font-semibold text-gray-900">Game Design</h1>
+          <p class="text-xs text-gray-500">多智能体讨论系统</p>
         </div>
       </div>
 

@@ -23,9 +23,9 @@ const formattedDate = computed(() => {
       minute: '2-digit',
     });
   } else if (diffDays === 1) {
-    return 'Yesterday';
+    return '昨天';
   } else if (diffDays < 7) {
-    return `${diffDays} days ago`;
+    return `${diffDays} 天前`;
   } else {
     return date.toLocaleDateString('zh-CN', {
       month: 'short',

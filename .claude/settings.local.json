@@ -37,7 +37,8 @@
       "Bash(git show:*)",
       "WebFetch(domain:docs.kie.ai)",
       "WebFetch(domain:wenwen-ai.apifox.cn)",
-      "WebFetch(domain:docs.evolink.ai)"
+      "WebFetch(domain:docs.evolink.ai)",
+      "Bash(xargs:*)"
     ]
   }
 }

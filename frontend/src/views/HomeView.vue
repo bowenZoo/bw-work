@@ -28,10 +28,10 @@ function handleKeydown(event: KeyboardEvent) {
     <!-- Header -->
     <header class="p-6">
       <div class="max-w-4xl mx-auto flex items-center gap-3">
-        <div class="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center">
-          <span class="text-white font-bold">AI</span>
+        <div class="w-8 h-8 bg-gray-900 rounded-md flex items-center justify-center">
+          <span class="text-white font-bold text-sm">BW</span>
         </div>
-        <h1 class="text-xl font-semibold text-gray-900">Game Planning AI Team</h1>
+        <h1 class="text-xl font-semibold text-gray-900">Game Design</h1>
       </div>
     </header>
 
@@ -41,24 +41,23 @@ function handleKeydown(event: KeyboardEvent) {
         <!-- Hero section -->
         <div class="text-center mb-12">
           <h2 class="text-4xl font-bold text-gray-900 mb-4">
-            AI-Powered Game Design Discussions
+            AI 驱动的游戏设计讨论
           </h2>
           <p class="text-lg text-gray-600">
-            Start a discussion with our AI planning team. System designers, number designers,
-            and player advocates will collaborate to help design your game features.
+            与 AI 策划团队开启讨论。系统策划、数值策划和玩家代言人将协作帮助你设计游戏功能。
           </p>
         </div>
 
         <!-- Input section -->
         <div class="bg-white rounded-2xl shadow-xl p-8 mb-12">
           <label class="block text-sm font-medium text-gray-700 mb-2">
-            What would you like to discuss?
+            你想讨论什么？
           </label>
           <div class="flex gap-3">
             <input
               v-model="topicInput"
               type="text"
-              placeholder="e.g., Design a gacha system for our RPG game"
+              placeholder="例如：为 RPG 游戏设计抽卡系统"
               class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               @keydown="handleKeydown"
             />
@@ -68,7 +67,7 @@ function handleKeydown(event: KeyboardEvent) {
               class="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
               @click="startDiscussion"
             >
-              Start Discussion
+              开始讨论
             </button>
           </div>
         </div>
@@ -79,9 +78,9 @@ function handleKeydown(event: KeyboardEvent) {
             <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
               <Users class="w-6 h-6 text-blue-500" />
             </div>
-            <h3 class="font-semibold text-gray-900 mb-2">Multiple Perspectives</h3>
+            <h3 class="font-semibold text-gray-900 mb-2">多元视角</h3>
             <p class="text-sm text-gray-600">
-              Get input from system designers, number designers, and player advocates.
+              获取系统策划、数值策划和玩家代言人的专业意见。
             </p>
           </div>
 
@@ -89,9 +88,9 @@ function handleKeydown(event: KeyboardEvent) {
             <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mb-4">
               <MessageSquare class="w-6 h-6 text-green-500" />
             </div>
-            <h3 class="font-semibold text-gray-900 mb-2">Real-time Discussion</h3>
+            <h3 class="font-semibold text-gray-900 mb-2">实时讨论</h3>
             <p class="text-sm text-gray-600">
-              Watch the AI team discuss and iterate on your game design ideas.
+              观看 AI 团队讨论并迭代你的游戏设计创意。
             </p>
           </div>
 
@@ -99,9 +98,9 @@ function handleKeydown(event: KeyboardEvent) {
             <div class="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center mb-4">
               <Zap class="w-6 h-6 text-orange-500" />
             </div>
-            <h3 class="font-semibold text-gray-900 mb-2">Instant Results</h3>
+            <h3 class="font-semibold text-gray-900 mb-2">即时结果</h3>
             <p class="text-sm text-gray-600">
-              Get comprehensive design proposals with balanced perspectives.
+              获得兼顾多方视角的综合设计方案。
             </p>
           </div>
         </div>
@@ -110,7 +109,7 @@ function handleKeydown(event: KeyboardEvent) {
 
     <!-- Footer -->
     <footer class="p-6 text-center text-sm text-gray-500">
-      Powered by CrewAI
+      由 CrewAI 驱动
     </footer>
   </div>
 </template>

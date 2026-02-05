@@ -1,4 +1,4 @@
-import { ref, computed, watch, onUnmounted } from 'vue';
+import { ref, computed, onUnmounted } from 'vue';
 import type { Message, DiscussionSummary } from '@/types';
 import { getDiscussionMessages } from '@/api/discussion';
 

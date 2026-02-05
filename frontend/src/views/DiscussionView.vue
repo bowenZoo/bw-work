@@ -172,10 +172,10 @@ onUnmounted(() => {
             <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
             </svg>
-            <span>Back to History</span>
+            <span>返回历史</span>
           </button>
           <span class="px-2 py-1 bg-purple-100 text-purple-700 text-sm rounded">
-            Playback Mode
+            回放模式
           </span>
         </div>
       </template>
@@ -219,7 +219,7 @@ onUnmounted(() => {
           :discussion-id="discussion?.id ?? undefined"
           :is-running="isRunning"
           :is-paused="isPaused"
-          placeholder="Enter a topic for discussion..."
+          placeholder="输入讨论主题..."
           @submit="handleSubmit"
           @paused="handlePaused"
           @resumed="handleResumed"

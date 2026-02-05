@@ -83,7 +83,7 @@ function handleError(message: string) {
         <input
           v-model="inputValue"
           type="text"
-          :placeholder="placeholder ?? 'Enter a discussion topic...'"
+          :placeholder="placeholder ?? '输入讨论主题...'"
           :disabled="disabled"
           class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
           @keydown="handleKeydown"
@@ -95,7 +95,7 @@ function handleError(message: string) {
           @click="handleSubmit"
         >
           <Send class="w-4 h-4" />
-          <span>Start</span>
+          <span>开始</span>
         </button>
       </div>
     </div>
