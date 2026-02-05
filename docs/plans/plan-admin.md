@@ -8,11 +8,12 @@
 
 实现独立的管理后台系统，支持：
 1. 管理员认证（JWT Token）
-2. LLM API Key 加密管理
+2. LLM API Key 加密管理（可热更新）
 3. Langfuse 监控配置
 4. 图像服务配置
 5. 配置热更新
 6. 操作日志审计
+7. 管理端安全策略（CSP、会话撤销、登录锁定）
 
 ## 前置依赖
 
@@ -104,6 +105,8 @@ data/
 - 创建 `backend/src/admin/database.py`
 - 实现 SQLite 数据库连接管理
 - 创建 `admin_users` 表
+- 创建 `admin_refresh_tokens` 表（refresh token 轮换/撤销）
+- 创建 `admin_login_attempts` 表（登录失败锁定）
 - 创建 `admin_config` 表
 - 创建 `admin_audit_log` 表
 - 支持通过环境变量 `ADMIN_DB_PATH` 自定义数据库路径
@@ -121,9 +124,11 @@ data/
 
 **执行**:
 - 创建 `backend/src/admin/crypto.py`
-- 实现 AES-256-GCM 加密/解密函数
+- 实现 AES-256-GCM 加密/解密函数（随机 nonce）
+- 仅支持 **32 字节 Base64** 密钥（严验长度）
 - 支持从环境变量 `ADMIN_ENCRYPTION_KEY` 读取密钥
-- 自动生成密钥（首次运行时）
+- 开发态允许自动生成并落盘 `data/admin/.keys/admin_encryption.key`（权限 600）
+- 生产态强制要求环境变量，不允许自动生成
 - 实现 `encrypt_value()` 和 `decrypt_value()` 函数
 
 **验证**:
@@ -140,7 +145,9 @@ data/
 - 创建 `backend/src/admin/auth.py`
 - 实现 bcrypt 密码哈希（cost factor >= 12）
 - 实现 JWT Token 生成（access token 24h，refresh token 7d）
-- 实现 Token 验证中间件
+- 实现 refresh token **轮换** 与 **撤销**（数据库表存储）
+- 实现 Token 验证中间件（access token）
+- 支持 refresh token 失效（logout 即撤销）
 - 支持环境变量 `ADMIN_JWT_SECRET` 和 `ADMIN_JWT_EXPIRE_HOURS`
 
 **验证**:
@@ -158,7 +165,10 @@ data/
 - 在 `backend/src/admin/database.py` 添加初始管理员创建逻辑
 - 支持环境变量 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD`
 - 首次启动时自动创建初始管理员
-- 如果未设置环境变量，使用默认用户名 `admin`，生成随机密码并输出到日志
+- 如果未设置环境变量：
+  - 生成一次性 bootstrap token，写入 `data/admin/.bootstrap_token`（权限 600）
+  - 需要通过该 token 完成首次密码设置
+- 禁止在日志打印明文密码
 
 **验证**:
 - `ADMIN_USERNAME=test ADMIN_PASSWORD=test123 cd backend && python -c "from src.admin.database import AdminDatabase; db = AdminDatabase(); db.init_db(); assert db.get_admin_user('test') is not None"` → exit_code == 0
@@ -177,7 +187,7 @@ data/
 - 实现 `POST /api/admin/auth/logout` - 登出
 - 实现 `POST /api/admin/auth/refresh` - 刷新 Token
 - 实现 `GET /api/admin/auth/me` - 获取当前用户信息
-- 实现登录失败锁定（5 次失败锁定 15 分钟）
+- 实现登录失败锁定（5 次失败锁定 15 分钟，DB 持久化）
 
 **验证**:
 - `cd backend && python -c "from src.admin.routes.auth import router"` → exit_code == 0
@@ -194,6 +204,7 @@ data/
 - 更新 `backend/src/api/main.py`，挂载 `/api/admin` 路由前缀
 - 添加 Admin 相关 CORS 配置
 - 确保 Admin API 需要认证（除登录接口外）
+- 管理端 API 增加基础安全响应头（建议：CSP、X-Frame-Options）
 
 **验证**:
 - `cd backend && python -c "from src.api.main import app; routes = [r.path for r in app.routes]; assert '/api/admin/auth/login' in str(routes) or any('admin' in str(r.path) for r in app.routes)"` → exit_code == 0
@@ -211,7 +222,8 @@ data/
 - 创建 `frontend/src/stores/admin.ts` - Admin 状态管理
 - 创建 `frontend/src/composables/useAdminAuth.ts` - 认证逻辑
 - 实现用户名/密码表单
-- 实现 Token 存储到 localStorage
+- 默认 Token 存储到 localStorage（可配置为 sessionStorage）
+- 添加基础 XSS 保护提示（CSP 配合）
 
 **验证**:
 - `ls frontend/src/views/admin/LoginView.vue` → 文件存在
@@ -266,7 +278,10 @@ data/
 - 更新 `backend/src/config/settings.py`，支持从 ConfigStore 读取配置
 - 实现配置优先级：环境变量 > 数据库配置 > 默认值
 - 添加 `reload_config()` 函数支持热更新
-- 配置变更时自动通知相关模块
+- 配置变更时自动通知相关模块：
+  - Langfuse：调用 `shutdown` + `init` 重新创建 client
+  - LLM：刷新 provider 配置，重建 client（惰性初始化）
+  - 图像服务：重读配置文件或 DB 配置
 
 **验证**:
 - `cd backend && python -c "from src.config.settings import settings, reload_config; reload_config()"` → exit_code == 0
@@ -285,6 +300,7 @@ data/
 - 实现 `PUT /api/admin/config/{category}/{key}` - 更新配置
 - 实现 `DELETE /api/admin/config/{category}/{key}` - 删除配置
 - 实现 `POST /api/admin/config/test/{category}` - 测试配置连接
+- 配置测试接口必须限制目标域名或使用固定配置（防 SSRF）
 
 **验证**:
 - `cd backend && python -c "from src.admin.routes.config import router"` → exit_code == 0
@@ -373,6 +389,7 @@ data/
 - 支持日志类型：login, login_failed, logout, config_update, config_delete
 - 实现敏感值脱敏
 - 实现日志查询（按时间、类型过滤）
+- 记录审计字段：ip、user_agent、action、target、before/after(masked)
 
 **验证**:
 - `cd backend && python -c "from src.admin.audit_log import AuditLogger; logger = AuditLogger(); logger.log('login', 'admin', target='admin')"` → exit_code == 0
@@ -439,6 +456,8 @@ data/
 - 创建 `backend/tests/admin/test_crypto.py` - 加密测试
 - 创建 `backend/tests/admin/test_auth.py` - 认证测试
 - 创建 `backend/tests/admin/test_config_store.py` - 配置存储测试
+- 创建 `backend/tests/admin/test_lockout.py` - 登录锁定测试
+- 创建 `backend/tests/admin/test_refresh_tokens.py` - refresh token 轮换/撤销测试
 
 **验证**:
 - `cd backend && python -m pytest tests/admin/ -v` → exit_code == 0
@@ -457,6 +476,7 @@ data/
 - 创建 `backend/tests/admin/test_api_auth.py` - 认证 API 测试
 - 创建 `backend/tests/admin/test_api_config.py` - 配置 API 测试
 - 创建 `backend/tests/admin/test_api_logs.py` - 日志 API 测试
+- 创建 `backend/tests/admin/test_api_security.py` - SSRF 防护与认证保护测试
 
 **验证**:
 - `cd backend && python -m pytest tests/admin/test_api_*.py -v` → exit_code == 0
@@ -495,7 +515,9 @@ data/
 - [ ] AC-03: 未携带 Token 的管理 API 请求返回 401 错误
 - [ ] AC-04: 过期 Token 的请求返回 401 错误
 - [ ] AC-05: 可通过环境变量 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 设置初始管理员
-- [ ] AC-06: 首次启动时如未设置环境变量，提示用户设置初始管理员
+- [ ] AC-06: 首次启动时如未设置环境变量，生成 bootstrap token 并强制完成初始化
+- [ ] AC-07: logout 能使 refresh token 失效
+- [ ] AC-08: 5 次失败锁定 15 分钟（跨进程有效）
 
 ### LLM 配置
 - [ ] AC-07: 可在管理界面配置 OpenAI API Key
@@ -519,19 +541,21 @@ data/
 - [ ] AC-19: 敏感字段（API Key、Secret Key）使用 AES-256 加密
 - [ ] AC-20: 修改配置后服务自动加载新配置，无需重启
 - [ ] AC-21: 加密密钥通过环境变量 `ADMIN_ENCRYPTION_KEY` 配置
+- [ ] AC-22: 配置测试接口不允许访问非白名单域名
 
 ### 操作日志
-- [ ] AC-22: 登录和登录失败都有日志记录
-- [ ] AC-23: 配置变更有日志记录（敏感值脱敏）
-- [ ] AC-24: 可在管理界面查看操作日志
-- [ ] AC-25: 超过 90 天的日志自动清理
+- [ ] AC-23: 登录和登录失败都有日志记录
+- [ ] AC-24: 配置变更有日志记录（敏感值脱敏）
+- [ ] AC-25: 日志包含 ip/user_agent/action/target/before/after
+- [ ] AC-26: 可在管理界面查看操作日志
+- [ ] AC-27: 超过 90 天的日志自动清理
 
 ### 前端管理界面
-- [ ] AC-26: `/admin` 路由可正常访问
-- [ ] AC-27: 未登录时自动跳转到 `/admin/login`
-- [ ] AC-28: 登录后可访问配置页面
-- [ ] AC-29: 各配置页面可正常显示和编辑配置
-- [ ] AC-30: 界面与主应用风格一致（使用相同的 TailwindCSS 主题）
+- [ ] AC-28: `/admin` 路由可正常访问
+- [ ] AC-29: 未登录时自动跳转到 `/admin/login`
+- [ ] AC-30: 登录后可访问配置页面
+- [ ] AC-31: 各配置页面可正常显示和编辑配置
+- [ ] AC-32: 界面与主应用风格一致（使用相同的 TailwindCSS 主题）
 
 ---
 
@@ -541,8 +565,8 @@ data/
 |--------|------|--------|
 | `ADMIN_USERNAME` | 初始管理员用户名 | `admin` |
 | `ADMIN_PASSWORD` | 初始管理员密码 | 随机生成 |
-| `ADMIN_ENCRYPTION_KEY` | 配置加密密钥（32 字节 Base64） | 随机生成 |
-| `ADMIN_JWT_SECRET` | JWT 签名密钥 | 随机生成 |
+| `ADMIN_ENCRYPTION_KEY` | 配置加密密钥（32 字节 Base64） | **必须设置（生产）** |
+| `ADMIN_JWT_SECRET` | JWT 签名密钥 | **必须设置（生产）** |
 | `ADMIN_JWT_EXPIRE_HOURS` | JWT 过期时间（小时） | `24` |
 | `ADMIN_DB_PATH` | 数据库文件路径 | `data/admin/admin.db` |
 
