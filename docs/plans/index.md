@@ -3,7 +3,7 @@
 > **对应 Spec**: [docs/spec.md](../spec.md), [docs/spec-admin.md](../spec-admin.md)
 > **创建时间**: 2026-02-04
 > **更新时间**: 2026-02-05
-> **总任务数**: 86 个
+> **总任务数**: 106 个
 
 ## 执行批次
 
@@ -17,6 +17,7 @@
 | 5 | [plan-advanced.md](./plan-advanced.md) | 10 | pending | Batch 2, 3 |
 | 6 | [plan-image-generation.md](./plan-image-generation.md) | 15 | pending | Batch 2 |
 | 7 | [plan-admin.md](./plan-admin.md) | 19 | pending | Batch 1, 3 |
+| 8 | [plan-project-discussion.md](./plan-project-discussion.md) | 20 | pending | Batch 2, 3 |
 
 ## Plan 列表
 
@@ -91,6 +92,20 @@
   - 操作日志审计
   - **19 个任务**，预计 4-5 天
 
+### Batch 8: 项目级策划讨论 (Phase 5)
+
+- **[plan-project-discussion.md](./plan-project-discussion.md)** - 项目级策划讨论
+  - GDD 上传与解析（F-38, F-39）- 支持 Markdown/PDF/Word
+  - 模块自动识别（F-40）- AI 识别 GDD 中的功能模块
+  - 批量模块选择（F-41）- 用户选择模块并设置讨论顺序
+  - 依次自动讨论（F-42）- 按顺序自动进行各模块讨论
+  - 讨论断点恢复（F-43）- 支持中断后从断点继续
+  - 项目级记忆（F-44）- 跨模块共享上下文，保持一致性
+  - 策划案生成（F-45）- 每个模块生成结构化策划案
+  - 策划案汇总（F-46）- 项目级汇总文档
+  - 讨论进度追踪（F-47）- 实时显示讨论进度
+  - **20 个任务**，预计 5-6 天
+
 ## 依赖关系图
 
 ```
@@ -103,6 +118,8 @@ Batch 1: plan-backend-core (基础)
     │         └──→ Batch 6: plan-image-generation
     │
     ├──→ Batch 3: plan-memory ───┼──→ Batch 5: plan-advanced
+    │         │                  │
+    │         │                  ├──→ Batch 8: plan-project-discussion
     │         │                  │
     │         └──→ Batch 4: plan-history
     │
@@ -119,8 +136,9 @@ Batch 1: plan-backend-core (基础)
 | Phase 2: 可视化 | plan-frontend, plan-history | 4-5 天 |
 | Phase 3: 记忆系统 | plan-memory | 2 天 |
 | Phase 4: 图像生成系统 | plan-image-generation | 3-4 天 |
-| Phase 5: 高级功能 | plan-advanced | 2-3 天 |
-| Phase 6: 管理后台 | plan-admin | 4-5 天 |
+| Phase 5: 项目级策划讨论 | plan-project-discussion | 5-6 天 |
+| Phase 6: 高级功能 | plan-advanced | 2-3 天 |
+| Phase 7: 管理后台 | plan-admin | 4-5 天 |
 
 ## 下一步
 
@@ -136,3 +154,4 @@ Batch 1: plan-backend-core (基础)
 | 2026-02-04 | 初始版本，生成 6 个 Plan |
 | 2026-02-05 | 新增 plan-image-generation.md (15 tasks)，对应 Spec 2.7 图像生成系统 |
 | 2026-02-05 | 新增 plan-admin.md (19 tasks)，对应 Spec docs/spec-admin.md 管理后台系统 |
+| 2026-02-05 | 新增 plan-project-discussion.md (20 tasks)，对应 Spec 2.8 项目级策划讨论 |
