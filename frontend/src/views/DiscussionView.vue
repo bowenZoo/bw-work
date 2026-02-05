@@ -168,6 +168,11 @@ function goBackToHistory() {
   router.push({ name: 'history' });
 }
 
+// Navigate back to home
+function goBackToHome() {
+  router.push({ name: 'home' });
+}
+
 // Cleanup on unmount
 onUnmounted(() => {
   if (!isPlaybackMode.value) {
@@ -180,10 +185,23 @@ onUnmounted(() => {
   <div class="h-screen flex flex-col bg-gray-100">
     <!-- Header -->
     <Header :connection-status="isPlaybackMode ? 'disconnected' : connectionStatus">
-      <!-- Playback mode indicator -->
-      <template #extra v-if="isPlaybackMode">
+      <!-- Navigation and mode indicator -->
+      <template #extra>
         <div class="flex items-center gap-2">
+          <!-- Back to home button (live mode) -->
           <button
+            v-if="!isPlaybackMode"
+            class="flex items-center gap-1 text-gray-600 hover:text-gray-800"
+            @click="goBackToHome"
+          >
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+            </svg>
+            <span>返回主页</span>
+          </button>
+          <!-- Back to history button (playback mode) -->
+          <button
+            v-if="isPlaybackMode"
             class="flex items-center gap-1 text-gray-600 hover:text-gray-800"
             @click="goBackToHistory"
           >
@@ -192,7 +210,8 @@ onUnmounted(() => {
             </svg>
             <span>返回历史</span>
           </button>
-          <span class="px-2 py-1 bg-purple-100 text-purple-700 text-sm rounded">
+          <!-- Playback mode badge -->
+          <span v-if="isPlaybackMode" class="px-2 py-1 bg-purple-100 text-purple-700 text-sm rounded">
             回放模式
           </span>
         </div>
