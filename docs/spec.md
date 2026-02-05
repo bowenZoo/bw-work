@@ -1,8 +1,8 @@
 # 游戏策划 AI 团队 规格文档
 
-> **版本**: 1.1
+> **版本**: 1.2
 > **创建时间**: 2026-02-04
-> **更新时间**: 2026-02-04
+> **更新时间**: 2026-02-05
 
 ## 1. 项目概述
 
@@ -178,6 +178,192 @@
 - [ ] AC-21: 策划案保存在指定目录
 - [ ] AC-22: 支持查看历史版本
 
+### 2.7 图像生成系统
+
+#### 用户故事
+
+- US-18: 作为用户，我希望策划方案能自动配图，以便更直观地理解设计意图
+- US-19: 作为策划 Agent，我希望在讨论中可以请求生成配图，以便更好地表达设计想法
+- US-20: 作为用户，我希望根据方案风格自动选择合适的图像生成服务
+- US-21: 作为用户，我希望可以自定义图像风格模板，以便适配不同项目需求
+
+#### 功能点
+
+| ID | 功能 | 优先级 | 描述 |
+|----|------|--------|------|
+| F-30 | 视觉概念 Agent | P1 | 新增策划团队成员，负责将文字描述转化为图像 prompt |
+| F-31 | Prompt 工程模块 | P1 | 将策划文字描述转化为专业的图像生成 prompt |
+| F-32 | 多后端图像服务 | P1 | 支持多个图像生成服务后端，按风格自动选择 |
+| F-33 | 风格模板系统 | P1 | 预设多种游戏美术风格，支持自定义扩展 |
+| F-34 | 主动请求配图 | P1 | 策划 Agent 可主动请求生成配图 |
+| F-35 | 自动配图 | P2 | 讨论结束后自动为方案生成配图 |
+| F-36 | 图像存储管理 | P1 | 本地存储与云存储支持 |
+| F-37 | 异步图像生成 | P1 | 复杂图片通过 WebSocket 推送结果 |
+
+#### 视觉概念 Agent 定位
+
+视觉概念 Agent 具有双重角色：
+
+1. **团队成员模式**：作为策划团队的一员参与讨论，从视觉角度提供设计建议
+2. **服务模式**：作为工具被其他 Agent 调用，按需生成配图
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  策划团队 (CrewAI Crew)                                      │
+│                                                             │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
+│  │ 系统策划  │  │ 数值策划  │  │ 玩家代言人 │  │ 视觉概念  │    │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘    │
+│       │             │             │             │          │
+│       └─────────────┴─────────────┴─────────────┘          │
+│                           │                                 │
+│                     讨论/请求配图                            │
+│                           ↓                                 │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  图像生成服务 (ImageService)                         │   │
+│  │  ├── kie.ai         (通用市场模型)                   │   │
+│  │  ├── wenwen-ai      (Midjourney 集成)               │   │
+│  │  ├── nanobanana     (图生图、多尺寸)                 │   │
+│  │  └── OpenAI DALL-E  (标准接口)                      │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 图像服务后端
+
+| 服务 | 认证方式 | 请求模式 | 特点 |
+|------|----------|----------|------|
+| kie.ai | Bearer token | 异步轮询 | 通用市场模型 |
+| wenwen-ai | Token | OpenAI 兼容接口 | 支持 Midjourney 集成 |
+| nanobanana/Evolink | Bearer token | 异步 + 回调 | 支持图生图、多尺寸、4K 质量 |
+| OpenAI DALL-E | Bearer token | 同步 | 标准 OpenAI 格式 |
+
+**nanobanana/Evolink 接口规格**：
+- 端点：`POST /v1/images/generations`
+- 支持功能：图生图、多尺寸输出、4K 质量
+
+#### 风格模板
+
+预设风格模板（可通过配置文件扩展）：
+
+| 风格 ID | 名称 | 适用场景 | 推荐后端 |
+|---------|------|----------|----------|
+| `concept_character` | 游戏概念图-角色 | 角色设计方案 | wenwen-ai, nanobanana |
+| `concept_scene` | 游戏概念图-场景 | 场景设计方案 | wenwen-ai, nanobanana |
+| `concept_prop` | 游戏概念图-道具 | 道具/物品设计 | kie.ai, DALL-E |
+| `ui_mockup` | UI 示意图 | 界面设计方案 | DALL-E |
+| `pixel_art` | 像素风格 | 复古/独立游戏 | kie.ai |
+| `cartoon` | 卡通风格 | 休闲/卡通游戏 | wenwen-ai |
+
+**风格配置文件结构**（`backend/src/config/image_styles.yaml`）：
+
+```yaml
+styles:
+  concept_character:
+    name: 游戏概念图-角色
+    prompt_prefix: "game character concept art, detailed design sheet,"
+    prompt_suffix: "professional quality, artstation"
+    recommended_backends:
+      - wenwen-ai
+      - nanobanana
+    default_params:
+      aspect_ratio: "2:3"
+      quality: "high"
+
+  custom_style:  # 用户可添加自定义风格
+    name: 自定义风格
+    prompt_prefix: "..."
+    prompt_suffix: "..."
+    recommended_backends:
+      - kie.ai
+```
+
+#### 交互模式
+
+| 模式 | 触发条件 | 响应方式 | 适用场景 |
+|------|----------|----------|----------|
+| 同步 | 简单图片请求 | 等待生成完成后返回 | UI 示意图、简单道具 |
+| 异步 | 复杂图片请求 | 通过 WebSocket 推送结果 | 角色概念图、场景设计 |
+
+**WebSocket 消息格式**：
+
+```typescript
+// 图像生成开始
+{
+  type: "image_generation_start",
+  request_id: "img_001",
+  prompt: "游戏角色概念设计...",
+  style: "concept_character",
+  backend: "wenwen-ai"
+}
+
+// 图像生成完成
+{
+  type: "image_generation_complete",
+  request_id: "img_001",
+  image_url: "/api/images/projects/{project_id}/img_001.png",
+  metadata: {
+    width: 1024,
+    height: 1536,
+    backend: "wenwen-ai",
+    generation_time_ms: 15000
+  }
+}
+
+// 图像生成失败
+{
+  type: "image_generation_error",
+  request_id: "img_001",
+  error: "Backend service unavailable"
+}
+```
+
+#### 存储方案
+
+**本地存储**（默认）：
+```
+data/projects/{project_id}/images/
+├── img_001.png
+├── img_002.png
+└── metadata.json  # 图片元数据索引
+```
+
+**云存储**（可配置）：
+- 支持 OSS/S3 兼容存储
+- 配置项：`IMAGE_STORAGE_TYPE=local|oss|s3`
+
+**元数据结构**：
+```json
+{
+  "img_001": {
+    "filename": "img_001.png",
+    "prompt": "原始 prompt",
+    "style": "concept_character",
+    "backend": "wenwen-ai",
+    "created_at": "2026-02-05T10:00:00Z",
+    "discussion_id": "disc_123",
+    "agent": "visual_concept"
+  }
+}
+```
+
+#### 验收标准
+
+- [ ] AC-23: 视觉概念 Agent 可作为团队成员参与讨论
+- [ ] AC-24: 视觉概念 Agent 可被其他 Agent 调用生成配图
+- [ ] AC-25: 支持至少 2 个图像生成后端
+- [ ] AC-26: 风格模板可通过 YAML 配置文件扩展
+- [ ] AC-27: 简单图片同步返回，复杂图片异步推送
+- [ ] AC-28: 生成的图片正确存储并可通过 API 访问
+- [ ] AC-29: 图片元数据正确记录并与讨论关联
+
+#### 暂不实现
+
+- 成本控制机制（后续迭代）
+- 图片编辑功能（裁剪、调整）
+- 图生图功能（基于已有图片生成变体）
+- 批量生成功能
+
 ## 3. 技术约束
 
 ### 3.1 两层 Agent 架构
@@ -205,6 +391,7 @@
 │  ├── system_designer.py   # 系统策划角色                    │
 │  ├── number_designer.py   # 数值策划角色                    │
 │  ├── player_advocate.py   # 玩家代言人角色                  │
+│  ├── visual_concept.py    # 视觉概念角色 (新增)             │
 │  └── ...                                                    │
 │                                                             │
 │  → 这些是 CrewAI 的 Agent，是本项目的核心功能               │
@@ -227,6 +414,7 @@
 | SQLite | - | 结构化存储 |
 | Chroma | latest | 向量数据库 |
 | Langfuse SDK | latest | 监控追踪 |
+| httpx/aiohttp | latest | 异步 HTTP 客户端（图像服务调用） |
 
 **前端:**
 | 技术 | 版本 | 用途 |
@@ -237,7 +425,7 @@
 | TailwindCSS | latest | 样式 |
 | WebSocket | - | 实时通信 |
 
-### 3.2 性能要求
+### 3.3 性能要求
 
 | 指标 | 要求 |
 |------|------|
@@ -246,21 +434,25 @@
 | 单次讨论 Agent 数 | 支持 5+ |
 | 并发讨论数 | 支持 3+ |
 | 历史记录存储 | 最近 100 条讨论，超出自动归档到 `archive/` |
+| 图像生成超时 | 同步模式 < 30s，异步模式 < 120s |
 
-### 3.3 兼容性
+### 3.4 兼容性
 
 - 浏览器：Chrome 90+, Firefox 88+, Safari 14+
 - 操作系统：macOS, Linux, Windows
 - Python 版本：3.11+
 - Node.js 版本：18+
 
-### 3.4 数据存储
+### 3.5 数据存储
 
 ```
 data/
 ├── projects/{project_id}/
 │   ├── discussions/          # 讨论记录
 │   ├── drafts/               # 策划案版本
+│   ├── images/               # 生成的图片 (新增)
+│   │   ├── img_001.png
+│   │   └── metadata.json
 │   ├── decisions.md          # 决策记录
 │   └── config.yaml           # 项目配置
 └── knowledge/                # 全局知识库
@@ -292,6 +484,15 @@ data/
 - 讨论回放时间线
 - 人工介入输入框
 
+### 4.3 图像生成服务参考
+
+| 服务 | API 文档 | 备注 |
+|------|----------|------|
+| kie.ai | 内部文档 | 通用市场模型 |
+| wenwen-ai | 内部文档 | Midjourney 集成 |
+| nanobanana/Evolink | 内部文档 | 多功能图像服务 |
+| OpenAI DALL-E | platform.openai.com/docs | 标准参考实现 |
+
 ## 5. 里程碑规划
 
 ### Phase 1: MVP (核心功能)
@@ -312,9 +513,19 @@ data/
 - 设计决策追踪 (F-22)
 - 知识库管理 (F-20)
 
-### Phase 4: 高级功能
+### Phase 4: 图像生成系统 (新增)
+- 视觉概念 Agent (F-30)
+- Prompt 工程模块 (F-31)
+- 多后端图像服务集成 (F-32)
+- 风格模板系统 (F-33)
+- 主动请求配图 (F-34)
+- 图像存储管理 (F-36)
+- 异步图像生成 (F-37)
+
+### Phase 5: 高级功能
 - 人工介入节点 (F-11)
 - 策划案自动生成 (F-27)
+- 自动配图 (F-35)
 - 多项目并行
 - 成本控制
 
@@ -331,6 +542,9 @@ data/
 | Task | Agent 需要完成的具体任务 |
 | Memory | Agent 的记忆能力 |
 | Tool | Agent 可调用的工具 |
+| 视觉概念 Agent | 负责图像生成的 Agent，可作为团队成员或服务 |
+| Prompt 工程 | 将自然语言描述转化为图像生成 prompt 的过程 |
+| 风格模板 | 预定义的图像生成参数集合 |
 
 ### B. 文档版本历史
 
@@ -338,3 +552,4 @@ data/
 |------|------|----------|
 | 1.0 | 2026-02-04 | 初始版本，基于 README.md 生成 |
 | 1.1 | 2026-02-04 | 补充"两层 Agent 架构"说明，修正存储上限约束 |
+| 1.2 | 2026-02-05 | 新增图像生成系统模块 (2.7)，更新里程碑规划 |

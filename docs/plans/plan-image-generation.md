@@ -9,7 +9,7 @@
 实现图像生成系统，支持：
 1. 视觉概念 Agent（F-30）- 参与讨论并生成配图
 2. Prompt 工程模块（F-31）- 将文字描述转化为图像 prompt
-3. 多后端图像服务（F-32）- 支持 kie.ai、wenwen-ai、nanobanana、DALL-E
+3. 多后端图像服务（F-32）- 支持 OpenAI / OpenAI 兼容 / 任务轮询型服务（配置驱动）
 4. 风格模板系统（F-33）- YAML 配置的风格预设
 5. 主动请求配图（F-34）- Agent 可请求生成配图
 6. 图像存储管理（F-36）- 本地 + 云存储支持
@@ -37,20 +37,21 @@ backend/src/
 │   └── backends/                  # 图像服务后端
 │       ├── __init__.py
 │       ├── base.py                # 后端基类
-│       ├── kie_ai.py              # kie.ai 后端
-│       ├── wenwen_ai.py           # wenwen-ai 后端
-│       ├── nanobanana.py          # nanobanana/Evolink 后端
-│       └── dalle.py               # OpenAI DALL-E 后端
+│       ├── openai.py              # OpenAI Images 后端
+│       ├── openai_compatible.py   # OpenAI 兼容后端（配置驱动）
+│       └── task_polling.py        # 任务轮询型后端（配置驱动）
 ├── api/
 │   └── routes/
 │       └── image.py               # 图像 API 路由
 ├── config/
-│   └── image_styles.yaml          # 风格模板配置
+│   ├── image_styles.yaml          # 风格模板配置
+│   └── image_providers.yaml       # Provider 配置（URL/鉴权/参数映射）
 
 data/projects/{project_id}/
 └── images/                        # 生成的图片
     ├── img_001.png
-    └── metadata.json              # 图片元数据索引
+    ├── metadata.json              # 图片元数据索引
+    └── requests.json              # 生成请求索引（状态/错误）
 ```
 
 ### 技术选型
@@ -87,9 +88,12 @@ class ImageRequest:
     prompt: str                    # 原始文字描述
     enhanced_prompt: str           # 增强后的图像 prompt
     style_id: str                  # 风格模板 ID
-    backend: str                   # 选用的后端服务
+    provider_id: str               # 选用的 provider
+    task_id: Optional[str]         # 异步任务 ID
     status: str                    # 状态 (pending/processing/completed/failed)
+    error: Optional[str]
     created_at: datetime
+    updated_at: datetime
     completed_at: Optional[datetime]
 
 # 图像元数据
@@ -98,7 +102,7 @@ class ImageMetadata:
     filename: str
     prompt: str
     style: str
-    backend: str
+    provider_id: str
     width: int
     height: int
     created_at: datetime
@@ -116,7 +120,7 @@ class ImageMetadata:
   request_id: "img_001",
   prompt: "游戏角色概念设计...",
   style: "concept_character",
-  backend: "wenwen-ai"
+  provider_id: "provider_a"
 }
 
 // 图像生成完成
@@ -127,7 +131,7 @@ class ImageMetadata:
   metadata: {
     width: 1024,
     height: 1536,
-    backend: "wenwen-ai",
+    provider_id: "provider_a",
     generation_time_ms: 15000
   }
 }
@@ -179,12 +183,12 @@ class ImageMetadata:
 
 ---
 
-### Task 7.2: 实现 OpenAI DALL-E 后端
+### Task 7.2: 实现 OpenAI Images 后端（同步）
 
 **执行**:
-- 创建 `backend/src/image/backends/dalle.py`
-- 实现 `DalleBackend(ImageBackend)` 类
-- 使用 OpenAI SDK 调用 DALL-E API
+- 创建 `backend/src/image/backends/openai.py`
+- 实现 `OpenAiBackend(ImageBackend)` 类
+- 使用 OpenAI SDK 调用 Images API
 - 支持同步生成模式
 - 实现参数映射（size、quality、style）
 
@@ -194,7 +198,7 @@ class ImageMetadata:
 - 请求体：
   ```json
   {
-    "model": "dall-e-3",
+    "model": "gpt-image-1",
     "prompt": "...",
     "size": "1024x1024",
     "quality": "standard",
@@ -203,93 +207,105 @@ class ImageMetadata:
   ```
 
 **验证**:
-- `cd backend && python -c "from src.image.backends.dalle import DalleBackend"` → exit_code == 0
+- `cd backend && python -c "from src.image.backends.openai import OpenAiBackend"` → exit_code == 0
 - Mock 测试验证请求格式正确
 
 **输出文件**:
-- `backend/src/image/backends/dalle.py`
+- `backend/src/image/backends/openai.py`
 - `backend/tests/test_image_backends.py`
 
 ---
 
-### Task 7.3: 实现 kie.ai 后端
+### Task 7.3: 实现 OpenAI 兼容后端（配置驱动）
 
 **执行**:
-- 创建 `backend/src/image/backends/kie_ai.py`
-- 实现 `KieAiBackend(ImageBackend)` 类
-- 实现异步轮询模式：
-  1. 提交生成请求，获取 task_id
-  2. 轮询任务状态直到完成
-  3. 下载并返回图像
-- 实现超时处理（默认 120 秒）
+- 创建 `backend/src/image/backends/openai_compatible.py`
+- 实现 `OpenAiCompatibleBackend(ImageBackend)` 类
+- 采用 OpenAI 兼容接口格式
+- 从 provider 配置读取 `api_base`、`model`、`extra_params`
 
 **接口规格**:
-- 提交端点：`POST /api/generate`
-- 查询端点：`GET /api/tasks/{task_id}`
-- 认证：`Authorization: Bearer {KIE_AI_TOKEN}`
-- 轮询间隔：2 秒
+- 端点：OpenAI 兼容格式（`{api_base}/v1/images/generations`）
+- 认证：Token 方式（由 provider 配置指定）
+- 允许扩展参数（如 `style`、`seed` 等）
 
 **验证**:
-- `cd backend && python -c "from src.image.backends.kie_ai import KieAiBackend"` → exit_code == 0
-- Mock 测试验证轮询逻辑
+- `cd backend && python -c "from src.image.backends.openai_compatible import OpenAiCompatibleBackend"` → exit_code == 0
+- Mock 测试验证请求映射
 
 **输出文件**:
-- `backend/src/image/backends/kie_ai.py`
+- `backend/src/image/backends/openai_compatible.py`
 - `backend/tests/test_image_backends.py` (更新)
 
 ---
 
-### Task 7.4: 实现 wenwen-ai 后端
+### Task 7.4: 实现任务轮询型后端（配置驱动）
 
 **执行**:
-- 创建 `backend/src/image/backends/wenwen_ai.py`
-- 实现 `WenwenAiBackend(ImageBackend)` 类
-- 采用 OpenAI 兼容接口格式
-- 支持 Midjourney 集成参数
+- 创建 `backend/src/image/backends/task_polling.py`
+- 实现 `TaskPollingBackend(ImageBackend)` 类
+- 实现通用异步轮询模式：
+  1. 提交生成请求，获取 `task_id`
+  2. 轮询任务状态直到完成
+  3. 下载并返回图像
+- 轮询间隔/超时可配置（默认 2s / 120s）
+- 回调模式作为 P2 扩展（配置 `callback_url`）
 
 **接口规格**:
-- 端点：OpenAI 兼容格式
-- 认证：Token 方式
-- 特殊参数：支持 Midjourney 风格参数
+- 提交端点：`{api_base}{submit_path}`
+- 查询端点：`{api_base}{status_path}`
+- 结果端点：`{api_base}{result_path}`（可选）
+- 认证：Token 方式（由 provider 配置指定）
 
 **验证**:
-- `cd backend && python -c "from src.image.backends.wenwen_ai import WenwenAiBackend"` → exit_code == 0
+- `cd backend && python -c "from src.image.backends.task_polling import TaskPollingBackend"` → exit_code == 0
 
 **输出文件**:
-- `backend/src/image/backends/wenwen_ai.py`
+- `backend/src/image/backends/task_polling.py`
 
 ---
 
-### Task 7.5: 实现 nanobanana/Evolink 后端
+### Task 7.5: 实现 Provider 配置与选择逻辑
 
 **执行**:
-- 创建 `backend/src/image/backends/nanobanana.py`
-- 实现 `NanobananBackend(ImageBackend)` 类
-- 支持异步 + 回调两种模式
-- 支持图生图功能（P2，预留接口）
-- 支持多尺寸输出、4K 质量
+**执行**:
+- 创建 `backend/src/config/image_providers.yaml`
+- 创建 `backend/src/image/providers.py`
+- 实现 `ProviderRegistry`：
+  - 加载 provider 配置
+  - 根据 `provider_id` 选择后端类型与参数
+  - 支持环境变量注入 token
 
-**接口规格**:
-- 端点：`POST /v1/images/generations`
-- 认证：`Authorization: Bearer {NANOBANANA_TOKEN}`
-- 特殊参数：
-  ```json
-  {
-    "size": "1024x1024",
-    "quality": "4k",
-    "callback_url": "optional"
-  }
-  ```
-
-**回调处理**:
-- 如配置了 callback_url，服务完成后会 POST 回调
-- MVP 阶段使用轮询模式，回调模式作为 P2 扩展
+**Provider 配置结构**:
+```yaml
+providers:
+  openai_default:
+    backend: openai
+    api_base: "https://api.openai.com/v1"
+    api_key_env: "OPENAI_API_KEY"
+    model: "gpt-image-1"
+  provider_a:
+    backend: openai_compatible
+    api_base: "https://example.com/v1"
+    api_key_env: "PROVIDER_A_TOKEN"
+    extra_params:
+      style: "concept"
+  provider_b:
+    backend: task_polling
+    api_base: "https://example.com"
+    api_key_env: "PROVIDER_B_TOKEN"
+    submit_path: "/api/generate"
+    status_path: "/api/tasks/{task_id}"
+    result_path: "/api/tasks/{task_id}/result"
+    poll_interval_sec: 2
+```
 
 **验证**:
-- `cd backend && python -c "from src.image.backends.nanobanana import NanobananBackend"` → exit_code == 0
+- `cd backend && python -c "from src.image.providers import ProviderRegistry"` → exit_code == 0
 
 **输出文件**:
-- `backend/src/image/backends/nanobanana.py`
+- `backend/src/config/image_providers.yaml`
+- `backend/src/image/providers.py`
 
 ---
 
@@ -339,8 +355,8 @@ styles:
     prompt_prefix: "game character concept art, detailed design sheet,"
     prompt_suffix: "professional quality, artstation"
     recommended_backends:
-      - wenwen-ai
-      - nanobanana
+      - openai_default
+      - provider_b
     default_params:
       aspect_ratio: "2:3"
       quality: "high"
@@ -363,8 +379,9 @@ styles:
 - 实现 `ImageStorage` 类：
   - 本地存储：保存到 `data/projects/{project_id}/images/`
   - 云存储接口：预留 S3/OSS 扩展（P2）
-  - 元数据管理：维护 `metadata.json`
+  - 元数据管理：维护 `metadata.json` + `requests.json`（请求状态）
   - 图像 URL 生成
+- 文件并发安全：文件锁 + 原子写（写临时文件后 rename）
 - 配置项：`IMAGE_STORAGE_TYPE=local|oss|s3`
 
 **存储结构**:
@@ -373,7 +390,8 @@ data/projects/{project_id}/images/
 ├── img_001.png
 ├── img_001_thumb.png        # 缩略图 (可选)
 ├── img_002.png
-└── metadata.json
+├── metadata.json
+└── requests.json
 ```
 
 **metadata.json 结构**:
@@ -383,13 +401,27 @@ data/projects/{project_id}/images/
     "filename": "img_001.png",
     "prompt": "原始 prompt",
     "style": "concept_character",
-    "backend": "wenwen-ai",
+    "provider_id": "provider_a",
     "width": 1024,
     "height": 1536,
     "created_at": "2026-02-05T10:00:00Z",
     "discussion_id": "disc_123",
     "agent": "visual_concept",
     "generation_time_ms": 15000
+  }
+}
+```
+
+**requests.json 结构**:
+```json
+{
+  "img_001": {
+    "provider_id": "openai_default",
+    "task_id": null,
+    "status": "completed",
+    "error": null,
+    "created_at": "2026-02-05T10:00:00Z",
+    "updated_at": "2026-02-05T10:00:05Z"
   }
 }
 ```
@@ -414,6 +446,8 @@ data/projects/{project_id}/images/
   - 同步/异步模式自动选择
   - 错误处理和重试机制（最多 2 次重试）
   - WebSocket 状态推送集成
+  - 请求状态持久化（写入 `requests.json`）
+  - 异步轮询在后台任务中执行（避免阻塞 API 请求）
 
 **调用流程**:
 ```
@@ -580,8 +614,8 @@ def request_image(description: str, style: str = "concept_character") -> str:
 - 测试错误处理场景
 
 **测试用例**:
-- 同步生成流程（DALL-E）
-- 异步生成流程（kie.ai）
+- 同步生成流程（OpenAI）
+- 异步生成流程（任务轮询型）
 - 超时处理
 - 后端不可用回退
 - 多客户端 WebSocket 推送
@@ -604,15 +638,11 @@ def request_image(description: str, style: str = "concept_character") -> str:
   # 图像服务配置
   IMAGE_STORAGE_TYPE: str = "local"  # local | oss | s3
   IMAGE_STORAGE_PATH: str = "data/projects"
+  IMAGE_PROVIDERS_PATH: str = "config/image_providers.yaml"
+  IMAGE_DEFAULT_PROVIDER: str = "openai_default"
 
-  # 后端服务配置
-  KIE_AI_API_URL: str = ""
-  KIE_AI_TOKEN: str = ""
-  WENWEN_AI_API_URL: str = ""
-  WENWEN_AI_TOKEN: str = ""
-  NANOBANANA_API_URL: str = ""
-  NANOBANANA_TOKEN: str = ""
-  OPENAI_API_KEY: str = ""  # DALL-E
+  # 后端服务配置（通过 provider 配置引用环境变量）
+  OPENAI_API_KEY: str = ""
 
   # 生成配置
   IMAGE_GENERATION_TIMEOUT: int = 120  # 秒
@@ -633,8 +663,8 @@ def request_image(description: str, style: str = "concept_character") -> str:
 - [ ] 视觉概念 Agent 可作为团队成员参与讨论 (Spec AC-23)
 - [ ] 视觉概念 Agent 可被其他 Agent 调用生成配图 (Spec AC-24)
 - [ ] 支持至少 2 个图像生成后端 (Spec AC-25)
-  - DALL-E（同步）
-  - kie.ai 或 wenwen-ai（异步）
+  - OpenAI（同步）
+  - OpenAI 兼容或任务轮询型（异步）
 - [ ] 风格模板可通过 YAML 配置文件扩展 (Spec AC-26)
 - [ ] 简单图片同步返回，复杂图片异步推送 (Spec AC-27)
 - [ ] 生成的图片正确存储并可通过 API 访问 (Spec AC-28)
