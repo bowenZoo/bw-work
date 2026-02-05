@@ -96,13 +96,17 @@ async def get_config_status(
     langfuse_config = store.get_langfuse_config()
     image_config = store.get_image_config()
 
+    # Check image configuration - providers are at top level (openai, mj)
+    image_configured = (
+        image_config.get("openai", {}).get("configured", False)
+        or image_config.get("mj", {}).get("configured", False)
+    )
+
     return ConfigStatusResponse(
         llm_configured=llm_config.get("configured", False),
         langfuse_configured=langfuse_config.get("configured", False),
         langfuse_enabled=langfuse_config.get("enabled", False),
-        image_configured=any(
-            p.get("configured") for p in image_config.get("providers", {}).values()
-        ),
+        image_configured=image_configured,
         default_image_provider=image_config.get("default_provider"),
     )
 

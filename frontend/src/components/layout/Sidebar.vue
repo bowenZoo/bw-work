@@ -26,11 +26,5 @@ defineProps<{
     <!-- Additional sidebar content can go here -->
     <div class="flex-1"></div>
 
-    <!-- Footer -->
-    <div class="p-4 border-t border-gray-200">
-      <p class="text-xs text-gray-500 text-center">
-        Powered by CrewAI
-      </p>
-    </div>
   </aside>
 </template>

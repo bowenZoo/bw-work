@@ -197,9 +197,5 @@ function removeAttachment() {
       </div>
     </main>
 
-    <!-- Footer -->
-    <footer class="p-6 text-center text-sm text-gray-500">
-      由 CrewAI 驱动
-    </footer>
   </div>
 </template>

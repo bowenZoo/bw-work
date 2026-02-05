@@ -20,6 +20,26 @@ logger = logging.getLogger(__name__)
 _langfuse_client: Langfuse | None = None
 
 
+def _get_langfuse_config_from_store() -> tuple[str | None, str | None, str | None, bool]:
+    """Get Langfuse config from admin config store.
+
+    Returns:
+        Tuple of (public_key, secret_key, host, enabled).
+    """
+    try:
+        from src.admin.config_store import ConfigStore
+        store = ConfigStore()
+        public_key = store.get_raw("langfuse", "public_key")
+        secret_key = store.get_raw("langfuse", "secret_key")
+        host = store.get_raw("langfuse", "host") or "https://cloud.langfuse.com"
+        enabled = store.get_raw("langfuse", "enabled") == "true"
+        logger.debug(f"Langfuse config from store: host={host}, enabled={enabled}, has_keys={bool(public_key and secret_key)}")
+        return public_key, secret_key, host, enabled
+    except Exception as e:
+        logger.debug(f"Failed to get Langfuse config from store: {e}")
+        return None, None, None, False
+
+
 def init_langfuse() -> Langfuse | None:
     """Initialize the Langfuse client.
 
@@ -31,18 +51,36 @@ def init_langfuse() -> Langfuse | None:
     if _langfuse_client is not None:
         return _langfuse_client
 
-    if not settings.langfuse_public_key or not settings.langfuse_secret_key:
+    # Try to get config from admin store first
+    public_key, secret_key, host, enabled = _get_langfuse_config_from_store()
+
+    # Fall back to environment variables / settings if not in store
+    if not public_key:
+        public_key = settings.langfuse_public_key
+    if not secret_key:
+        secret_key = settings.langfuse_secret_key
+    if not host:
+        host = settings.langfuse_host
+
+    if not public_key or not secret_key:
         logger.warning(
             "Langfuse not configured. Set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY "
             "environment variables to enable tracing."
         )
         return None
 
+    # Check if enabled in admin store (if configured there)
+    if not enabled and _get_langfuse_config_from_store()[0]:
+        # Config exists in store but is disabled
+        logger.info("Langfuse is configured but disabled in admin settings")
+        return None
+
     try:
+        logger.info(f"Initializing Langfuse client with host={host}")
         _langfuse_client = Langfuse(
-            public_key=settings.langfuse_public_key,
-            secret_key=settings.langfuse_secret_key,
-            host=settings.langfuse_host,
+            public_key=public_key,
+            secret_key=secret_key,
+            host=host,
         )
         logger.info("Langfuse client initialized successfully")
         return _langfuse_client

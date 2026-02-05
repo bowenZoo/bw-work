@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
+import { ArrowLeft } from 'lucide-vue-next';
 import { Header, Sidebar } from '@/components/layout';
 import { HistoryList } from '@/components/history';
 import type { DiscussionSummary } from '@/types';
@@ -33,7 +34,17 @@ function clearSearch() {
 <template>
   <div class="h-screen flex flex-col bg-gray-100">
     <!-- Header -->
-    <Header />
+    <Header>
+      <template #extra>
+        <router-link
+          to="/"
+          class="flex items-center gap-2 px-3 py-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+        >
+          <ArrowLeft class="w-4 h-4" />
+          <span class="text-sm">返回首页</span>
+        </router-link>
+      </template>
+    </Header>
 
     <!-- Main content -->
     <div class="flex-1 flex overflow-hidden">

@@ -1,6 +1,7 @@
 """Discussion API routes."""
 import asyncio
 import json
+import logging
 import os
 import threading
 import uuid
@@ -8,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from crewai import Crew, Process
 from fastapi import APIRouter, HTTPException
@@ -17,6 +19,8 @@ from src.agents import Summarizer
 from src.crew.discussion_crew import DiscussionCrew
 from src.memory.base import Discussion, Message
 from src.memory.discussion_memory import DiscussionMemory
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/discussions", tags=["discussions"])
 
@@ -173,6 +177,44 @@ def save_discussion_state(discussion: DiscussionState) -> None:
         _persist_discussion_state(discussion)
 
 
+def _get_llm_from_config() -> Any | None:
+    """Get LLM instance from admin config store.
+
+    Returns:
+        LLM instance if configured, None otherwise.
+    """
+    try:
+        from src.admin.config_store import ConfigStore
+
+        store = ConfigStore()
+        api_key = store.get_raw("llm", "openai_api_key")
+
+        if not api_key:
+            logger.warning("No OpenAI API key configured in admin store")
+            return None
+
+        base_url = store.get_raw("llm", "openai_base_url")
+        model = store.get_raw("llm", "openai_model") or "gpt-4"
+
+        # Use langchain's ChatOpenAI which is compatible with CrewAI
+        from langchain_openai import ChatOpenAI
+
+        llm_kwargs: dict[str, Any] = {
+            "model": model,
+            "api_key": api_key,
+        }
+        if base_url:
+            llm_kwargs["base_url"] = base_url
+
+        return ChatOpenAI(**llm_kwargs)
+    except ImportError as e:
+        logger.error("Error importing ChatOpenAI: %s", e)
+        return None
+    except Exception as e:
+        logger.error("Error creating LLM from config: %s", e)
+        return None
+
+
 def _run_discussion_sync(discussion_id: str) -> None:
     """Run a discussion synchronously (for background task)."""
     discussion = get_discussion_state(discussion_id)
@@ -186,7 +228,12 @@ def _run_discussion_sync(discussion_id: str) -> None:
             discussion.started_at = datetime.utcnow().isoformat()
             save_discussion_state(discussion)
 
-        crew = DiscussionCrew(discussion_id=discussion_id)
+        # Get LLM from admin config store
+        llm = _get_llm_from_config()
+        if llm is None:
+            raise RuntimeError("LLM not configured. Please configure OpenAI API key in admin panel.")
+
+        crew = DiscussionCrew(discussion_id=discussion_id, llm=llm)
         result = crew.run(
             topic=discussion.topic,
             rounds=discussion.rounds,

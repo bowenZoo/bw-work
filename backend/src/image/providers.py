@@ -248,6 +248,58 @@ class ProviderRegistry:
 _registry: ProviderRegistry | None = None
 
 
+def _get_config_from_admin_store() -> dict[str, Any] | None:
+    """Get image provider config from admin config store.
+
+    Returns:
+        Config dict if available, None otherwise.
+    """
+    try:
+        from src.admin.config_store import ConfigStore
+
+        store = ConfigStore()
+        image_config = store.get_image_config()
+
+        providers = {}
+        default_provider = image_config.get("default_provider", "openai")
+
+        # OpenAI compatible provider
+        openai_config = image_config.get("openai", {})
+        if openai_config.get("enabled") and openai_config.get("configured"):
+            api_key = store.get_raw("image", "openai_api_key")
+            if api_key:
+                providers["openai"] = {
+                    "backend": "openai_compatible",
+                    "api_base": openai_config.get("base_url") or "https://api.openai.com/v1",
+                    "api_key": api_key,
+                    "model": openai_config.get("model") or "dall-e-3",
+                    "default_size": "1024x1024",
+                }
+
+        # MJ provider
+        mj_config = image_config.get("mj", {})
+        if mj_config.get("enabled") and mj_config.get("configured"):
+            api_key = store.get_raw("image", "mj_api_key")
+            if api_key:
+                providers["mj"] = {
+                    "backend": "task_polling",
+                    "api_base": mj_config.get("base_url"),
+                    "api_key": api_key,
+                    "mode": mj_config.get("mode") or "RELAX",
+                }
+
+        if providers:
+            return {
+                "default_provider": default_provider if default_provider in providers else list(providers.keys())[0],
+                "providers": providers,
+            }
+
+        return None
+    except Exception as e:
+        logger.debug(f"Failed to get image config from admin store: {e}")
+        return None
+
+
 def get_provider_registry() -> ProviderRegistry:
     """Get the global provider registry instance.
 
@@ -256,7 +308,14 @@ def get_provider_registry() -> ProviderRegistry:
     """
     global _registry
     if _registry is None:
-        _registry = ProviderRegistry()
+        # Try to get config from admin store first
+        admin_config = _get_config_from_admin_store()
+        if admin_config:
+            logger.info("Using image provider config from admin store")
+            _registry = ProviderRegistry(config_dict=admin_config)
+        else:
+            logger.info("Using image provider config from YAML file")
+            _registry = ProviderRegistry()
     return _registry
 
 

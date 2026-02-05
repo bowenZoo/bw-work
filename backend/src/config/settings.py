@@ -51,6 +51,8 @@ class Settings(BaseSettings):
             "http://127.0.0.1:5173",
             "http://localhost:18000",
             "http://127.0.0.1:18000",
+            "http://localhost:18001",
+            "http://127.0.0.1:18001",
         ],
         alias="CORS_ALLOWED_ORIGINS",
     )
@@ -247,6 +249,14 @@ def _reload_langfuse_config(store) -> None:
     if host:
         settings.langfuse_host = host
 
+    # Reset Langfuse client singleton so it reinitializes with new config
+    try:
+        from src.monitoring.langfuse_client import shutdown_langfuse
+        shutdown_langfuse()
+        logger.info("Langfuse client reset for new config")
+    except ImportError:
+        pass
+
     logger.info("Langfuse config reloaded from ConfigStore")
 
 
@@ -257,6 +267,16 @@ def _reload_image_config(store) -> None:
     default_provider = store.get_raw("image", "default_provider")
     if default_provider:
         settings.image_default_provider = default_provider
+
+    # Reset image provider registry and service so they reinitialize with new config
+    try:
+        from src.image.providers import reset_provider_registry
+        from src.image.service import reset_image_service
+        reset_provider_registry()
+        reset_image_service()
+        logger.info("Image services reset for new config")
+    except ImportError:
+        pass
 
     logger.info("Image config reloaded from ConfigStore")
 

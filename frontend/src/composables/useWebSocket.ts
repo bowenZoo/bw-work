@@ -1,7 +1,14 @@
 import { ref, onUnmounted, watch, type Ref, type ComputedRef } from 'vue';
 import type { ConnectionStatus, ServerMessage, ClientMessage } from '@/types';
 
-const WS_BASE_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:18000';
+function getWsBaseUrl(): string {
+  if (import.meta.env.VITE_WS_URL) {
+    return import.meta.env.VITE_WS_URL;
+  }
+  // Use relative WebSocket URL based on current location
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}`;
+}
 const RECONNECT_INTERVAL = 3000; // 3 seconds
 const MAX_RECONNECT_ATTEMPTS = 5;
 const PING_INTERVAL = 25000; // 25 seconds
@@ -36,7 +43,7 @@ export function useWebSocket(
     connectionStatus.value = 'connecting';
     shouldReconnect.value = true;
 
-    const wsUrl = `${WS_BASE_URL}/ws/${currentId}`;
+    const wsUrl = `${getWsBaseUrl()}/ws/${currentId}`;
     console.log(`Connecting to WebSocket: ${wsUrl}`);
 
     try {

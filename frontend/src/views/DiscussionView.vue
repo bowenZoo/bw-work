@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch, onUnmounted, computed } from 'vue';
+import { watch, onMounted, onUnmounted, computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ChatContainer, InputBox } from '@/components/chat';
 import { Header, Sidebar } from '@/components/layout';
@@ -21,6 +21,10 @@ const isPlaybackMode = computed(() => {
 
 // Get discussion ID from route
 const discussionId = computed(() => route.params.id as string | undefined);
+
+// Get topic from query (for auto-start from home page)
+const topicFromQuery = computed(() => route.query.topic as string | undefined);
+const hasAutoStarted = ref(false);
 
 const {
   discussion,
@@ -103,6 +107,20 @@ watch(
   },
   { immediate: true }
 );
+
+// Auto-start discussion if topic is provided via query parameter (from home page)
+onMounted(async () => {
+  if (!isPlaybackMode.value && topicFromQuery.value && !hasAutoStarted.value) {
+    hasAutoStarted.value = true;
+    const newId = await createDiscussion(topicFromQuery.value);
+    if (newId) {
+      setPaused(false);
+      await startDiscussion();
+      // Clear query parameter from URL
+      router.replace({ name: 'discussion', params: { id: newId } });
+    }
+  }
+});
 
 // Handle topic submission (live mode only)
 async function handleSubmit(topic: string) {

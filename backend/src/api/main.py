@@ -19,7 +19,7 @@ from src.api.routes import (
 )
 from src.api.websocket import connection_manager, websocket_router
 from src.api.websocket.manager import set_event_loop
-from src.config.settings import settings
+from src.config.settings import settings, reload_config
 from src.monitoring.langfuse_client import init_langfuse, shutdown_langfuse
 from src.admin.routes import admin_router
 from src.admin.database import AdminDatabase
@@ -29,7 +29,8 @@ from src.admin.audit_log import AuditLogger
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
-    # Startup
+    # Startup - Load config from admin store first
+    reload_config()  # Load all config from ConfigStore before initializing services
     init_langfuse()
     # Set event loop for sync-to-async bridging
     set_event_loop(asyncio.get_running_loop())
