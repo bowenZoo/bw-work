@@ -1,9 +1,9 @@
 # 实施计划索引
 
-> **对应 Spec**: [docs/spec.md](../spec.md)
+> **对应 Spec**: [docs/spec.md](../spec.md), [docs/spec-admin.md](../spec-admin.md)
 > **创建时间**: 2026-02-04
 > **更新时间**: 2026-02-05
-> **总任务数**: 67 个
+> **总任务数**: 86 个
 
 ## 执行批次
 
@@ -16,6 +16,7 @@
 | 4 | [plan-history.md](./plan-history.md) | 7 | pending | Batch 3 |
 | 5 | [plan-advanced.md](./plan-advanced.md) | 10 | pending | Batch 2, 3 |
 | 6 | [plan-image-generation.md](./plan-image-generation.md) | 15 | pending | Batch 2 |
+| 7 | [plan-admin.md](./plan-admin.md) | 19 | pending | Batch 1, 3 |
 
 ## Plan 列表
 
@@ -79,6 +80,17 @@
   - 异步图像生成（F-37）
   - **15 个任务**，预计 3-4 天
 
+### Batch 7: 管理后台系统
+
+- **[plan-admin.md](./plan-admin.md)** - 管理后台系统
+  - 管理员认证（JWT Token）
+  - LLM API Key 加密管理
+  - Langfuse 监控配置
+  - 图像服务配置
+  - 配置热更新
+  - 操作日志审计
+  - **19 个任务**，预计 4-5 天
+
 ## 依赖关系图
 
 ```
@@ -94,7 +106,9 @@ Batch 1: plan-backend-core (基础)
     │         │                  │
     │         └──→ Batch 4: plan-history
     │
-    └──→ Batch 3: plan-frontend ─┘
+    ├──→ Batch 3: plan-frontend ─┼──→ Batch 7: plan-admin
+    │                            │
+    └────────────────────────────┘
 ```
 
 ## 里程碑对应
@@ -106,6 +120,7 @@ Batch 1: plan-backend-core (基础)
 | Phase 3: 记忆系统 | plan-memory | 2 天 |
 | Phase 4: 图像生成系统 | plan-image-generation | 3-4 天 |
 | Phase 5: 高级功能 | plan-advanced | 2-3 天 |
+| Phase 6: 管理后台 | plan-admin | 4-5 天 |
 
 ## 下一步
 
@@ -120,3 +135,4 @@ Batch 1: plan-backend-core (基础)
 |------|------|
 | 2026-02-04 | 初始版本，生成 6 个 Plan |
 | 2026-02-05 | 新增 plan-image-generation.md (15 tasks)，对应 Spec 2.7 图像生成系统 |
+| 2026-02-05 | 新增 plan-admin.md (19 tasks)，对应 Spec docs/spec-admin.md 管理后台系统 |
