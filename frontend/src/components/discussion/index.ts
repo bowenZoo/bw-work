@@ -10,3 +10,4 @@ export { default as CurrentSpeech } from './CurrentSpeech.vue';
 export { default as HistoryPanel } from './HistoryPanel.vue';
 export { default as AgendaSummaryModal } from './AgendaSummaryModal.vue';
 export { default as DiscussionChain } from './DiscussionChain.vue';
+export { default as DesignDocsPanel } from './DesignDocsPanel.vue';

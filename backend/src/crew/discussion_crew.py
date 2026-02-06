@@ -1379,9 +1379,7 @@ class DiscussionCrew:
             # Generate visual concepts if enabled (sync wrapper)
             if self._visual_concept is not None:
                 try:
-                    import asyncio
                     loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
                     try:
                         loop.run_until_complete(self._generate_visual_concepts(str(result)))
                     finally:

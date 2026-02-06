@@ -1,6 +1,7 @@
 """Agent definitions for the AI Game Design Team."""
 
 from src.agents.base import BaseAgent
+from src.agents.doc_organizer import DocOrganizer, OrganizeResult
 from src.agents.document_generator import DocumentGenerator, PlanningDocument
 from src.agents.lead_planner import LeadPlanner
 from src.agents.number_designer import NumberDesigner
@@ -17,6 +18,8 @@ __all__ = [
     "PlayerAdvocate",
     "Summarizer",
     "DiscussionSummary",
+    "DocOrganizer",
+    "OrganizeResult",
     "DocumentGenerator",
     "PlanningDocument",
     "VisualConceptAgent",

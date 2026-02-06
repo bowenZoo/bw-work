@@ -331,18 +331,21 @@ export function useGlobalDiscussion() {
         break;
 
       case 'item_add':
-        // Add new item to agenda
+        // Add new item to agenda (deduplicate by id)
         if (agenda.value && item_id && title) {
-          agenda.value.items.push({
-            id: item_id,
-            title: title,
-            description: null,
-            status: 'pending',
-            summary: null,
-            summary_details: null,
-            started_at: null,
-            completed_at: null,
-          });
+          const exists = agenda.value.items.some(item => item.id === item_id);
+          if (!exists) {
+            agenda.value.items.push({
+              id: item_id,
+              title: title,
+              description: null,
+              status: 'pending',
+              summary: null,
+              summary_details: null,
+              started_at: null,
+              completed_at: null,
+            });
+          }
         }
         break;
     }

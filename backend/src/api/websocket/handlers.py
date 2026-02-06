@@ -28,47 +28,6 @@ def _get_current_discussion() -> "DiscussionState | None":
     return get_current_discussion()
 
 
-@router.websocket("/ws/{discussion_id}")
-async def websocket_endpoint(websocket: WebSocket, discussion_id: str) -> None:
-    """WebSocket endpoint for real-time discussion updates.
-
-    Args:
-        websocket: The WebSocket connection.
-        discussion_id: The discussion ID to subscribe to.
-    """
-    # Validate origin for cross-origin requests
-    if not _validate_origin(websocket):
-        logger.warning(
-            "Rejected WebSocket connection from invalid origin: %s",
-            websocket.headers.get("origin"),
-        )
-        await websocket.close(code=1008, reason="Invalid origin")
-        return
-
-    # Accept connection and register
-    await connection_manager.connect(websocket, discussion_id)
-
-    try:
-        while True:
-            # Receive message from client
-            data = await websocket.receive_text()
-
-            try:
-                message = json.loads(data)
-                await _handle_client_message(websocket, message)
-            except json.JSONDecodeError:
-                logger.warning("Received invalid JSON: %s", data)
-            except Exception as exc:
-                logger.error("Error handling message: %s", exc)
-
-    except WebSocketDisconnect:
-        logger.info("WebSocket disconnected: discussion_id=%s", discussion_id)
-    except Exception as exc:
-        logger.error("WebSocket error: %s", exc)
-    finally:
-        connection_manager.disconnect(websocket, discussion_id)
-
-
 def _validate_origin(websocket: WebSocket) -> bool:
     """Validate the origin header for cross-origin requests.
 
@@ -222,3 +181,41 @@ async def global_websocket_endpoint(websocket: WebSocket) -> None:
         logger.error("Global WebSocket error: %s", exc)
     finally:
         await global_connection_manager.disconnect(websocket)
+
+
+@router.websocket("/ws/{discussion_id}")
+async def websocket_endpoint(websocket: WebSocket, discussion_id: str) -> None:
+    """WebSocket endpoint for per-discussion real-time updates.
+
+    Args:
+        websocket: The WebSocket connection.
+        discussion_id: The discussion ID to subscribe to.
+    """
+    if not _validate_origin(websocket):
+        logger.warning(
+            "Rejected WebSocket connection from invalid origin: %s",
+            websocket.headers.get("origin"),
+        )
+        await websocket.close(code=1008, reason="Invalid origin")
+        return
+
+    await connection_manager.connect(websocket, discussion_id)
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+
+            try:
+                message = json.loads(data)
+                await _handle_client_message(websocket, message)
+            except json.JSONDecodeError:
+                logger.warning("Received invalid JSON: %s", data)
+            except Exception as exc:
+                logger.error("Error handling message: %s", exc)
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected: discussion_id=%s", discussion_id)
+    except Exception as exc:
+        logger.error("WebSocket error: %s", exc)
+    finally:
+        connection_manager.disconnect(websocket, discussion_id)

@@ -257,12 +257,12 @@ def cleanup_stale_discussions() -> int:
                 data["error"] = "服务器重启，讨论中断"
                 data["completed_at"] = datetime.utcnow().isoformat()
                 path.write_text(
-                    json.dumps(data, ensure_ascii=True), encoding="utf-8"
+                    json.dumps(data, ensure_ascii=False), encoding="utf-8"
                 )
                 logger.info("Cleaned up stale discussion: %s", data.get("id"))
                 cleaned += 1
         except Exception as e:
-            logger.debug("Failed to clean up %s: %s", path, e)
+            logger.warning("Failed to clean up %s: %s", path, e)
 
     # Also clear the in-memory current discussion
     global _current_discussion
@@ -284,20 +284,31 @@ def set_current_discussion(discussion: DiscussionState | None) -> None:
         _current_discussion = discussion
 
 
+def _validate_discussion_id(discussion_id: str) -> bool:
+    """Validate discussion_id is a safe filename (UUID or alphanumeric with hyphens)."""
+    import re
+    return bool(re.match(r'^[a-zA-Z0-9_-]+$', discussion_id))
+
+
 def _state_path(discussion_id: str) -> Path:
-    return _STATE_DIR / f"{discussion_id}.json"
+    if not _validate_discussion_id(discussion_id):
+        raise ValueError(f"Invalid discussion_id: {discussion_id}")
+    path = _STATE_DIR / f"{discussion_id}.json"
+    # Ensure resolved path is still under _STATE_DIR
+    if not path.resolve().is_relative_to(_STATE_DIR.resolve()):
+        raise ValueError(f"Invalid discussion_id: {discussion_id}")
+    return path
 
 
 def _persist_discussion_state(discussion: DiscussionState) -> None:
     try:
         _STATE_DIR.mkdir(parents=True, exist_ok=True)
         _state_path(discussion.id).write_text(
-            json.dumps(discussion.model_dump(), ensure_ascii=True),
+            json.dumps(discussion.model_dump(), ensure_ascii=False),
             encoding="utf-8",
         )
-    except Exception:
-        # Persistence failures should not block API flow
-        pass
+    except Exception as e:
+        logger.warning("Failed to persist discussion state %s: %s", discussion.id, e)
 
 
 def _load_discussion_state(discussion_id: str) -> DiscussionState | None:
@@ -379,6 +390,33 @@ def _get_llm_from_config() -> Any | None:
         return None
 
 
+def _auto_organize_docs(discussion_id: str) -> None:
+    """Auto-organize discussion results into design documents.
+
+    Called after discussion completes. Failures are logged but do not
+    affect the discussion state.
+    """
+    from src.agents.doc_organizer import DocOrganizer
+
+    stored = _discussion_memory.load(discussion_id)
+    if stored is None or not stored.messages:
+        logger.info("Skipping auto-organize for %s: no messages found", discussion_id)
+        return
+
+    llm = _get_llm_from_config()
+    if llm is None:
+        logger.warning("Skipping auto-organize for %s: LLM not configured", discussion_id)
+        return
+
+    organizer = DocOrganizer(llm=llm)
+    result = organizer.run_organize(stored)
+    logger.info(
+        "Auto-organized %s: %d documents generated",
+        discussion_id,
+        len(result.files),
+    )
+
+
 def _run_discussion_sync(discussion_id: str) -> None:
     """Run a discussion synchronously (for background task)."""
     logger.info("Starting discussion %s in background thread", discussion_id)
@@ -418,6 +456,12 @@ def _run_discussion_sync(discussion_id: str) -> None:
         current = get_current_discussion()
         if current and current.id == discussion_id:
             set_current_discussion(discussion)
+
+        # Auto-organize discussion into design documents
+        try:
+            _auto_organize_docs(discussion_id)
+        except Exception as org_err:
+            logger.warning("Auto-organize failed for %s: %s", discussion_id, org_err)
 
     except Exception as e:
         logger.error("Discussion %s failed: %s", discussion_id, e)
@@ -851,8 +895,12 @@ async def summarize_discussion(
     if not regenerate and discussion_id in _summaries:
         return _summaries[discussion_id]
 
-    # Generate summary
-    summary = _generate_summary_sync(discussion_id, discussion)
+    # Generate summary in executor to avoid blocking event loop
+    import asyncio
+    loop = asyncio.get_event_loop()
+    summary = await loop.run_in_executor(
+        None, _generate_summary_sync, discussion_id, discussion
+    )
     _summaries[discussion_id] = summary
 
     # Also save to discussion memory

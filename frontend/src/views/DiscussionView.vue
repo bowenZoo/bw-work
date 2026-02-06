@@ -14,6 +14,7 @@ import {
   HistoryPanel,
   AgendaSummaryModal,
   DiscussionChain,
+  DesignDocsPanel,
 } from '@/components/discussion';
 import { usePlayback } from '@/composables/usePlayback';
 import { useDiscussion } from '@/composables/useDiscussion';
@@ -59,6 +60,9 @@ const showAttachmentPreview = ref(false);
 // Agenda summary modal state
 const showSummaryModal = ref(false);
 const selectedAgendaItem = ref<AgendaItem | null>(null);
+
+// Design docs panel state
+const showDesignDocs = ref(false);
 
 // Current speech tracking
 const currentSpeaker = ref<Agent | null>(null);
@@ -434,7 +438,7 @@ async function submitContinue() {
       showContinueModal.value = false;
       // Navigate to the new discussion
       router.push({
-        name: 'discussion',
+        name: 'discussion-by-id',
         params: { id: response.data.new_discussion_id },
       });
     }
@@ -589,6 +593,18 @@ onUnmounted(() => {
         />
       </div>
       <div class="header-actions">
+        <!-- Design docs button (visible when discussion has an ID) -->
+        <button
+          v-if="discussion?.id"
+          class="action-btn"
+          :class="{ 'is-active': showDesignDocs }"
+          @click="showDesignDocs = true"
+          title="策划文档"
+        >
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        </button>
         <button
           v-if="currentAttachment"
           class="action-btn"
@@ -844,6 +860,14 @@ onUnmounted(() => {
       :item="selectedAgendaItem"
       @close="handleCloseSummary"
     />
+
+    <!-- Design Docs Panel -->
+    <DesignDocsPanel
+      :visible="showDesignDocs"
+      :discussion-id="discussion?.id ?? ''"
+      :discussion-topic="topicDisplay"
+      @close="showDesignDocs = false"
+    />
   </div>
 </template>
 
@@ -975,6 +999,12 @@ onUnmounted(() => {
 .action-btn.is-paused {
   background: var(--warning-color, #f59e0b);
   border-color: var(--warning-color, #f59e0b);
+  color: white;
+}
+
+.action-btn.is-active {
+  background: var(--primary-color, #6366f1);
+  border-color: var(--primary-color, #6366f1);
   color: white;
 }
 

@@ -17,6 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.api.routes import (
     cleanup_stale_discussions,
+    design_docs_router,
     discussion_router,
     document_router,
     image_router,
@@ -119,6 +120,7 @@ async def health_check() -> dict[str, str]:
 
 
 # Include routers
+app.include_router(design_docs_router)
 app.include_router(discussion_router)
 app.include_router(document_router)
 app.include_router(image_router)

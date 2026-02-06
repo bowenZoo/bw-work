@@ -211,3 +211,32 @@ export interface ContinueDiscussionResponse {
   status: DiscussionStatus;
   message: string;
 }
+
+// Design documents types
+export interface DesignDocItem {
+  filename: string;
+  title: string;
+  size: number;
+  created_at: string;
+}
+
+export interface DesignDocsListResponse {
+  discussion_id: string;
+  topic: string;
+  files: DesignDocItem[];
+  created_at: string | null;
+}
+
+export interface DesignDocContentResponse {
+  filename: string;
+  title: string;
+  content: string;
+}
+
+export interface OrganizeResponse {
+  discussion_id: string;
+  status: string;
+  file_count: number;
+  files: DesignDocItem[];
+  message: string;
+}

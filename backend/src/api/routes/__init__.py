@@ -1,5 +1,6 @@
 """API route definitions."""
 
+from src.api.routes.design_docs import router as design_docs_router
 from src.api.routes.discussion import cleanup_stale_discussions, router as discussion_router
 from src.api.routes.document import router as document_router
 from src.api.routes.image import router as image_router
@@ -10,6 +11,7 @@ from src.api.routes.project import router as project_router
 
 __all__ = [
     "cleanup_stale_discussions",
+    "design_docs_router",
     "discussion_router",
     "document_router",
     "image_router",
