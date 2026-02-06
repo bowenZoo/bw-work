@@ -1,9 +1,9 @@
 # 实施计划索引
 
-> **对应 Spec**: [docs/spec.md](../spec.md), [docs/spec-admin.md](../spec-admin.md)
+> **对应 Spec**: [docs/spec.md](../spec.md), [docs/spec-admin.md](../spec-admin.md), [docs/spec-discussion-v2.md](../spec-discussion-v2.md)
 > **创建时间**: 2026-02-04
-> **更新时间**: 2026-02-05
-> **总任务数**: 106 个
+> **更新时间**: 2026-02-06
+> **总任务数**: 156 个
 
 ## 执行批次
 
@@ -18,6 +18,11 @@
 | 6 | [plan-image-generation.md](./plan-image-generation.md) | 15 | pending | Batch 2 |
 | 7 | [plan-admin.md](./plan-admin.md) | 19 | pending | Batch 1, 3 |
 | 8 | [plan-project-discussion.md](./plan-project-discussion.md) | 20 | pending | Batch 2, 3 |
+| 9 | [plan-discussion-v2-dialog.md](./plan-discussion-v2-dialog.md) | 8 | pending | - |
+| 10 | [plan-discussion-v2-global.md](./plan-discussion-v2-global.md) | 10 | pending | Batch 9 |
+| 11 | [plan-discussion-v2-parallel.md](./plan-discussion-v2-parallel.md) | 8 | pending | Batch 10 |
+| 12 | [plan-discussion-v2-agenda.md](./plan-discussion-v2-agenda.md) | 12 | pending | Batch 10, 11 |
+| 13 | [plan-discussion-v2-resume.md](./plan-discussion-v2-resume.md) | 10 | pending | Batch 10 |
 
 ## Plan 列表
 
@@ -106,6 +111,49 @@
   - 讨论进度追踪（F-47）- 实时显示讨论进度
   - **20 个任务**，预计 5-6 天
 
+### Batch 9-13: 讨论系统 V2 重构
+
+> 对应 Spec: [docs/spec-discussion-v2.md](../spec-discussion-v2.md)
+
+- **[plan-discussion-v2-dialog.md](./plan-discussion-v2-dialog.md)** - 精简对话与议题展示
+  - Agent Prompt 优化（限制 200 字）
+  - 议题卡片组件
+  - 附件预览 Modal
+  - 用户参与输入框
+  - 主策划回应用户消息
+  - **8 个任务**，预计 1-2 天
+
+- **[plan-discussion-v2-global.md](./plan-discussion-v2-global.md)** - 全局单例讨论
+  - 全局讨论状态管理
+  - 全局讨论 API（current）
+  - WebSocket 全局广播重构
+  - 前端全局讨论 Composable
+  - 观看人数统计
+  - **10 个任务**，预计 2-3 天
+
+- **[plan-discussion-v2-parallel.md](./plan-discussion-v2-parallel.md)** - 并行发言机制
+  - 角色点名解析器
+  - Agent 异步支持
+  - 并行讨论轮次
+  - 消息序号排序
+  - **8 个任务**，预计 2-3 天
+
+- **[plan-discussion-v2-agenda.md](./plan-discussion-v2-agenda.md)** - 议程管理与圆桌 UI
+  - 议程数据模型
+  - 主策划生成议程
+  - 议题小结生成
+  - 圆桌布局组件
+  - 当前发言组件
+  - 历史记录筛选
+  - **12 个任务**，预计 3-4 天
+
+- **[plan-discussion-v2-resume.md](./plan-discussion-v2-resume.md)** - 讨论恢复
+  - 继续讨论 API 完善
+  - 继续讨论对话框
+  - 讨论链查询与展示
+  - 主策划处理续前上下文
+  - **10 个任务**，预计 2 天
+
 ## 依赖关系图
 
 ```
@@ -126,6 +174,18 @@ Batch 1: plan-backend-core (基础)
     ├──→ Batch 3: plan-frontend ─┼──→ Batch 7: plan-admin
     │                            │
     └────────────────────────────┘
+
+独立分支（讨论系统 V2）：
+
+Batch 9: plan-discussion-v2-dialog (可独立执行)
+    │
+    └──→ Batch 10: plan-discussion-v2-global
+              │
+              ├──→ Batch 11: plan-discussion-v2-parallel
+              │         │
+              │         └──→ Batch 12: plan-discussion-v2-agenda
+              │
+              └──→ Batch 13: plan-discussion-v2-resume
 ```
 
 ## 里程碑对应
@@ -139,12 +199,35 @@ Batch 1: plan-backend-core (基础)
 | Phase 5: 项目级策划讨论 | plan-project-discussion | 5-6 天 |
 | Phase 6: 高级功能 | plan-advanced | 2-3 天 |
 | Phase 7: 管理后台 | plan-admin | 4-5 天 |
+| **Phase 8: 讨论系统 V2** | plan-discussion-v2-* (5 个 Plan) | **10-14 天** |
+
+## 讨论系统 V2 执行顺序
+
+```bash
+# Phase 8.1: 精简对话（可独立执行）
+/bwf-dev docs/plans/plan-discussion-v2-dialog.md
+
+# Phase 8.2: 全局单例
+/bwf-dev docs/plans/plan-discussion-v2-global.md
+
+# Phase 8.3: 并行发言
+/bwf-dev docs/plans/plan-discussion-v2-parallel.md
+
+# Phase 8.4: 议程管理（依赖 8.2, 8.3）
+/bwf-dev docs/plans/plan-discussion-v2-agenda.md
+
+# Phase 8.5: 讨论恢复（依赖 8.2）
+/bwf-dev docs/plans/plan-discussion-v2-resume.md
+```
 
 ## 下一步
 
 ```bash
 # 开始执行第一个 Plan
 /bwf-dev docs/plans/plan-backend-core.md
+
+# 或从讨论系统 V2 开始（独立分支）
+/bwf-dev docs/plans/plan-discussion-v2-dialog.md
 ```
 
 ## 变更记录
@@ -155,3 +238,4 @@ Batch 1: plan-backend-core (基础)
 | 2026-02-05 | 新增 plan-image-generation.md (15 tasks)，对应 Spec 2.7 图像生成系统 |
 | 2026-02-05 | 新增 plan-admin.md (19 tasks)，对应 Spec docs/spec-admin.md 管理后台系统 |
 | 2026-02-05 | 新增 plan-project-discussion.md (20 tasks)，对应 Spec 2.8 项目级策划讨论 |
+| 2026-02-06 | 新增讨论系统 V2 系列 Plan (5 个 Plan, 48 tasks)，对应 Spec docs/spec-discussion-v2.md |
