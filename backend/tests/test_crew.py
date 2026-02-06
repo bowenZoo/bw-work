@@ -15,14 +15,15 @@ class TestDiscussionCrew:
     """Tests for the DiscussionCrew class."""
 
     def test_crew_initialization(self):
-        """DiscussionCrew initializes with all agents."""
+        """DiscussionCrew initializes with all agents (including lead planner)."""
         crew = DiscussionCrew()
-        assert len(crew.agents) == 3
+        assert len(crew.agents) >= 4  # lead + system + number + player (+ optional visual)
 
     def test_crew_agents_are_correct_types(self):
         """DiscussionCrew has the correct agent types."""
         crew = DiscussionCrew()
         agent_types = [type(agent).__name__ for agent in crew.agents]
+        assert "LeadPlanner" in agent_types
         assert "SystemDesigner" in agent_types
         assert "NumberDesigner" in agent_types
         assert "PlayerAdvocate" in agent_types

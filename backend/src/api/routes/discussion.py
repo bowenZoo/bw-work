@@ -218,7 +218,7 @@ _summaries: dict[str, SummaryResponse] = {}
 
 # Global discussion state (single active discussion for all users)
 _current_discussion: DiscussionState | None = None
-_current_discussion_lock = threading.Lock()
+_current_discussion_lock = threading.RLock()
 
 
 def get_current_discussion() -> DiscussionState | None:
