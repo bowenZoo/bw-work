@@ -18,7 +18,7 @@ from src.api.routes import (
     project_router,
 )
 from src.api.websocket import connection_manager, websocket_router
-from src.api.websocket.manager import set_event_loop
+from src.api.websocket.manager import global_connection_manager, set_event_loop
 from src.config.settings import settings, reload_config
 from src.monitoring.langfuse_client import init_langfuse, shutdown_langfuse
 from src.admin.routes import admin_router
@@ -34,8 +34,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     init_langfuse()
     # Set event loop for sync-to-async bridging
     set_event_loop(asyncio.get_running_loop())
-    # Start WebSocket connection sweep task
+    # Start WebSocket connection sweep tasks
     connection_manager.start_sweep_task()
+    global_connection_manager.start_sweep_task()
     # Initialize admin database
     admin_db = AdminDatabase()
     admin_db.init_db()
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
     # Shutdown
     connection_manager.stop_sweep_task()
+    global_connection_manager.stop_sweep_task()
     shutdown_langfuse()
 
 

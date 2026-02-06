@@ -32,6 +32,8 @@ class ServerMessageType(str, Enum):
     MODULE_DISCUSSION_COMPLETE = "module_discussion_complete"
     PROJECT_DISCUSSION_COMPLETE = "project_discussion_complete"
     DISCUSSION_PAUSED = "discussion_paused"
+    # Agenda events
+    AGENDA = "agenda"
 
 
 class AgentStatus(str, Enum):
@@ -56,6 +58,7 @@ class MessageData(BaseModel):
     agent_role: str | None = None
     content: str | None = None
     status: AgentStatus | None = None
+    sequence: int | None = None  # Message sequence number for ordering
     timestamp: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -110,6 +113,7 @@ def create_message_event(
     agent_id: str,
     agent_role: str,
     content: str,
+    sequence: int | None = None,
 ) -> MessageEvent:
     """Create a message event for agent output.
 
@@ -118,6 +122,7 @@ def create_message_event(
         agent_id: The agent identifier.
         agent_role: The agent's role name.
         content: The message content.
+        sequence: Optional message sequence number for ordering.
 
     Returns:
         A MessageEvent instance.
@@ -128,6 +133,7 @@ def create_message_event(
             agent_id=agent_id,
             agent_role=agent_role,
             content=content,
+            sequence=sequence,
         )
     )
 
@@ -519,5 +525,212 @@ def create_discussion_paused_event(
             checkpoint_id=checkpoint_id,
             module_id=current_module,
             completed_modules=completed_modules,
+        )
+    )
+
+
+# Agenda event models
+
+
+class AgendaEventType(str, Enum):
+    """Types of agenda events."""
+
+    AGENDA_INIT = "agenda_init"
+    ITEM_START = "item_start"
+    ITEM_COMPLETE = "item_complete"
+    ITEM_SKIP = "item_skip"
+    ITEM_ADD = "item_add"
+
+
+class AgendaEventData(BaseModel):
+    """Data payload for agenda events."""
+
+    discussion_id: str
+    event_type: AgendaEventType
+    item_id: str | None = None
+    title: str | None = None
+    summary: str | None = None
+    current_index: int | None = None
+    agenda: dict[str, Any] | None = None  # Full agenda for init event
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+class AgendaEvent(BaseModel):
+    """Event for agenda updates."""
+
+    type: ServerMessageType = ServerMessageType.AGENDA
+    data: AgendaEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+def create_agenda_event(
+    discussion_id: str,
+    event_type: str,
+    data: dict[str, Any],
+) -> AgendaEvent:
+    """Create an agenda event.
+
+    Args:
+        discussion_id: The discussion ID.
+        event_type: Type of agenda event (agenda_init, item_start, item_complete, etc.).
+        data: Event-specific data.
+
+    Returns:
+        An AgendaEvent instance.
+    """
+    # Convert string event_type to enum
+    try:
+        agenda_event_type = AgendaEventType(event_type)
+    except ValueError:
+        agenda_event_type = AgendaEventType.ITEM_START  # Default fallback
+
+    return AgendaEvent(
+        data=AgendaEventData(
+            discussion_id=discussion_id,
+            event_type=agenda_event_type,
+            item_id=data.get("item_id"),
+            title=data.get("title"),
+            summary=data.get("summary"),
+            current_index=data.get("current_index"),
+            agenda=data.get("agenda"),
+        )
+    )
+
+
+def create_agenda_init_event(
+    discussion_id: str,
+    agenda: dict[str, Any],
+) -> AgendaEvent:
+    """Create an agenda initialization event.
+
+    Args:
+        discussion_id: The discussion ID.
+        agenda: The full agenda data.
+
+    Returns:
+        An AgendaEvent instance.
+    """
+    return AgendaEvent(
+        data=AgendaEventData(
+            discussion_id=discussion_id,
+            event_type=AgendaEventType.AGENDA_INIT,
+            agenda=agenda,
+        )
+    )
+
+
+def create_agenda_item_start_event(
+    discussion_id: str,
+    item_id: str,
+    title: str,
+    current_index: int,
+) -> AgendaEvent:
+    """Create an agenda item start event.
+
+    Args:
+        discussion_id: The discussion ID.
+        item_id: The agenda item ID.
+        title: The item title.
+        current_index: Current agenda index.
+
+    Returns:
+        An AgendaEvent instance.
+    """
+    return AgendaEvent(
+        data=AgendaEventData(
+            discussion_id=discussion_id,
+            event_type=AgendaEventType.ITEM_START,
+            item_id=item_id,
+            title=title,
+            current_index=current_index,
+        )
+    )
+
+
+def create_agenda_item_complete_event(
+    discussion_id: str,
+    item_id: str,
+    title: str,
+    summary: str,
+    current_index: int,
+) -> AgendaEvent:
+    """Create an agenda item complete event.
+
+    Args:
+        discussion_id: The discussion ID.
+        item_id: The agenda item ID.
+        title: The item title.
+        summary: The item summary.
+        current_index: Current agenda index.
+
+    Returns:
+        An AgendaEvent instance.
+    """
+    return AgendaEvent(
+        data=AgendaEventData(
+            discussion_id=discussion_id,
+            event_type=AgendaEventType.ITEM_COMPLETE,
+            item_id=item_id,
+            title=title,
+            summary=summary,
+            current_index=current_index,
+        )
+    )
+
+
+def create_agenda_item_skip_event(
+    discussion_id: str,
+    item_id: str,
+    title: str,
+    current_index: int,
+) -> AgendaEvent:
+    """Create an agenda item skip event.
+
+    Args:
+        discussion_id: The discussion ID.
+        item_id: The agenda item ID.
+        title: The item title.
+        current_index: Current agenda index.
+
+    Returns:
+        An AgendaEvent instance.
+    """
+    return AgendaEvent(
+        data=AgendaEventData(
+            discussion_id=discussion_id,
+            event_type=AgendaEventType.ITEM_SKIP,
+            item_id=item_id,
+            title=title,
+            current_index=current_index,
+        )
+    )
+
+
+def create_agenda_item_add_event(
+    discussion_id: str,
+    item_id: str,
+    title: str,
+) -> AgendaEvent:
+    """Create an agenda item add event.
+
+    Args:
+        discussion_id: The discussion ID.
+        item_id: The new item ID.
+        title: The item title.
+
+    Returns:
+        An AgendaEvent instance.
+    """
+    return AgendaEvent(
+        data=AgendaEventData(
+            discussion_id=discussion_id,
+            event_type=AgendaEventType.ITEM_ADD,
+            item_id=item_id,
+            title=title,
         )
     )

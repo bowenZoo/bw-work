@@ -37,8 +37,13 @@ const router = createRouter({
       component: HomeView,
     },
     {
-      path: '/discussion/:id?',
+      path: '/discussion',
       name: 'discussion',
+      component: DiscussionView,
+    },
+    {
+      path: '/discussion/:id',
+      name: 'discussion-by-id',
       component: DiscussionView,
     },
     {

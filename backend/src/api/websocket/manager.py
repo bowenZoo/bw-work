@@ -217,27 +217,208 @@ class ConnectionManager:
         return sum(len(conns) for conns in self._connections.values())
 
 
-# Global connection manager instance
+# Global connection manager instance (per-discussion grouping)
 connection_manager = ConnectionManager()
 
 
-def broadcast_sync(discussion_id: str, message: dict[str, Any]) -> None:
+class GlobalConnectionManager:
+    """Manages global WebSocket connections without discussion grouping.
+
+    All connected clients receive all broadcasts. Used for the single
+    global discussion mode where all users share the same discussion.
+
+    Features:
+    - Single global connection pool (no discussion_id grouping)
+    - Heartbeat timeout detection (30s)
+    - Automatic cleanup of stale connections
+    - Broadcast to all connected clients
+    - Real-time viewer count tracking
+    """
+
+    # Heartbeat configuration
+    HEARTBEAT_TIMEOUT = 30.0  # seconds
+    SWEEP_INTERVAL = 10.0  # seconds
+
+    def __init__(self) -> None:
+        """Initialize the global connection manager."""
+        # All connections in a single set
+        self._connections: set[WebSocket] = set()
+        # Last seen timestamp for each connection
+        self._last_seen: dict[WebSocket, float] = {}
+        # Sweep task reference
+        self._sweep_task: asyncio.Task[None] | None = None
+        # Lock for thread-safe operations
+        self._lock = asyncio.Lock()
+
+    @property
+    def connection_count(self) -> int:
+        """Get the number of active connections."""
+        return len(self._connections)
+
+    async def connect(self, websocket: WebSocket) -> None:
+        """Accept a new WebSocket connection.
+
+        Args:
+            websocket: The WebSocket connection to accept.
+        """
+        await websocket.accept()
+
+        async with self._lock:
+            self._connections.add(websocket)
+            self._last_seen[websocket] = time.time()
+
+        logger.info(
+            "Global WebSocket connected: total_connections=%d",
+            len(self._connections),
+        )
+
+        # Broadcast updated viewer count
+        await self._broadcast_viewer_count()
+
+    async def disconnect(self, websocket: WebSocket) -> None:
+        """Remove a WebSocket connection.
+
+        Args:
+            websocket: The WebSocket connection to remove.
+        """
+        async with self._lock:
+            self._connections.discard(websocket)
+            self._last_seen.pop(websocket, None)
+
+        logger.info(
+            "Global WebSocket disconnected: total_connections=%d",
+            len(self._connections),
+        )
+
+        # Broadcast updated viewer count
+        await self._broadcast_viewer_count()
+
+    def update_heartbeat(self, websocket: WebSocket) -> None:
+        """Update the last seen timestamp for a connection.
+
+        Args:
+            websocket: The WebSocket connection that sent a heartbeat.
+        """
+        self._last_seen[websocket] = time.time()
+
+    async def broadcast(self, message: dict[str, Any]) -> None:
+        """Broadcast a message to all connected clients.
+
+        Args:
+            message: The message data to send (will be JSON serialized).
+        """
+        async with self._lock:
+            connections = list(self._connections)
+
+        disconnected: list[WebSocket] = []
+
+        for websocket in connections:
+            try:
+                await websocket.send_json(message)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to send message to WebSocket: %s",
+                    exc,
+                )
+                disconnected.append(websocket)
+
+        # Clean up disconnected clients
+        for websocket in disconnected:
+            await self.disconnect(websocket)
+
+    async def _broadcast_viewer_count(self) -> None:
+        """Broadcast the current viewer count to all clients."""
+        count = len(self._connections)
+        await self.broadcast({
+            "type": "viewers",
+            "data": {
+                "count": count,
+            },
+        })
+
+    async def _sweep_stale_connections(self) -> None:
+        """Periodically check and clean up stale connections."""
+        while True:
+            try:
+                await asyncio.sleep(self.SWEEP_INTERVAL)
+                await self._cleanup_stale()
+            except asyncio.CancelledError:
+                logger.info("Global sweep task cancelled")
+                break
+            except Exception as exc:
+                logger.error("Error in global sweep task: %s", exc)
+
+    async def _cleanup_stale(self) -> None:
+        """Clean up connections that have exceeded heartbeat timeout."""
+        now = time.time()
+        stale: list[WebSocket] = []
+
+        async with self._lock:
+            for websocket in self._connections:
+                last_seen = self._last_seen.get(websocket, 0)
+                if now - last_seen > self.HEARTBEAT_TIMEOUT:
+                    stale.append(websocket)
+
+        for websocket in stale:
+            logger.info("Closing stale global connection")
+            try:
+                await websocket.close(code=1000, reason="Heartbeat timeout")
+            except Exception as exc:
+                logger.debug("Error closing stale connection: %s", exc)
+            finally:
+                await self.disconnect(websocket)
+
+    def start_sweep_task(self) -> None:
+        """Start the background task for sweeping stale connections.
+
+        Should be called in FastAPI startup event.
+        """
+        if self._sweep_task is None:
+            self._sweep_task = asyncio.create_task(self._sweep_stale_connections())
+            logger.info("Started global connection sweep task")
+
+    def stop_sweep_task(self) -> None:
+        """Stop the background sweep task.
+
+        Should be called in FastAPI shutdown event.
+        """
+        if self._sweep_task is not None:
+            self._sweep_task.cancel()
+            self._sweep_task = None
+            logger.info("Stopped global connection sweep task")
+
+
+# Global connection manager instance (no discussion_id grouping)
+global_connection_manager = GlobalConnectionManager()
+
+
+def broadcast_sync(message: dict[str, Any], discussion_id: str | None = None) -> None:
     """Broadcast a message from synchronous code.
 
     This function bridges sync code (like CrewAI callbacks) to async WebSocket broadcast.
+    Uses the global connection manager by default. If discussion_id is provided,
+    also broadcasts to the per-discussion connection manager for backward compatibility.
 
     Args:
-        discussion_id: The discussion ID to broadcast to.
         message: The message data to send.
+        discussion_id: Optional discussion ID for per-discussion broadcast (deprecated).
     """
     if _main_loop is None:
         logger.debug("Event loop not set, skipping broadcast")
         return
 
     try:
+        # Broadcast to all global connections
         asyncio.run_coroutine_threadsafe(
-            connection_manager.broadcast(discussion_id, message),
+            global_connection_manager.broadcast(message),
             _main_loop,
         )
+
+        # Also broadcast to per-discussion connections for backward compatibility
+        if discussion_id:
+            asyncio.run_coroutine_threadsafe(
+                connection_manager.broadcast(discussion_id, message),
+                _main_loop,
+            )
     except Exception as exc:
         logger.warning("Failed to schedule broadcast: %s", exc)

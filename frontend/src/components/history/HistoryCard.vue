@@ -8,7 +8,23 @@ const props = defineProps<{
   discussion: DiscussionSummary;
 }>();
 
+const emit = defineEmits<{
+  click: [];
+  continue: [];
+}>();
+
 const agentsStore = useAgentsStore();
+
+// Handle card click (navigate to playback)
+function handleClick() {
+  emit('click');
+}
+
+// Handle continue button click
+function handleContinue(event: MouseEvent) {
+  event.stopPropagation();
+  emit('continue');
+}
 
 // Format date
 const formattedDate = computed(() => {
@@ -48,6 +64,7 @@ const agentList = computed(() => agentsStore.agents);
 <template>
   <div
     class="p-4 hover:bg-gray-50 cursor-pointer transition-colors duration-150"
+    @click="handleClick"
   >
     <!-- Header row -->
     <div class="flex items-start justify-between gap-4">
@@ -79,23 +96,68 @@ const agentList = computed(() => agentsStore.agents);
         />
       </div>
 
-      <!-- Message count -->
-      <div class="flex items-center gap-1 text-sm text-gray-500">
-        <svg
-          class="w-4 h-4"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
+      <!-- Actions -->
+      <div class="flex items-center gap-3">
+        <!-- Continue button -->
+        <button
+          class="continue-btn"
+          title="继续讨论"
+          @click="handleContinue"
         >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-          />
-        </svg>
-        <span>{{ discussion.message_count }}</span>
+          <svg
+            class="w-4 h-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M17 8l4 4m0 0l-4 4m4-4H3"
+            />
+          </svg>
+          <span class="ml-1">继续</span>
+        </button>
+
+        <!-- Message count -->
+        <div class="flex items-center gap-1 text-sm text-gray-500">
+          <svg
+            class="w-4 h-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+            />
+          </svg>
+          <span>{{ discussion.message_count }}</span>
+        </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.continue-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #10b981;
+  background-color: #ecfdf5;
+  border: 1px solid #d1fae5;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.continue-btn:hover {
+  background-color: #d1fae5;
+  color: #059669;
+}
+</style>

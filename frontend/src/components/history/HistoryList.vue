@@ -10,6 +10,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [discussion: DiscussionSummary];
+  continue: [discussion: DiscussionSummary];
 }>();
 
 // State
@@ -75,6 +76,11 @@ function handleScroll(event: Event) {
 // Select a discussion
 function handleSelect(discussion: DiscussionSummary) {
   emit('select', discussion);
+}
+
+// Continue a discussion
+function handleContinue(discussion: DiscussionSummary) {
+  emit('continue', discussion);
 }
 
 // Load initial data
@@ -143,6 +149,7 @@ defineExpose({
         :key="discussion.id"
         :discussion="discussion"
         @click="handleSelect(discussion)"
+        @continue="handleContinue(discussion)"
       />
     </div>
 

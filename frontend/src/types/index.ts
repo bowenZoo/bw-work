@@ -19,6 +19,7 @@ export interface Message {
   agentRole: string;
   content: string;
   timestamp: string;
+  sequence?: number;  // Optional sequence number for ordering parallel messages
 }
 
 // Discussion status
@@ -30,6 +31,7 @@ export interface Discussion {
   topic: string;
   messages: Message[];
   status: DiscussionStatus;
+  attachment?: AttachmentInfo;
 }
 
 // WebSocket message types (matching backend protocol from plan-websocket.md)
@@ -87,6 +89,9 @@ export interface DiscussionStatusResponse {
   completed_at?: string | null;
   result?: string | null;
   error?: string | null;
+  attachment?: AttachmentInfo | null;
+  continued_from?: string | null;  // 原讨论 ID
+  is_continuation?: boolean;  // 是否是续前讨论
 }
 
 // History API types
@@ -117,4 +122,90 @@ export interface ApiMessageResponse {
 export interface DiscussionMessagesResponse {
   discussion: DiscussionSummary;
   messages: ApiMessageResponse[];
+}
+
+// Agenda types
+export type AgendaItemStatus = 'pending' | 'in_progress' | 'completed' | 'skipped';
+
+export interface AgendaSummaryDetails {
+  conclusions: string[];
+  viewpoints: Record<string, string>;
+  open_questions: string[];
+  next_steps: string[];
+}
+
+export interface AgendaItem {
+  id: string;
+  title: string;
+  description: string | null;
+  status: AgendaItemStatus;
+  summary: string | null;
+  summary_details: AgendaSummaryDetails | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface Agenda {
+  items: AgendaItem[];
+  current_index: number;
+}
+
+// Agenda API types
+export interface AddAgendaItemRequest {
+  title: string;
+  description?: string;
+}
+
+export interface AddAgendaItemResponse {
+  item: AgendaItem;
+  message: string;
+}
+
+export interface AgendaItemSummaryResponse {
+  item_id: string;
+  title: string;
+  summary: string | null;
+  summary_details: AgendaSummaryDetails | null;
+}
+
+// Agenda WebSocket event types
+export type AgendaEventType = 'agenda_init' | 'item_start' | 'item_complete' | 'item_skip' | 'item_add';
+
+export interface AgendaEvent {
+  type: AgendaEventType;
+  data: {
+    item_id?: string;
+    title?: string;
+    summary?: string;
+    agenda?: Agenda;
+  };
+}
+
+// Discussion chain types
+export interface DiscussionChainItem {
+  id: string;
+  topic: string;
+  summary: string | null;
+  status: DiscussionStatus;
+  created_at: string;
+  is_origin: boolean;
+}
+
+export interface DiscussionChainResponse {
+  chain: DiscussionChainItem[];
+  current_index: number;
+}
+
+// Continue discussion types
+export interface ContinueDiscussionRequest {
+  follow_up: string;
+  rounds?: number;
+}
+
+export interface ContinueDiscussionResponse {
+  new_discussion_id: string;
+  original_discussion_id: string;
+  topic: string;
+  status: DiscussionStatus;
+  message: string;
 }

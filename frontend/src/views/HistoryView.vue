@@ -3,13 +3,19 @@ import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { ArrowLeft } from 'lucide-vue-next';
 import { Header, Sidebar } from '@/components/layout';
-import { HistoryList } from '@/components/history';
+import { HistoryList, ContinueDiscussionModal } from '@/components/history';
 import type { DiscussionSummary } from '@/types';
+import api from '@/api';
 
 const router = useRouter();
 
 // Search filter
 const searchQuery = ref('');
+
+// Continue discussion modal state
+const showContinueModal = ref(false);
+const selectedDiscussion = ref<DiscussionSummary | null>(null);
+const continueError = ref<string | null>(null);
 
 // Filter discussions (client-side filtering)
 // Note: This works well for < 500 discussions. For larger datasets,
@@ -23,6 +29,46 @@ function handleSelectDiscussion(discussion: DiscussionSummary) {
     name: 'discussion-playback',
     params: { id: discussion.id },
   });
+}
+
+// Handle continue discussion click
+function handleContinueClick(discussion: DiscussionSummary) {
+  selectedDiscussion.value = discussion;
+  showContinueModal.value = true;
+  continueError.value = null;
+}
+
+// Handle continue confirm
+async function handleContinueConfirm(followUp: string) {
+  if (!selectedDiscussion.value) return;
+
+  try {
+    const response = await api.post(
+      `/api/discussions/${selectedDiscussion.value.id}/continue`,
+      {
+        follow_up: followUp,
+        rounds: 2,
+      }
+    );
+
+    if (response.data.new_discussion_id) {
+      showContinueModal.value = false;
+      selectedDiscussion.value = null;
+      // Navigate to the new discussion
+      router.push({ name: 'discussion' });
+    }
+  } catch (error: any) {
+    console.error('Failed to continue discussion:', error);
+    continueError.value =
+      error.response?.data?.detail || '继续讨论失败，请重试';
+  }
+}
+
+// Handle continue modal close
+function handleContinueClose() {
+  showContinueModal.value = false;
+  selectedDiscussion.value = null;
+  continueError.value = null;
 }
 
 // Clear search
@@ -100,11 +146,66 @@ function clearSearch() {
           class="flex-1"
           :search-query="filteredQuery"
           @select="handleSelectDiscussion"
+          @continue="handleContinueClick"
         />
       </main>
 
       <!-- Sidebar -->
       <Sidebar :is-open="true" />
     </div>
+
+    <!-- Continue Discussion Modal -->
+    <ContinueDiscussionModal
+      :visible="showContinueModal"
+      :discussion="selectedDiscussion"
+      @confirm="handleContinueConfirm"
+      @close="handleContinueClose"
+    />
+
+    <!-- Error toast -->
+    <Teleport to="body">
+      <Transition name="toast">
+        <div
+          v-if="continueError"
+          class="fixed bottom-4 right-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg shadow-lg z-50 flex items-center gap-2"
+        >
+          <svg
+            class="w-5 h-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+          <span>{{ continueError }}</span>
+          <button
+            class="ml-2 text-red-500 hover:text-red-700"
+            @click="continueError = null"
+          >
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
+
+<style scoped>
+.toast-enter-active,
+.toast-leave-active {
+  transition: all 0.3s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateY(20px);
+}
+</style>

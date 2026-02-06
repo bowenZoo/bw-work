@@ -118,6 +118,55 @@ def parse_visual_requirements(final_document: str) -> list[VisualConceptRequest]
     return requests
 
 
+def parse_agenda_output(output: str) -> list[dict[str, str]]:
+    """Parse the Lead Planner's agenda output to extract agenda items.
+
+    Args:
+        output: The Lead Planner's agenda output, formatted in the ```agenda block.
+
+    Returns:
+        List of dicts with 'title' and 'description' keys.
+    """
+    items: list[dict[str, str]] = []
+
+    # Try to extract content from ```agenda block first
+    agenda_block_match = re.search(r"```agenda\s*\n(.*?)\n```", output, re.DOTALL)
+    content = agenda_block_match.group(1) if agenda_block_match else output
+
+    # Match format: N. [标题] - 描述 or N. 标题 - 描述
+    # Support both [] wrapped titles and plain titles
+    pattern = r"(\d+)\.\s*\[?([^\]\n-]+?)\]?\s*[-—]\s*(.+?)(?=\n\d+\.|\Z)"
+    for match in re.finditer(pattern, content, re.DOTALL):
+        title = match.group(2).strip()
+        description = match.group(3).strip()
+        if title:
+            items.append({
+                "title": title,
+                "description": description,
+            })
+
+    # Fallback: try simpler format if no items found
+    if not items:
+        # Match: N. 标题
+        simple_pattern = r"(\d+)\.\s*(.+?)(?=\n\d+\.|\Z)"
+        for match in re.finditer(simple_pattern, content, re.DOTALL):
+            title = match.group(2).strip()
+            # Split on dash if present
+            if " - " in title:
+                parts = title.split(" - ", 1)
+                items.append({
+                    "title": parts[0].strip().strip("[]"),
+                    "description": parts[1].strip() if len(parts) > 1 else "",
+                })
+            else:
+                items.append({
+                    "title": title.strip("[]"),
+                    "description": "",
+                })
+
+    return items
+
+
 def parse_final_decisions(final_document: str) -> list[DecisionPoint]:
     """Parse the Lead Planner's final decision document to extract decision points.
 
@@ -213,6 +262,19 @@ class LeadPlanner(BaseAgent):
         """
         return []
 
+    def _is_continuation_attachment(self, attachment: str | None) -> bool:
+        """检测附件是否是续前讨论上下文。
+
+        Args:
+            attachment: 附件内容
+
+        Returns:
+            是否是续前讨论
+        """
+        if not attachment:
+            return False
+        return "## 前序讨论上下文" in attachment
+
     def create_opening_prompt(self, topic: str, attachment: str | None = None) -> str:
         """Create the opening prompt for a discussion.
 
@@ -223,6 +285,34 @@ class LeadPlanner(BaseAgent):
         Returns:
             Opening prompt for the Lead Planner.
         """
+        # 检测是否是续前讨论
+        is_continuation = self._is_continuation_attachment(attachment)
+
+        if is_continuation:
+            # 续前讨论的开场 prompt
+            return f"""作为主策划，这是一次**续前讨论**。
+
+议题：{topic}
+
+请仔细阅读前序讨论的上下文，然后：
+1. 【回顾总结】简要回顾之前讨论达成的共识和关键结论
+2. 【本次目标】明确本次继续讨论要深入探讨的方向
+3. 【核心问题】提出 2-3 个需要进一步探讨的具体问题
+4. 【点名讨论】指定相关角色（系统策划/数值策划/玩家代言人）参与回答
+
+**你的团队成员**（只有以下角色参与讨论，请只向他们提问）：
+- 系统策划：负责系统设计、技术架构、功能逻辑、客户端/服务器实现方案
+- 数值策划：负责数值设计、经济系统、平衡性、数据分析、运营指标
+- 玩家代言人：负责玩家体验、用户反馈、市场角度、可玩性评估
+
+---
+前序讨论上下文：
+{attachment}
+---
+
+请以主持人身份开场，基于之前的讨论成果，引导团队深入探讨新的问题。"""
+
+        # 普通讨论的开场 prompt
         attachment_section = ""
         if attachment:
             attachment_section = f"\n\n---\n附件内容：\n{attachment}\n---\n"
@@ -370,6 +460,40 @@ class LeadPlanner(BaseAgent):
 如果需要概念图，请列出：
 - 需要什么类型的图（UI 概念图、场景概念、角色设计等）
 - 简要描述图的内容要求"""
+
+    def create_agenda_prompt(self, topic: str, attachment: str | None = None) -> str:
+        """Create prompt for agenda planning.
+
+        Args:
+            topic: The discussion topic.
+            attachment: Optional attachment content.
+
+        Returns:
+            Agenda planning prompt for the Lead Planner.
+        """
+        attachment_section = ""
+        if attachment:
+            # Truncate long attachments
+            truncated = attachment[:2000] if len(attachment) > 2000 else attachment
+            attachment_section = f"\n\n参考资料：\n{truncated}..."
+
+        return f"""作为主策划，请为以下议题规划讨论议程：
+
+议题：{topic}
+{attachment_section}
+
+请规划 3-5 个需要讨论的关键点，按讨论优先级排序。
+输出格式：
+```agenda
+1. [议题标题1] - 简要描述
+2. [议题标题2] - 简要描述
+3. [议题标题3] - 简要描述
+```
+
+注意：
+- 每个议题应该是独立可讨论的
+- 标题简洁明了，不超过 20 字
+- 描述说明为什么需要讨论这个点"""
 
     def __repr__(self) -> str:
         """Return string representation of the agent."""

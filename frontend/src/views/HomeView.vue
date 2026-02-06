@@ -1,13 +1,63 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { MessageSquare, Users, Zap, Paperclip, X, History } from 'lucide-vue-next';
+import { MessageSquare, Users, Zap, Paperclip, X, History, Radio, PlayCircle } from 'lucide-vue-next';
+import api from '@/api';
+import type { DiscussionStatus } from '@/types';
+
+interface CurrentDiscussion {
+  id: string;
+  topic: string;
+  status: DiscussionStatus;
+  rounds: number;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
 
 const router = useRouter();
 const topicInput = ref('');
 const attachmentFile = ref<File | null>(null);
 const attachmentContent = ref('');
 const fileInputRef = ref<HTMLInputElement | null>(null);
+
+// Global discussion state
+const currentDiscussion = ref<CurrentDiscussion | null>(null);
+const isLoadingDiscussion = ref(false);
+const pollTimer = ref<ReturnType<typeof setInterval> | null>(null);
+
+// Computed
+const isDiscussionRunning = computed(() => currentDiscussion.value?.status === 'running');
+const isDiscussionCompleted = computed(() => currentDiscussion.value?.status === 'completed');
+
+// Fetch current discussion on mount
+async function fetchCurrentDiscussion() {
+  try {
+    const response = await api.get<CurrentDiscussion | null>('/api/discussions/current');
+    currentDiscussion.value = response.data;
+  } catch (error) {
+    console.error('Failed to fetch current discussion:', error);
+    currentDiscussion.value = null;
+  }
+}
+
+// Start polling for discussion status
+function startPolling() {
+  stopPolling();
+  pollTimer.value = setInterval(fetchCurrentDiscussion, 5000);
+}
+
+function stopPolling() {
+  if (pollTimer.value) {
+    clearInterval(pollTimer.value);
+    pollTimer.value = null;
+  }
+}
+
+// Navigate to join running discussion
+function joinDiscussion() {
+  router.push({ name: 'discussion' });
+}
 
 function startDiscussion() {
   if (topicInput.value.trim()) {
@@ -28,6 +78,15 @@ function startDiscussion() {
     });
   }
 }
+
+onMounted(() => {
+  fetchCurrentDiscussion();
+  startPolling();
+});
+
+onUnmounted(() => {
+  stopPolling();
+});
 
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter') {
@@ -102,6 +161,45 @@ function removeAttachment() {
           <p class="text-lg text-gray-600">
             与 AI 策划团队开启讨论。系统策划、数值策划和玩家代言人将协作帮助你设计游戏功能。
           </p>
+        </div>
+
+        <!-- Current discussion status -->
+        <div v-if="isDiscussionRunning" class="bg-white rounded-2xl shadow-xl p-8 mb-6 border-l-4 border-green-500">
+          <div class="flex items-start gap-4">
+            <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <Radio class="w-6 h-6 text-green-500 animate-pulse" />
+            </div>
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-medium rounded">进行中</span>
+              </div>
+              <h3 class="text-lg font-semibold text-gray-900 mb-1">{{ currentDiscussion?.topic }}</h3>
+              <p class="text-sm text-gray-600 mb-4">有一个讨论正在进行中，点击加入查看实时进展</p>
+              <button
+                type="button"
+                class="flex items-center gap-2 px-6 py-2.5 bg-green-500 text-white rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors font-medium"
+                @click="joinDiscussion"
+              >
+                <PlayCircle class="w-5 h-5" />
+                <span>加入讨论</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="isDiscussionCompleted && currentDiscussion" class="bg-white rounded-2xl shadow-xl p-8 mb-6 border-l-4 border-gray-300">
+          <div class="flex items-start gap-4">
+            <div class="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <MessageSquare class="w-6 h-6 text-gray-500" />
+            </div>
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs font-medium rounded">已结束</span>
+              </div>
+              <h3 class="text-lg font-semibold text-gray-900 mb-1">{{ currentDiscussion.topic }}</h3>
+              <p class="text-sm text-gray-600">上一个讨论已结束，可以查看回放或开始新讨论</p>
+            </div>
+          </div>
         </div>
 
         <!-- Input section -->

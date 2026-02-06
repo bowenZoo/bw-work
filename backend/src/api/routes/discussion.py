@@ -19,6 +19,7 @@ from src.agents import Summarizer
 from src.crew.discussion_crew import DiscussionCrew
 from src.memory.base import Discussion, Message
 from src.memory.discussion_memory import DiscussionMemory
+from src.models.agenda import Agenda, AgendaItem, AgendaItemStatus, AgendaSummaryDetails
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ class DiscussionState(BaseModel):
     result: str | None = None
     error: str | None = None
     attachment: AttachmentInfo | None = None
+    continued_from: str | None = None  # 原讨论 ID（如果是续前讨论）
 
 
 class GetDiscussionResponse(BaseModel):
@@ -89,6 +91,9 @@ class GetDiscussionResponse(BaseModel):
     completed_at: str | None = None
     result: str | None = None
     error: str | None = None
+    attachment: AttachmentInfo | None = None
+    continued_from: str | None = None  # 原讨论 ID
+    is_continuation: bool = False  # 是否是续前讨论
 
 
 class StartDiscussionResponse(BaseModel):
@@ -172,6 +177,32 @@ class DiscussionMessagesResponse(BaseModel):
     messages: list[MessageResponse]
 
 
+class CreateCurrentDiscussionRequest(BaseModel):
+    """Request body for creating a new global discussion."""
+
+    topic: str = Field(..., min_length=1, description="The discussion topic")
+    rounds: int = Field(default=3, ge=1, le=10, description="Number of discussion rounds")
+    attachment: AttachmentInfo | None = Field(default=None, description="Optional markdown attachment")
+
+
+class CreateCurrentDiscussionResponse(BaseModel):
+    """Response for creating a global discussion."""
+
+    id: str = Field(..., description="Discussion ID")
+    topic: str = Field(..., description="The discussion topic")
+    rounds: int = Field(..., description="Number of rounds")
+    status: DiscussionStatus = Field(..., description="Current status")
+    created_at: str = Field(..., description="Creation timestamp")
+    message: str | None = Field(default=None, description="Optional status message")
+
+
+class JoinDiscussionResponse(BaseModel):
+    """Response for joining the current discussion."""
+
+    discussion: GetDiscussionResponse | None = Field(None, description="Current discussion if exists")
+    messages: list[MessageResponse] = Field(default_factory=list, description="Historical messages")
+
+
 # Discussion state persistence
 _STATE_DIR = Path(os.environ.get("DISCUSSION_STATUS_DIR", "data/projects/.discussion_state"))
 _state_lock = threading.Lock()
@@ -184,6 +215,31 @@ _discussions: dict[str, DiscussionState] = {}
 
 # Store generated summaries
 _summaries: dict[str, SummaryResponse] = {}
+
+# Global discussion state (single active discussion for all users)
+_current_discussion: DiscussionState | None = None
+_current_discussion_lock = threading.Lock()
+
+
+def get_current_discussion() -> DiscussionState | None:
+    """Get the current global discussion.
+
+    Returns:
+        The current discussion state, or None if no discussion is active.
+    """
+    with _current_discussion_lock:
+        return _current_discussion
+
+
+def set_current_discussion(discussion: DiscussionState | None) -> None:
+    """Set the current global discussion.
+
+    Args:
+        discussion: The discussion to set as current, or None to clear.
+    """
+    global _current_discussion
+    with _current_discussion_lock:
+        _current_discussion = discussion
 
 
 def _state_path(discussion_id: str) -> Path:
@@ -311,11 +367,22 @@ def _run_discussion_sync(discussion_id: str) -> None:
         discussion.status = DiscussionStatus.COMPLETED
         discussion.completed_at = datetime.utcnow().isoformat()
         save_discussion_state(discussion)
+
+        # Update global discussion state if this is the current discussion
+        current = get_current_discussion()
+        if current and current.id == discussion_id:
+            set_current_discussion(discussion)
+
     except Exception as e:
         discussion.status = DiscussionStatus.FAILED
         discussion.error = str(e)
         discussion.completed_at = datetime.utcnow().isoformat()
         save_discussion_state(discussion)
+
+        # Update global discussion state if this is the current discussion
+        current = get_current_discussion()
+        if current and current.id == discussion_id:
+            set_current_discussion(discussion)
 
 
 async def _run_discussion_async(discussion_id: str) -> None:
@@ -377,6 +444,140 @@ async def list_discussions(
     return DiscussionListResponse(items=items, hasMore=has_more)
 
 
+# ==============================================================================
+# Global Discussion API (single active discussion for all users)
+# ==============================================================================
+
+
+@router.get("/current", response_model=GetDiscussionResponse | None)
+async def get_current_discussion_api() -> GetDiscussionResponse | None:
+    """Get the current global active discussion.
+
+    Returns the current discussion if one exists, or None if no discussion is active.
+    """
+    discussion = get_current_discussion()
+    if discussion is None:
+        return None
+
+    return GetDiscussionResponse(
+        id=discussion.id,
+        topic=discussion.topic,
+        rounds=discussion.rounds,
+        status=discussion.status,
+        created_at=discussion.created_at,
+        started_at=discussion.started_at,
+        completed_at=discussion.completed_at,
+        result=discussion.result,
+        error=discussion.error,
+        attachment=discussion.attachment,
+        continued_from=discussion.continued_from,
+        is_continuation=discussion.continued_from is not None,
+    )
+
+
+@router.post("/current", response_model=CreateCurrentDiscussionResponse)
+async def create_current_discussion(
+    request: CreateCurrentDiscussionRequest,
+) -> CreateCurrentDiscussionResponse:
+    """Create a new global discussion (replacing the current one).
+
+    If a discussion is already running, returns it instead of creating a new one.
+    The discussion is automatically started after creation.
+    """
+    with _current_discussion_lock:
+        current = get_current_discussion()
+        if current and current.status == DiscussionStatus.RUNNING:
+            # Return the existing running discussion
+            return CreateCurrentDiscussionResponse(
+                id=current.id,
+                topic=current.topic,
+                rounds=current.rounds,
+                status=current.status,
+                created_at=current.created_at,
+                message="讨论已在进行中，已自动加入",
+            )
+
+        # Create new discussion
+        discussion_id = str(uuid.uuid4())
+        now = datetime.utcnow().isoformat()
+
+        discussion = DiscussionState(
+            id=discussion_id,
+            topic=request.topic,
+            rounds=request.rounds,
+            status=DiscussionStatus.RUNNING,
+            created_at=now,
+            started_at=now,
+            attachment=request.attachment,
+        )
+
+        # Save to both global state and persistent storage
+        set_current_discussion(discussion)
+        save_discussion_state(discussion)
+
+    # Run in background (outside the lock)
+    asyncio.create_task(_run_discussion_async(discussion_id))
+
+    return CreateCurrentDiscussionResponse(
+        id=discussion_id,
+        topic=request.topic,
+        rounds=request.rounds,
+        status=DiscussionStatus.RUNNING,
+        created_at=now,
+        message=None,
+    )
+
+
+@router.post("/current/join", response_model=JoinDiscussionResponse)
+async def join_current_discussion() -> JoinDiscussionResponse:
+    """Join the current global discussion and get historical messages.
+
+    Returns the current discussion state and all historical messages.
+    If no discussion is active, returns empty data.
+    """
+    discussion = get_current_discussion()
+    if discussion is None:
+        return JoinDiscussionResponse(discussion=None, messages=[])
+
+    # Load historical messages from memory
+    stored = _discussion_memory.load(discussion.id)
+    messages: list[MessageResponse] = []
+    if stored and stored.messages:
+        messages = [
+            MessageResponse(
+                id=msg.id,
+                agent_id=msg.agent_id,
+                agent_role=msg.agent_role,
+                content=msg.content,
+                timestamp=msg.timestamp.isoformat(),
+            )
+            for msg in stored.messages
+        ]
+
+    return JoinDiscussionResponse(
+        discussion=GetDiscussionResponse(
+            id=discussion.id,
+            topic=discussion.topic,
+            rounds=discussion.rounds,
+            status=discussion.status,
+            created_at=discussion.created_at,
+            started_at=discussion.started_at,
+            completed_at=discussion.completed_at,
+            result=discussion.result,
+            error=discussion.error,
+            attachment=discussion.attachment,
+            continued_from=discussion.continued_from,
+            is_continuation=discussion.continued_from is not None,
+        ),
+        messages=messages,
+    )
+
+
+# ==============================================================================
+# Original Discussion API (per-discussion operations)
+# ==============================================================================
+
+
 @router.post("", response_model=CreateDiscussionResponse)
 async def create_discussion(request: CreateDiscussionRequest) -> CreateDiscussionResponse:
     """Create a new discussion.
@@ -422,6 +623,9 @@ async def get_discussion(discussion_id: str) -> GetDiscussionResponse:
         completed_at=discussion.completed_at,
         result=discussion.result,
         error=discussion.error,
+        attachment=discussion.attachment,
+        continued_from=discussion.continued_from,
+        is_continuation=discussion.continued_from is not None,
     )
 
 
@@ -571,6 +775,68 @@ async def summarize_discussion(
     return summary
 
 
+def _build_continuation_context(
+    original: DiscussionState,
+    stored: Discussion,
+    follow_up: str,
+    max_messages_per_agent: int = 2,
+) -> str:
+    """构建继续讨论的上下文。
+
+    Args:
+        original: 原讨论状态
+        stored: 存储的讨论数据
+        follow_up: 用户的追加问题/方向
+        max_messages_per_agent: 每个角色保留的最近消息数量
+
+    Returns:
+        格式化的上下文字符串
+    """
+    context_parts = [
+        "## 前序讨论上下文",
+        "",
+        f"### 原始话题: {original.topic}",
+        "",
+    ]
+
+    # 添加摘要
+    if stored.summary:
+        context_parts.extend([
+            "### 讨论总结",
+            stored.summary[:2000],  # 限制长度
+            "",
+        ])
+
+    # 提取每个角色的最后几条消息
+    if stored.messages:
+        context_parts.append("### 关键讨论内容")
+        agent_messages: dict[str, list[str]] = {}
+        for msg in stored.messages:
+            if msg.agent_role not in agent_messages:
+                agent_messages[msg.agent_role] = []
+            agent_messages[msg.agent_role].append(msg.content[:500])
+
+        for role, contents in agent_messages.items():
+            # 取最后 N 条
+            recent = contents[-max_messages_per_agent:]
+            for content in recent:
+                context_parts.append(f"**{role}**: {content}...")
+        context_parts.append("")
+
+    # 添加继续讨论部分
+    context_parts.extend([
+        "---",
+        "",
+        "## 继续讨论",
+        "",
+        "用户希望在以上讨论基础上，继续探讨以下问题：",
+        "",
+        f"**{follow_up}**",
+    ])
+
+    return "\n".join(context_parts)
+
+
 @router.post("/{discussion_id}/continue", response_model=ContinueDiscussionResponse)
 async def continue_discussion(
     discussion_id: str,
@@ -606,44 +872,13 @@ async def continue_discussion(
             created_at=datetime.now(),
         )
 
-    # Build context from original discussion
-    context_parts = [
-        f"## 前序讨论上下文",
-        f"",
-        f"### 原始话题: {original.topic}",
-        f"",
-    ]
-
-    # Add summary if available
-    if stored_discussion.summary:
-        context_parts.extend([
-            "### 讨论总结",
-            stored_discussion.summary[:2000],  # Limit context size
-            "",
-        ])
-
-    # Add key messages (last few messages from each agent)
-    if stored_discussion.messages:
-        context_parts.append("### 关键讨论内容")
-        agent_last_messages: dict[str, str] = {}
-        for msg in stored_discussion.messages:
-            agent_last_messages[msg.agent_role] = msg.content[:500]
-
-        for role, content in agent_last_messages.items():
-            context_parts.append(f"**{role}**: {content}...")
-        context_parts.append("")
-
-    context_parts.extend([
-        "---",
-        "",
-        f"## 继续讨论",
-        f"",
-        f"用户希望在以上讨论基础上，继续探讨以下问题：",
-        f"",
-        f"**{request.follow_up}**",
-    ])
-
-    combined_context = "\n".join(context_parts)
+    # 使用独立函数构建上下文
+    combined_context = _build_continuation_context(
+        original=original,
+        stored=stored_discussion,
+        follow_up=request.follow_up,
+        max_messages_per_agent=2,
+    )
 
     # Create new discussion with context
     new_discussion_id = str(uuid.uuid4())
@@ -663,6 +898,7 @@ async def continue_discussion(
         status=DiscussionStatus.PENDING,
         created_at=now,
         attachment=attachment,
+        continued_from=discussion_id,  # 记录原讨论 ID
     )
     save_discussion_state(new_discussion)
 
@@ -780,3 +1016,281 @@ async def get_discussion_summary(discussion_id: str) -> SummaryResponse:
         )
 
     return _summaries[discussion_id]
+
+
+# ==============================================================================
+# Discussion Chain API
+# ==============================================================================
+
+
+class DiscussionChainItem(BaseModel):
+    """讨论链中的单个讨论项。"""
+
+    id: str
+    topic: str
+    summary: str | None = None
+    status: DiscussionStatus
+    created_at: str
+    is_origin: bool = False  # 是否是链的起点
+
+
+class DiscussionChainResponse(BaseModel):
+    """讨论链响应。"""
+
+    chain: list[DiscussionChainItem]  # 从最早到最新
+    current_index: int  # 当前讨论在链中的位置
+
+
+@router.get("/{discussion_id}/chain", response_model=DiscussionChainResponse)
+async def get_discussion_chain(discussion_id: str) -> DiscussionChainResponse:
+    """获取讨论链（原讨论 → 续前讨论 → ...）。
+
+    返回从最早的原始讨论到当前讨论的完整链。
+    """
+    # 首先检查讨论是否存在
+    current = get_discussion_state(discussion_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    chain: list[DiscussionChainItem] = []
+    visited: set[str] = set()
+
+    # 向前追溯到原始讨论
+    trace_id: str | None = discussion_id
+    while trace_id and trace_id not in visited:
+        visited.add(trace_id)
+        disc = get_discussion_state(trace_id)
+        if disc is None:
+            break
+
+        # 尝试获取摘要
+        stored = _discussion_memory.load(trace_id)
+        summary = stored.summary if stored else None
+
+        chain.insert(
+            0,
+            DiscussionChainItem(
+                id=disc.id,
+                topic=disc.topic,
+                summary=summary,
+                status=disc.status,
+                created_at=disc.created_at,
+                is_origin=disc.continued_from is None,
+            ),
+        )
+        trace_id = disc.continued_from
+
+    # 计算当前讨论在链中的位置
+    current_index = 0
+    for i, item in enumerate(chain):
+        if item.id == discussion_id:
+            current_index = i
+            break
+
+    return DiscussionChainResponse(chain=chain, current_index=current_index)
+
+
+# ==============================================================================
+# Agenda API Models
+# ==============================================================================
+
+
+class AgendaItemResponse(BaseModel):
+    """Response model for a single agenda item."""
+
+    id: str
+    title: str
+    description: str | None
+    status: str
+    summary: str | None
+    summary_details: dict[str, Any] | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+
+
+class AgendaResponse(BaseModel):
+    """Response model for the full agenda."""
+
+    items: list[AgendaItemResponse]
+    current_index: int
+
+
+class AddAgendaItemRequest(BaseModel):
+    """Request body for adding a new agenda item."""
+
+    title: str = Field(..., min_length=1, max_length=100, description="议题标题")
+    description: str | None = Field(default=None, max_length=500, description="议题描述")
+
+
+class AddAgendaItemResponse(BaseModel):
+    """Response for adding a new agenda item."""
+
+    item: AgendaItemResponse
+    message: str
+
+
+class AgendaItemSummaryResponse(BaseModel):
+    """Response for getting an agenda item summary."""
+
+    item_id: str
+    title: str
+    summary: str | None
+    summary_details: dict[str, Any] | None = None
+
+
+# In-memory storage for agendas (keyed by discussion_id)
+_discussion_agendas: dict[str, Agenda] = {}
+_agenda_lock = threading.Lock()
+
+
+def get_discussion_agenda(discussion_id: str) -> Agenda | None:
+    """Get the agenda for a discussion.
+
+    Args:
+        discussion_id: The discussion ID.
+
+    Returns:
+        The Agenda or None if not found.
+    """
+    with _agenda_lock:
+        return _discussion_agendas.get(discussion_id)
+
+
+def set_discussion_agenda(discussion_id: str, agenda: Agenda) -> None:
+    """Set the agenda for a discussion.
+
+    Args:
+        discussion_id: The discussion ID.
+        agenda: The Agenda to store.
+    """
+    with _agenda_lock:
+        _discussion_agendas[discussion_id] = agenda
+
+
+def _agenda_item_to_response(item: AgendaItem) -> AgendaItemResponse:
+    """Convert an AgendaItem to its response model."""
+    return AgendaItemResponse(
+        id=item.id,
+        title=item.title,
+        description=item.description,
+        status=item.status.value,
+        summary=item.summary,
+        summary_details=item.summary_details.model_dump() if item.summary_details else None,
+        started_at=item.started_at.isoformat() if item.started_at else None,
+        completed_at=item.completed_at.isoformat() if item.completed_at else None,
+    )
+
+
+# ==============================================================================
+# Agenda API Endpoints
+# ==============================================================================
+
+
+@router.get("/current/agenda", response_model=AgendaResponse | None)
+async def get_current_agenda() -> AgendaResponse | None:
+    """获取当前讨论的议程。
+
+    Returns:
+        当前讨论的议程，如果没有活跃讨论则返回 None。
+    """
+    discussion = get_current_discussion()
+    if discussion is None:
+        raise HTTPException(status_code=404, detail="无活跃讨论")
+
+    agenda = get_discussion_agenda(discussion.id)
+    if agenda is None:
+        # Return empty agenda if not initialized
+        return AgendaResponse(items=[], current_index=0)
+
+    return AgendaResponse(
+        items=[_agenda_item_to_response(item) for item in agenda.items],
+        current_index=agenda.current_index,
+    )
+
+
+@router.post("/current/agenda/items", response_model=AddAgendaItemResponse)
+async def add_agenda_item(request: AddAgendaItemRequest) -> AddAgendaItemResponse:
+    """添加新议题（主策划动态添加）。
+
+    Args:
+        request: 包含议题标题和描述的请求体。
+
+    Returns:
+        新添加的议题信息。
+    """
+    discussion = get_current_discussion()
+    if discussion is None:
+        raise HTTPException(status_code=404, detail="无活跃讨论")
+
+    agenda = get_discussion_agenda(discussion.id)
+    if agenda is None:
+        # Initialize agenda if not exists
+        agenda = Agenda()
+        set_discussion_agenda(discussion.id, agenda)
+
+    item = agenda.add_item(title=request.title, description=request.description)
+    set_discussion_agenda(discussion.id, agenda)
+
+    return AddAgendaItemResponse(
+        item=_agenda_item_to_response(item),
+        message=f"已添加议题: {item.title}",
+    )
+
+
+@router.post("/current/agenda/items/{item_id}/skip", response_model=AgendaItemResponse)
+async def skip_agenda_item(item_id: str) -> AgendaItemResponse:
+    """跳过某个议题。
+
+    Args:
+        item_id: 要跳过的议题 ID。
+
+    Returns:
+        被跳过的议题信息。
+    """
+    discussion = get_current_discussion()
+    if discussion is None:
+        raise HTTPException(status_code=404, detail="无活跃讨论")
+
+    agenda = get_discussion_agenda(discussion.id)
+    if agenda is None:
+        raise HTTPException(status_code=404, detail="议程未初始化")
+
+    item = agenda.skip_item(item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="议题未找到或无法跳过")
+
+    set_discussion_agenda(discussion.id, agenda)
+    return _agenda_item_to_response(item)
+
+
+@router.get("/current/agenda/items/{item_id}/summary", response_model=AgendaItemSummaryResponse)
+async def get_agenda_item_summary(item_id: str) -> AgendaItemSummaryResponse:
+    """获取议题小结。
+
+    Args:
+        item_id: 议题 ID。
+
+    Returns:
+        议题的小结内容。
+    """
+    discussion = get_current_discussion()
+    if discussion is None:
+        raise HTTPException(status_code=404, detail="无活跃讨论")
+
+    agenda = get_discussion_agenda(discussion.id)
+    if agenda is None:
+        raise HTTPException(status_code=404, detail="议程未初始化")
+
+    item = agenda.get_item_by_id(item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="议题未找到")
+
+    if item.status != AgendaItemStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="议题尚未完成，无法获取小结")
+
+    return AgendaItemSummaryResponse(
+        item_id=item.id,
+        title=item.title,
+        summary=item.summary,
+        summary_details=item.summary_details.model_dump() if item.summary_details else None,
+    )

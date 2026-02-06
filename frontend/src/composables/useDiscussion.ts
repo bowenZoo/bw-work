@@ -144,6 +144,7 @@ export function useDiscussion() {
         topic,
         messages,
         status: statusResponse.status,
+        attachment: statusResponse.attachment ?? undefined,
       };
 
       discussionStore.setDiscussion(discussion);

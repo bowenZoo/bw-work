@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from crewai import Agent
+from crewai import Agent, Crew, Process, Task
 
 from src.config.settings import load_role_config, settings
 
@@ -89,6 +89,59 @@ class BaseAgent(ABC):
             self._agent = Agent(**agent_kwargs)
 
         return self._agent
+
+    def _build_response_prompt(self, context: str) -> str:
+        """Build a response prompt for the agent.
+
+        Args:
+            context: The discussion context to respond to.
+
+        Returns:
+            Formatted prompt string.
+        """
+        return f"""
+作为{self.role}，请针对以下讨论内容，从你的专业角度发表观点。
+
+你的背景：{self.backstory}
+
+你的关注点：
+{chr(10).join(f"- {area}" for area in self.focus_areas)}
+
+讨论上下文：
+{context}
+
+请：
+1. 回应讨论中提出的问题
+2. 从你的专业角度提出设计建议
+3. 指出你认为需要关注的风险或挑战
+"""
+
+    async def respond_async(self, context: str) -> str:
+        """Asynchronously generate a response to the given context.
+
+        This method creates a temporary Crew with a single task to generate
+        a response based on the discussion context.
+
+        Args:
+            context: The discussion context to respond to.
+
+        Returns:
+            The agent's response as a string.
+        """
+        task = Task(
+            description=self._build_response_prompt(context),
+            expected_output=f"{self.role}对讨论内容的专业分析和建议",
+            agent=self.build_agent(),
+        )
+
+        crew = Crew(
+            agents=[self.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+
+        result = await crew.kickoff_async()
+        return str(result)
 
     def __repr__(self) -> str:
         """Return string representation of the agent."""

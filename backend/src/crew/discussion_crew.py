@@ -16,14 +16,19 @@ from crewai import Crew, Process, Task
 from crewai.tasks.task_output import TaskOutput
 
 from src.agents import LeadPlanner, NumberDesigner, PlayerAdvocate, SystemDesigner, VisualConceptAgent
+import asyncio
+
 from src.agents.lead_planner import (
     DecisionPoint,
     DiscussionStatus,
     VisualConceptRequest,
+    parse_agenda_output,
     parse_discussion_status,
     parse_final_decisions,
     parse_visual_requirements,
 )
+from src.models.agenda import Agenda, AgendaItem, AgendaItemStatus, AgendaSummaryDetails
+from src.crew.mention_parser import parse_mentioned_roles
 from src.memory.base import Decision
 from src.api.websocket.events import (
     AgentStatus,
@@ -273,6 +278,12 @@ class DiscussionCrew:
         self._discussion_status = DiscussionStatus.CONTINUE
         self._pending_questions: list[str] = []
 
+        # Message sequence counter for ordering parallel messages
+        self._message_sequence = 0
+
+        # Agenda management
+        self._agenda: Agenda | None = None
+
     @property
     def agents(self) -> list[Any]:
         """Get all agents in the crew."""
@@ -292,6 +303,15 @@ class DiscussionCrew:
         """Reset the task sequence tracking for status updates."""
         self._task_agent_roles = []
         self._task_index = 0
+
+    def _next_sequence(self) -> int:
+        """Get the next message sequence number.
+
+        Returns:
+            The next sequence number.
+        """
+        self._message_sequence += 1
+        return self._message_sequence
 
     def _check_pause_and_wait(self) -> list[dict]:
         """Check if discussion is paused and wait if so.
@@ -459,6 +479,227 @@ class DiscussionCrew:
                 context_parts.append(f"  原因: {decision.rationale}\n")
 
         return "\n".join(context_parts) if context_parts else ""
+
+    def _init_agenda(self, items_data: list[dict[str, str]]) -> Agenda:
+        """Initialize the discussion agenda from parsed items.
+
+        Args:
+            items_data: List of dicts with 'title' and 'description'.
+
+        Returns:
+            The created Agenda object.
+        """
+        self._agenda = Agenda.from_items_list(items_data)
+        # Start the first item
+        if self._agenda.items:
+            self._agenda.start_current()
+        return self._agenda
+
+    def get_agenda(self) -> Agenda | None:
+        """Get the current agenda.
+
+        Returns:
+            The current Agenda or None if not initialized.
+        """
+        return self._agenda
+
+    async def _generate_agenda_item_summary(
+        self,
+        item: AgendaItem,
+        discussion_content: str,
+    ) -> tuple[str, AgendaSummaryDetails]:
+        """Generate a summary for a completed agenda item.
+
+        Args:
+            item: The agenda item to summarize.
+            discussion_content: The discussion content for this item.
+
+        Returns:
+            Tuple of (markdown_summary, structured_details).
+        """
+        prompt = f"""请为以下议题生成讨论小结：
+
+议题：{item.title}
+{f"描述：{item.description}" if item.description else ""}
+
+讨论内容：
+{discussion_content}
+
+请按以下格式输出：
+
+# 议题小结：{item.title}
+
+## 讨论结论
+- 结论1
+- 结论2
+
+## 各方观点
+- 系统策划：...
+- 数值策划：...
+- 玩家代言人：...
+
+## 遗留问题
+- 问题1（如有）
+
+## 下一步行动
+- 行动1
+"""
+        task = Task(
+            description=prompt,
+            expected_output="议题小结文档",
+            agent=self._lead_planner.build_agent(),
+        )
+
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+
+        result = await crew.kickoff_async()
+        summary_text = str(result)
+
+        # Parse the summary into structured details
+        details = self._parse_agenda_summary(summary_text)
+
+        return summary_text, details
+
+    def _parse_agenda_summary(self, summary_text: str) -> AgendaSummaryDetails:
+        """Parse agenda summary text into structured details.
+
+        Args:
+            summary_text: The markdown summary text.
+
+        Returns:
+            AgendaSummaryDetails with extracted information.
+        """
+        import re
+
+        details = AgendaSummaryDetails()
+
+        # Extract conclusions
+        conclusions_match = re.search(
+            r"##\s*讨论结论\s*\n(.*?)(?=\n##|\Z)",
+            summary_text,
+            re.DOTALL,
+        )
+        if conclusions_match:
+            conclusions_text = conclusions_match.group(1)
+            details.conclusions = [
+                line.strip().lstrip("-").strip()
+                for line in conclusions_text.strip().split("\n")
+                if line.strip() and line.strip().startswith("-")
+            ]
+
+        # Extract viewpoints
+        viewpoints_match = re.search(
+            r"##\s*各方观点\s*\n(.*?)(?=\n##|\Z)",
+            summary_text,
+            re.DOTALL,
+        )
+        if viewpoints_match:
+            viewpoints_text = viewpoints_match.group(1)
+            # Match pattern: - 角色：观点
+            viewpoint_pattern = r"-\s*(.+?)[：:]\s*(.+?)(?=\n-|\Z)"
+            for match in re.finditer(viewpoint_pattern, viewpoints_text, re.DOTALL):
+                role = match.group(1).strip()
+                viewpoint = match.group(2).strip()
+                details.viewpoints[role] = viewpoint
+
+        # Extract open questions
+        questions_match = re.search(
+            r"##\s*遗留问题\s*\n(.*?)(?=\n##|\Z)",
+            summary_text,
+            re.DOTALL,
+        )
+        if questions_match:
+            questions_text = questions_match.group(1)
+            details.open_questions = [
+                line.strip().lstrip("-").strip()
+                for line in questions_text.strip().split("\n")
+                if line.strip() and line.strip().startswith("-")
+            ]
+
+        # Extract next steps
+        next_steps_match = re.search(
+            r"##\s*下一步行动\s*\n(.*?)(?=\n##|\Z)",
+            summary_text,
+            re.DOTALL,
+        )
+        if next_steps_match:
+            next_steps_text = next_steps_match.group(1)
+            details.next_steps = [
+                line.strip().lstrip("-").strip()
+                for line in next_steps_text.strip().split("\n")
+                if line.strip() and line.strip().startswith("-")
+            ]
+
+        return details
+
+    async def complete_current_agenda_item(
+        self,
+        discussion_content: str,
+    ) -> AgendaItem | None:
+        """Complete the current agenda item with a generated summary.
+
+        Args:
+            discussion_content: The discussion content for this item.
+
+        Returns:
+            The completed AgendaItem or None if no current item.
+        """
+        if self._agenda is None or self._agenda.current_item is None:
+            return None
+
+        item = self._agenda.current_item
+
+        # Generate summary
+        self._broadcast_discussion_event(f"正在生成议题小结：{item.title}...")
+        summary_text, details = await self._generate_agenda_item_summary(item, discussion_content)
+
+        # Complete the item
+        self._agenda.complete_current(summary_text, details)
+
+        # Broadcast agenda update
+        self._broadcast_agenda_event("item_complete", {
+            "item_id": item.id,
+            "title": item.title,
+            "summary": summary_text,
+        })
+
+        # Start next item if available
+        if self._agenda.current_item:
+            self._agenda.start_current()
+            self._broadcast_agenda_event("item_start", {
+                "item_id": self._agenda.current_item.id,
+                "title": self._agenda.current_item.title,
+            })
+
+        return item
+
+    def _broadcast_agenda_event(self, event_type: str, data: dict) -> None:
+        """Broadcast an agenda-related event via WebSocket.
+
+        Args:
+            event_type: Type of agenda event (e.g., 'item_start', 'item_complete').
+            data: Event data dictionary.
+        """
+        if self._discussion_id is None:
+            return
+
+        try:
+            from src.api.websocket.events import create_agenda_event
+            event = create_agenda_event(
+                discussion_id=self._discussion_id,
+                event_type=event_type,
+                data=data,
+            )
+            broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
+        except ImportError:
+            # Fallback: use generic status event
+            self._broadcast_discussion_event(f"议程更新: {event_type}")
+        except Exception as exc:
+            logger.debug("Failed to broadcast agenda event: %s", exc)
 
     def _init_discussion(self, topic: str) -> Discussion:
         """Initialize a new discussion record.
@@ -788,19 +1029,28 @@ class DiscussionCrew:
                 status=status,
                 content=content,
             )
-            broadcast_sync(self._discussion_id, event.to_dict())
+            broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
         except Exception as exc:
             logger.debug("Failed to broadcast status: %s", exc)
 
-    def _broadcast_message(self, agent_role: str, content: str) -> None:
+    def _broadcast_message(
+        self,
+        agent_role: str,
+        content: str,
+        sequence: int | None = None,
+    ) -> None:
         """Broadcast agent message via WebSocket.
 
         Args:
             agent_role: The agent's role name.
             content: The message content.
+            sequence: Optional message sequence number. If None, auto-increments.
         """
         if self._discussion_id is None:
             return
+
+        # Use provided sequence or auto-increment
+        msg_sequence = sequence if sequence is not None else self._next_sequence()
 
         try:
             event = create_message_event(
@@ -808,8 +1058,9 @@ class DiscussionCrew:
                 agent_id=agent_role.lower().replace(" ", "_"),
                 agent_role=agent_role,
                 content=content,
+                sequence=msg_sequence,
             )
-            broadcast_sync(self._discussion_id, event.to_dict())
+            broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
         except Exception as exc:
             logger.debug("Failed to broadcast message: %s", exc)
 
@@ -826,9 +1077,52 @@ class DiscussionCrew:
                 status=AgentStatus.IDLE,
                 content=content,
             )
-            broadcast_sync(self._discussion_id, event.to_dict())
+            broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
         except Exception as exc:
             logger.debug("Failed to broadcast discussion event: %s", exc)
+
+    async def _run_parallel_responses(
+        self,
+        mentioned_roles: list[str],
+        context: str,
+    ) -> list[tuple[str, str]]:
+        """Run parallel responses from mentioned agents.
+
+        This method calls all mentioned agents in parallel using asyncio.gather().
+        If no specific roles are mentioned, all discussion agents respond.
+
+        Args:
+            mentioned_roles: List of role names that should respond.
+            context: The discussion context to respond to.
+
+        Returns:
+            List of (role, response) tuples in completion order.
+        """
+        # Filter agents based on mentioned roles
+        agents_to_call = [
+            agent for agent in self._discussion_agents
+            if agent.role in mentioned_roles
+        ]
+
+        # If no specific roles mentioned, all agents respond
+        if not agents_to_call:
+            agents_to_call = self._discussion_agents
+
+        # Broadcast thinking status for all participating agents
+        for agent in agents_to_call:
+            self._broadcast_status(agent.role, AgentStatus.THINKING)
+
+        # Define async function to call a single agent
+        async def call_agent(agent: Any) -> tuple[str, str]:
+            response = await agent.respond_async(context)
+            return (agent.role, response)
+
+        # Run all agent calls in parallel
+        results = await asyncio.gather(*[
+            call_agent(agent) for agent in agents_to_call
+        ])
+
+        return list(results)
 
     def _process_round_summary(self, summary: str, task_name: str) -> None:
         """Process a round summary from the Lead Planner.
@@ -876,7 +1170,7 @@ class DiscussionCrew:
                 discussion_id=self._discussion_id,
                 content=content,
             )
-            broadcast_sync(self._discussion_id, event.to_dict())
+            broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
         except Exception as exc:
             logger.debug("Failed to broadcast error event: %s", exc)
 
@@ -1095,6 +1389,7 @@ class DiscussionCrew:
         topic: str,
         rounds: int = 2,
         verbose: bool = True,
+        attachment: str | None = None,
     ) -> str:
         """Run a design discussion asynchronously.
 
@@ -1180,6 +1475,250 @@ class DiscussionCrew:
             # Clean up discussion state
             cleanup_discussion_state(self._discussion_id)
             # Broadcast idle status on error
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+            raise
+
+    async def _lead_planner_opening(
+        self,
+        topic: str,
+        attachment: str | None = None,
+    ) -> str:
+        """Generate Lead Planner's opening statement.
+
+        Args:
+            topic: The discussion topic.
+            attachment: Optional attachment content.
+
+        Returns:
+            The Lead Planner's opening statement.
+        """
+        opening_prompt = self._lead_planner.create_opening_prompt(topic, attachment)
+        task = Task(
+            description=opening_prompt,
+            expected_output="讨论开场：明确目标、关键问题、讨论范围和期望产出",
+            agent=self._lead_planner.build_agent(),
+        )
+
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+
+        result = await crew.kickoff_async()
+        return str(result)
+
+    async def _lead_planner_summary(
+        self,
+        round_num: int,
+        topic: str,
+        context: str,
+    ) -> str:
+        """Generate Lead Planner's round summary.
+
+        Args:
+            round_num: Current round number.
+            topic: The discussion topic.
+            context: The full discussion context.
+
+        Returns:
+            The Lead Planner's summary for this round.
+        """
+        summary_prompt = self._lead_planner.create_round_summary_prompt(round_num, topic)
+        full_prompt = f"{summary_prompt}\n\n---\n讨论记录：\n{context}"
+
+        task = Task(
+            description=full_prompt,
+            expected_output=f"第{round_num}轮总结：共识、分歧、需深入的问题、下一步",
+            agent=self._lead_planner.build_agent(),
+        )
+
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+
+        result = await crew.kickoff_async()
+        return str(result)
+
+    async def _lead_planner_final_decision(
+        self,
+        topic: str,
+        context: str,
+    ) -> str:
+        """Generate Lead Planner's final decision document.
+
+        Args:
+            topic: The discussion topic.
+            context: The full discussion context.
+
+        Returns:
+            The Lead Planner's final decision document.
+        """
+        final_prompt = self._lead_planner.create_final_decision_prompt(topic)
+        full_prompt = f"{final_prompt}\n\n---\n讨论记录：\n{context}"
+
+        task = Task(
+            description=full_prompt,
+            expected_output="策划决策文档：设计概述、关键决策及理由、待确认事项、下一步行动",
+            agent=self._lead_planner.build_agent(),
+        )
+
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+
+        result = await crew.kickoff_async()
+        return str(result)
+
+    async def run_dynamic(
+        self,
+        topic: str,
+        max_rounds: int = 5,
+        attachment: str | None = None,
+    ) -> str:
+        """Run a dynamic discussion with parallel agent responses.
+
+        This method implements the new discussion flow where:
+        1. Lead Planner opens the discussion
+        2. Mentioned roles respond in parallel
+        3. Lead Planner summarizes and determines if more discussion is needed
+        4. Repeat until sufficient or max_rounds reached
+        5. Lead Planner makes final decisions
+
+        Args:
+            topic: The design topic to discuss.
+            max_rounds: Maximum number of discussion rounds.
+            attachment: Optional markdown attachment content.
+
+        Returns:
+            The final discussion result/decision document.
+        """
+        # Initialize discussion record
+        self._init_discussion(topic)
+
+        # Initialize discussion state for pause/resume
+        set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
+
+        trace_metadata = self._prepare_trace_metadata(topic, max_rounds)
+
+        try:
+            with start_trace_context(
+                name="discussion_dynamic",
+                session_id=self._discussion_id,
+                metadata=trace_metadata,
+            ) as trace_span:
+
+                # Phase 0: Lead Planner opens the discussion
+                self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                opening = await self._lead_planner_opening(topic, attachment)
+
+                self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                self._broadcast_message(self._lead_planner.role, opening)
+                self._record_message(self._lead_planner.role, opening)
+                self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                # Initialize context with opening
+                context = f"议题：{topic}\n\n主策划开场：\n{opening}"
+                round_num = 0
+
+                # Phase 1-N: Dynamic discussion rounds
+                while round_num < max_rounds:
+                    round_num += 1
+                    self._current_round = round_num
+
+                    # Parse mentioned roles from context (primarily from latest summary/opening)
+                    mentioned_roles = parse_mentioned_roles(opening if round_num == 1 else context)
+
+                    # Run parallel responses from mentioned agents
+                    responses = await self._run_parallel_responses(mentioned_roles, context)
+
+                    # Record and broadcast responses
+                    for role, response in responses:
+                        self._broadcast_status(role, AgentStatus.SPEAKING)
+                        self._broadcast_message(role, response)
+                        self._record_message(role, response)
+                        self._broadcast_status(role, AgentStatus.IDLE)
+                        context += f"\n\n{role}：\n{response}"
+
+                    # Check for pause/intervention
+                    injected_messages = self._check_pause_and_wait()
+                    if self._abort_reason:
+                        raise DiscussionTimeoutError(self._abort_reason)
+                    if injected_messages:
+                        self._inject_user_messages(injected_messages)
+                        for msg in injected_messages:
+                            context += f"\n\n用户介入：\n{msg.get('content', '')}"
+
+                    # Lead Planner summarizes this round
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                    summary = await self._lead_planner_summary(round_num, topic, context)
+
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                    self._broadcast_message(self._lead_planner.role, summary)
+                    self._record_message(self._lead_planner.role, summary)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+                    context += f"\n\n主策划总结（第{round_num}轮）：\n{summary}"
+
+                    # Check if discussion should continue
+                    status, questions = parse_discussion_status(summary)
+                    self._discussion_status = status
+                    self._pending_questions = questions
+
+                    if status == DiscussionStatus.SUFFICIENT:
+                        logger.info("Discussion %s: sufficient after round %d", self._discussion_id, round_num)
+                        break
+
+                    self._broadcast_discussion_event(f"第{round_num}轮讨论完成")
+
+                # Final Phase: Lead Planner makes final decisions
+                self._broadcast_discussion_event("正在生成最终决策文档...")
+                self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                final_decision = await self._lead_planner_final_decision(topic, context)
+
+                self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                self._broadcast_message(self._lead_planner.role, final_decision)
+                self._record_message(self._lead_planner.role, final_decision)
+                self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                self._finalize_trace(trace_span, result=final_decision)
+
+            # Save discussion to memory
+            self._save_discussion(summary=final_decision)
+
+            # Extract and save decisions
+            try:
+                self._save_decisions(final_decision, topic)
+            except Exception as e:
+                logger.warning("Failed to save decisions: %s", e)
+
+            # Generate visual concepts if enabled
+            if self._visual_concept is not None:
+                try:
+                    await self._generate_visual_concepts(final_decision)
+                except Exception as e:
+                    logger.warning("Failed to generate visual concepts: %s", e)
+
+            # Mark discussion as finished and clean up
+            set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
+            cleanup_discussion_state(self._discussion_id)
+
+            # Broadcast completion status
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+            self._broadcast_discussion_event("discussion_completed")
+
+            return final_decision
+
+        except Exception as exc:
+            self._broadcast_error(str(exc))
+            self._broadcast_discussion_event("discussion_failed")
+            self._save_discussion()
+            cleanup_discussion_state(self._discussion_id)
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
             raise

@@ -14,9 +14,23 @@ const containerRef = ref<HTMLElement | null>(null);
 const showAll = ref(false);
 const maxMessages = computed(() => props.maxMessages ?? 300);
 const isTruncated = computed(() => props.messages.length > maxMessages.value && !showAll.value);
+
+// Sort messages by sequence (if available) or timestamp
+const sortedMessages = computed(() => {
+  const messagesCopy = [...props.messages];
+  return messagesCopy.sort((a, b) => {
+    // If both have sequence numbers, use them for ordering
+    if (a.sequence !== undefined && b.sequence !== undefined) {
+      return a.sequence - b.sequence;
+    }
+    // Otherwise, fall back to timestamp comparison
+    return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+  });
+});
+
 const renderedMessages = computed(() => {
-  if (!isTruncated.value) return props.messages;
-  return props.messages.slice(-maxMessages.value);
+  if (!isTruncated.value) return sortedMessages.value;
+  return sortedMessages.value.slice(-maxMessages.value);
 });
 const hiddenCount = computed(() =>
   isTruncated.value ? props.messages.length - renderedMessages.value.length : 0

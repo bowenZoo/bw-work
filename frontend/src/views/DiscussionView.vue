@@ -2,11 +2,25 @@
 import { watch, onMounted, onUnmounted, computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ChatContainer, InputBox } from '@/components/chat';
-import { Header, Sidebar } from '@/components/layout';
+import { Header } from '@/components/layout';
 import { PlaybackControl } from '@/components/history';
+import {
+  TopicCard,
+  AttachmentPreview,
+  UserInputBox,
+  AgendaPanel,
+  RoundTable,
+  CurrentSpeech,
+  HistoryPanel,
+  AgendaSummaryModal,
+  DiscussionChain,
+} from '@/components/discussion';
 import { usePlayback } from '@/composables/usePlayback';
 import { useDiscussion } from '@/composables/useDiscussion';
+import { useGlobalDiscussion } from '@/composables/useGlobalDiscussion';
+import { useAgentsStore } from '@/stores/agents';
 import api from '@/api';
+import type { AgendaItem, Agent, AgentStatus, DiscussionChainItem } from '@/types';
 
 // Props for playback mode
 const props = defineProps<{
@@ -15,12 +29,19 @@ const props = defineProps<{
 
 const route = useRoute();
 const router = useRouter();
+const agentsStore = useAgentsStore();
+
 // Determine if we're in playback mode
 const isPlaybackMode = computed(() => {
   return props.mode === 'playback' || route.name === 'discussion-playback';
 });
 
-// Get discussion ID from route
+// Determine if we're using global discussion mode (no :id in route)
+const isGlobalMode = computed(() => {
+  return route.name === 'discussion' && !route.params.id;
+});
+
+// Get discussion ID from route (for non-global mode)
 const discussionId = computed(() => route.params.id as string | undefined);
 
 // Get topic from query (for auto-start from home page)
@@ -32,24 +53,97 @@ const showContinueModal = ref(false);
 const continueFollowUp = ref('');
 const isContinuing = ref(false);
 
+// Attachment preview modal state
+const showAttachmentPreview = ref(false);
+
+// Agenda summary modal state
+const showSummaryModal = ref(false);
+const selectedAgendaItem = ref<AgendaItem | null>(null);
+
+// Current speech tracking
+const currentSpeaker = ref<Agent | null>(null);
+const currentSpeechContent = ref('');
+const isStreaming = ref(false);
+
+// History filter
+const historyFilter = ref('');
+
+// Discussion chain state
+const discussionChain = ref<DiscussionChainItem[]>([]);
+const chainCurrentIndex = ref(0);
+const isContinuation = ref(false);
+const continuedFrom = ref<string | null>(null);
+
+// Global discussion composable (for global mode)
 const {
-  discussion,
-  messages,
+  discussion: globalDiscussion,
+  messages: globalMessages,
+  viewerCount,
+  connectionStatus: globalConnectionStatus,
+  isDiscussionActive: globalIsActive,
+  createDiscussion: createGlobalDiscussion,
+  disconnect: disconnectGlobal,
+  agenda,
+  fetchAgenda,
+  addAgendaItem,
+  skipAgendaItem,
+  getAgendaItemSummary,
+} = useGlobalDiscussion();
+
+// Per-discussion composable (for non-global mode)
+const {
+  discussion: perDiscussion,
+  messages: perMessages,
   isLoading: liveLoading,
   error: liveError,
   isInProgress,
   isPaused,
-  connectionStatus,
+  connectionStatus: perConnectionStatus,
   setError,
-  createDiscussion,
+  createDiscussion: createPerDiscussion,
   startDiscussion,
   loadDiscussion: loadLiveDiscussion,
   reset: resetLiveDiscussion,
   setPaused,
 } = useDiscussion();
 
+// Unified accessors based on mode
+const discussion = computed(() => {
+  if (isGlobalMode.value) {
+    return globalDiscussion.value ? {
+      id: globalDiscussion.value.id,
+      topic: globalDiscussion.value.topic,
+      messages: [],
+      status: globalDiscussion.value.status,
+      attachment: undefined,
+    } : null;
+  }
+  return perDiscussion.value;
+});
+
+const messages = computed(() => {
+  if (isGlobalMode.value) {
+    return globalMessages.value;
+  }
+  return perMessages.value;
+});
+
+const connectionStatus = computed(() => {
+  if (isGlobalMode.value) {
+    return globalConnectionStatus.value;
+  }
+  return perConnectionStatus.value;
+});
+
+async function createDiscussion(topic: string) {
+  if (isGlobalMode.value) {
+    const result = await createGlobalDiscussion(topic);
+    return result.id;
+  }
+  return createPerDiscussion(topic);
+}
+
 const isRunning = computed(() => discussion.value?.status === 'running');
-const sidebarDiscussionId = computed(() => discussionId.value ?? discussion.value?.id ?? null);
 
 // Playback composable (only used in playback mode)
 const {
@@ -100,15 +194,89 @@ const topicDisplay = computed(() => {
   return discussion.value?.topic ?? '';
 });
 
+// Current attachment
+const currentAttachment = computed(() => discussion.value?.attachment);
+
+// Discussion status for TopicCard
+const discussionStatus = computed<'pending' | 'running' | 'completed'>(() => {
+  const status = discussion.value?.status;
+  if (status === 'running') return 'running';
+  if (status === 'completed') return 'completed';
+  return 'pending';
+});
+
+// Agent statuses map for RoundTable
+const agentStatuses = computed(() => {
+  const statusMap = new Map<string, AgentStatus>();
+  agentsStore.agents.forEach(agent => {
+    statusMap.set(agent.id, agent.status);
+  });
+  return statusMap;
+});
+
+// Current speaking agent
+const speakingAgentId = computed(() => {
+  return agentsStore.speakingAgent?.id;
+});
+
+// Update current speech when speaking agent changes
+watch(
+  () => agentsStore.speakingAgent,
+  (speaker) => {
+    if (speaker) {
+      currentSpeaker.value = speaker;
+      isStreaming.value = true;
+    } else {
+      isStreaming.value = false;
+    }
+  }
+);
+
+// Update current speech content from latest message by speaking agent
+watch(
+  displayMessages,
+  (msgs) => {
+    if (currentSpeaker.value && msgs.length > 0) {
+      // Find the latest message from the current speaker
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].agentId === currentSpeaker.value.id) {
+          currentSpeechContent.value = msgs[i].content;
+          break;
+        }
+      }
+    }
+  },
+  { deep: true }
+);
+
 // Load playback data when entering playback mode
 watch(
   [discussionId, isPlaybackMode],
-  ([newId, isPlayback]) => {
+  async ([newId, isPlayback]) => {
     if (isPlayback && newId) {
       loadPlaybackDiscussion(newId);
+      // Fetch discussion chain for playback mode
+      await fetchDiscussionChain(newId);
     }
     if (!isPlayback && newId) {
       loadLiveDiscussion(newId);
+      // Fetch discussion chain for live mode with ID
+      await fetchDiscussionChain(newId);
+    }
+  },
+  { immediate: true }
+);
+
+// Update continuation info when discussion changes
+watch(
+  discussion,
+  (disc) => {
+    if (disc) {
+      isContinuation.value = Boolean((disc as any).is_continuation);
+      continuedFrom.value = (disc as any).continued_from || null;
+    } else {
+      isContinuation.value = false;
+      continuedFrom.value = null;
     }
   },
   { immediate: true }
@@ -120,11 +288,21 @@ onMounted(async () => {
     hasAutoStarted.value = true;
     const newId = await createDiscussion(topicFromQuery.value);
     if (newId) {
-      setPaused(false);
-      await startDiscussion();
-      // Clear query parameter from URL
-      router.replace({ name: 'discussion', params: { id: newId } });
+      if (!isGlobalMode.value) {
+        setPaused(false);
+        await startDiscussion();
+        // Clear query parameter from URL
+        router.replace({ name: 'discussion-by-id', params: { id: newId } });
+      } else {
+        // In global mode, the discussion auto-starts, just clear the query
+        router.replace({ name: 'discussion' });
+      }
     }
+  }
+
+  // Fetch agenda if in global mode
+  if (isGlobalMode.value) {
+    await fetchAgenda();
   }
 });
 
@@ -133,8 +311,11 @@ async function handleSubmit(topic: string) {
   if (isPlaybackMode.value) return;
   const newId = await createDiscussion(topic);
   if (newId) {
-    setPaused(false);
-    await startDiscussion();
+    if (!isGlobalMode.value) {
+      setPaused(false);
+      await startDiscussion();
+    }
+    // In global mode, discussion auto-starts via API
   }
 }
 
@@ -144,6 +325,15 @@ function handlePaused() {
 
 function handleResumed() {
   setPaused(false);
+}
+
+function handleUserMessageSent(content: string) {
+  console.log('User message sent:', content);
+  // The message will be included in the next agent's context after resume
+}
+
+function handleUserInputError(message: string) {
+  setError(message);
 }
 
 function handleInterventionError(message: string) {
@@ -183,6 +373,27 @@ function goBackToHome() {
   router.push({ name: 'home' });
 }
 
+// Fetch discussion chain
+async function fetchDiscussionChain(discId: string) {
+  try {
+    const response = await api.get(`/api/discussions/${discId}/chain`);
+    discussionChain.value = response.data.chain;
+    chainCurrentIndex.value = response.data.current_index;
+  } catch (error) {
+    console.error('Failed to fetch discussion chain:', error);
+    discussionChain.value = [];
+    chainCurrentIndex.value = 0;
+  }
+}
+
+// Handle chain item click
+function handleChainSelect(targetId: string) {
+  router.push({
+    name: 'discussion-playback',
+    params: { id: targetId },
+  });
+}
+
 // Handle continue discussion
 function handleContinueClick() {
   showContinueModal.value = true;
@@ -220,6 +431,59 @@ function cancelContinue() {
   continueFollowUp.value = '';
 }
 
+// Attachment preview handlers
+function handlePreviewAttachment() {
+  showAttachmentPreview.value = true;
+}
+
+function handleClosePreview() {
+  showAttachmentPreview.value = false;
+}
+
+// Agenda handlers
+async function handleViewSummary(item: AgendaItem) {
+  selectedAgendaItem.value = item;
+  showSummaryModal.value = true;
+
+  // Fetch latest summary if needed
+  if (!item.summary) {
+    const result = await getAgendaItemSummary(item.id);
+    if (result && selectedAgendaItem.value) {
+      selectedAgendaItem.value = {
+        ...selectedAgendaItem.value,
+        summary: result.summary,
+        summary_details: result.details,
+      };
+    }
+  }
+}
+
+function handleCloseSummary() {
+  showSummaryModal.value = false;
+  selectedAgendaItem.value = null;
+}
+
+async function handleAddAgendaItem() {
+  const title = prompt('请输入新议题标题：');
+  if (title && title.trim()) {
+    await addAgendaItem(title.trim());
+  }
+}
+
+async function handleSkipAgendaItem(itemId: string) {
+  await skipAgendaItem(itemId);
+}
+
+// RoundTable agent click handler
+function handleAgentClick(agentId: string) {
+  historyFilter.value = agentId;
+}
+
+// History filter change
+function handleHistoryFilterChange(filter: string) {
+  historyFilter.value = filter;
+}
+
 // Cleanup on unmount
 onUnmounted(() => {
   if (!isPlaybackMode.value) {
@@ -229,7 +493,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-screen flex flex-col bg-gray-100">
+  <div class="discussion-layout">
     <!-- Header -->
     <Header :connection-status="isPlaybackMode ? 'disconnected' : connectionStatus">
       <!-- Navigation and mode indicator -->
@@ -261,92 +525,227 @@ onUnmounted(() => {
           <span v-if="isPlaybackMode" class="px-2 py-1 bg-purple-100 text-purple-700 text-sm rounded">
             回放模式
           </span>
+          <!-- Global mode viewer count -->
+          <span v-if="isGlobalMode && !isPlaybackMode" class="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 text-sm rounded">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+            <span>{{ viewerCount }} 人观看</span>
+          </span>
         </div>
       </template>
     </Header>
 
-    <!-- Topic display -->
-    <div
-      v-if="topicDisplay"
-      class="bg-white border-b border-gray-200 px-4 py-3"
-    >
-      <div class="flex items-center gap-2">
-        <span class="text-gray-500 text-sm">讨论主题:</span>
-        <h2 class="text-lg font-medium text-gray-900">{{ topicDisplay }}</h2>
-        <span v-if="isPlaybackMode" class="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">
-          回放
-        </span>
+    <!-- Topic Card Header (live mode with discussion) -->
+    <div v-if="topicDisplay && !isPlaybackMode" class="discussion-header">
+      <div class="header-content">
+        <TopicCard
+          :topic="topicDisplay"
+          :status="discussionStatus"
+          :attachment="currentAttachment"
+          @preview-attachment="handlePreviewAttachment"
+        />
+        <!-- Continuation indicator -->
+        <div v-if="isContinuation" class="continuation-indicator">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+          </svg>
+          <span>续前讨论</span>
+          <button
+            v-if="continuedFrom"
+            class="view-original-btn"
+            @click="router.push({ name: 'discussion-playback', params: { id: continuedFrom } })"
+          >
+            查看原讨论
+          </button>
+        </div>
+        <!-- Discussion chain -->
+        <DiscussionChain
+          v-if="discussionChain.length > 1"
+          :chain="discussionChain"
+          :current-index="chainCurrentIndex"
+          @select="handleChainSelect"
+        />
+      </div>
+      <div class="header-actions">
+        <button
+          v-if="currentAttachment"
+          class="action-btn"
+          @click="handlePreviewAttachment"
+          title="查看附件"
+        >
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+          </svg>
+        </button>
+        <button
+          v-if="isRunning && !isGlobalMode"
+          class="action-btn"
+          :class="{ 'is-paused': isPaused }"
+          @click="isPaused ? handleResumed() : handlePaused()"
+          :title="isPaused ? '继续讨论' : '暂停讨论'"
+        >
+          <svg v-if="isPaused" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <svg v-else class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </button>
       </div>
     </div>
 
-    <!-- Main content -->
-    <div class="flex-1 flex overflow-hidden">
-      <!-- Chat area -->
-      <main class="flex-1 flex flex-col relative">
-        <ChatContainer
-          :messages="displayMessages"
-          :is-loading="isLoading"
-          class="flex-1"
+    <!-- Topic display (playback mode) -->
+    <div
+      v-else-if="topicDisplay && isPlaybackMode"
+      class="discussion-header playback"
+    >
+      <div class="playback-header-content">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-gray-500 text-sm">讨论主题:</span>
+          <h2 class="text-lg font-medium text-gray-900">{{ topicDisplay }}</h2>
+          <span class="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">
+            回放
+          </span>
+          <!-- Continuation badge in playback -->
+          <span
+            v-if="isContinuation"
+            class="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded flex items-center gap-1"
+          >
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+            </svg>
+            续前讨论
+          </span>
+        </div>
+        <!-- Discussion chain in playback mode -->
+        <DiscussionChain
+          v-if="discussionChain.length > 1"
+          :chain="discussionChain"
+          :current-index="chainCurrentIndex"
+          class="mt-2"
+          @select="handleChainSelect"
+        />
+      </div>
+    </div>
+
+    <!-- Main content area - Round Table Layout -->
+    <main v-if="isRunning && !isPlaybackMode" class="discussion-main">
+      <!-- Left Panel -->
+      <aside class="left-panel">
+        <!-- Agenda Panel -->
+        <AgendaPanel
+          :agenda="agenda"
+          @view-summary="handleViewSummary"
+          @skip-item="handleSkipAgendaItem"
+          @add-item="handleAddAgendaItem"
         />
 
-        <!-- Playback controls (playback mode) -->
-        <PlaybackControl
-          v-if="isPlaybackMode && totalMessages > 0"
-          :current-index="currentIndex"
-          :total-messages="totalMessages"
-          :is-playing="isPlaying"
-          :speed="speed"
-          @play="handlePlay"
-          @pause="handlePause"
-          @seek="handleSeek"
-          @speed-change="handleSpeedChange"
-          @continue="handleContinueClick"
-        />
-
-        <!-- Error display in center -->
-        <div
-          v-if="errorMessage"
-          class="absolute inset-0 flex items-center justify-center pointer-events-none z-10"
-        >
-          <div class="bg-red-50 border border-red-300 rounded-lg shadow-lg p-6 max-w-lg mx-4 pointer-events-auto">
-            <div class="flex items-start gap-3">
-              <svg class="w-6 h-6 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div class="flex-1">
-                <h3 class="text-red-800 font-medium mb-1">讨论出错</h3>
-                <p class="text-red-700 text-sm">{{ errorMessage }}</p>
-              </div>
-              <button
-                @click="clearError"
-                class="text-red-400 hover:text-red-600"
-              >
-                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          </div>
+        <!-- Round Table -->
+        <div class="round-table-container">
+          <RoundTable
+            :agents="agentsStore.agents.slice(0, 4)"
+            :statuses="agentStatuses"
+            :current-speaker="speakingAgentId"
+            @select-agent="handleAgentClick"
+          />
         </div>
 
-        <!-- Input box (live mode only) -->
-        <InputBox
-          v-if="!isPlaybackMode"
-          :disabled="isInProgress"
-          :discussion-id="discussion?.id ?? undefined"
-          :is-running="isRunning"
-          :is-paused="isPaused"
-          placeholder="输入讨论主题..."
-          @submit="handleSubmit"
-          @paused="handlePaused"
-          @resumed="handleResumed"
-          @error="handleInterventionError"
+        <!-- History Panel -->
+        <HistoryPanel
+          :messages="displayMessages"
+          :filter="historyFilter"
+          @filter-change="handleHistoryFilterChange"
         />
-      </main>
+      </aside>
 
-      <!-- Sidebar -->
-      <Sidebar :is-open="true" :discussion-id="sidebarDiscussionId" />
+      <!-- Right Panel - Current Speech -->
+      <section class="right-panel">
+        <CurrentSpeech
+          :speaker="currentSpeaker"
+          :content="currentSpeechContent"
+          :is-streaming="isStreaming"
+        />
+      </section>
+    </main>
+
+    <!-- Fallback: Original Chat Layout (for non-running or playback mode) -->
+    <main v-else class="discussion-main-fallback">
+      <ChatContainer
+        :messages="displayMessages"
+        :is-loading="isLoading"
+        class="flex-1"
+      />
+
+      <!-- Playback controls (playback mode) -->
+      <PlaybackControl
+        v-if="isPlaybackMode && totalMessages > 0"
+        :current-index="currentIndex"
+        :total-messages="totalMessages"
+        :is-playing="isPlaying"
+        :speed="speed"
+        @play="handlePlay"
+        @pause="handlePause"
+        @seek="handleSeek"
+        @speed-change="handleSpeedChange"
+        @continue="handleContinueClick"
+      />
+    </main>
+
+    <!-- Error display -->
+    <div
+      v-if="errorMessage"
+      class="error-overlay"
+    >
+      <div class="error-card">
+        <div class="flex items-start gap-3">
+          <svg class="w-6 h-6 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div class="flex-1">
+            <h3 class="text-red-800 font-medium mb-1">讨论出错</h3>
+            <p class="text-red-700 text-sm">{{ errorMessage }}</p>
+          </div>
+          <button
+            @click="clearError"
+            class="text-red-400 hover:text-red-600"
+          >
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
     </div>
+
+    <!-- Footer: Input Box -->
+    <footer class="discussion-footer">
+      <!-- Input box (live mode only, for starting new discussions) -->
+      <InputBox
+        v-if="!isPlaybackMode && !isRunning"
+        :disabled="isInProgress"
+        :discussion-id="discussion?.id ?? undefined"
+        :is-running="isRunning"
+        :is-paused="isPaused"
+        placeholder="输入讨论主题..."
+        @submit="handleSubmit"
+        @paused="handlePaused"
+        @resumed="handleResumed"
+        @error="handleInterventionError"
+      />
+
+      <!-- User input box (live mode, when discussion is running) -->
+      <UserInputBox
+        v-if="!isPlaybackMode && isRunning && discussion?.id"
+        :discussion-id="discussion.id"
+        :disabled="!isRunning"
+        placeholder="发表你的观点（会自动暂停、注入、恢复）..."
+        @send="handleUserMessageSent"
+        @error="handleUserInputError"
+      />
+    </footer>
 
     <!-- Continue Discussion Modal -->
     <Teleport to="body">
@@ -389,5 +788,216 @@ onUnmounted(() => {
         </div>
       </div>
     </Teleport>
+
+    <!-- Attachment Preview Modal -->
+    <AttachmentPreview
+      v-if="currentAttachment"
+      :visible="showAttachmentPreview"
+      :filename="currentAttachment.filename"
+      :content="currentAttachment.content"
+      @close="handleClosePreview"
+    />
+
+    <!-- Agenda Summary Modal -->
+    <AgendaSummaryModal
+      :visible="showSummaryModal"
+      :item="selectedAgendaItem"
+      @close="handleCloseSummary"
+    />
   </div>
 </template>
+
+<style scoped>
+.discussion-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-primary, #0f0f1a);
+}
+
+.discussion-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg-secondary, #1a1a2e);
+  border-bottom: 1px solid var(--border-color, #2d2d44);
+}
+
+.discussion-header.playback {
+  background: white;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.header-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.playback-header-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.continuation-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background-color: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 6px;
+  color: #10b981;
+  font-size: 12px;
+  font-weight: 500;
+  width: fit-content;
+}
+
+.view-original-btn {
+  padding: 2px 8px;
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: #059669;
+  font-size: 11px;
+  transition: background-color 0.2s;
+}
+
+.view-original-btn:hover {
+  background-color: rgba(255, 255, 255, 0.4);
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--bg-tertiary, #16162a);
+  border: 1px solid var(--border-color, #2d2d44);
+  color: var(--text-secondary, #888);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.action-btn:hover {
+  background: var(--bg-hover, #1f1f3a);
+  color: var(--text-primary, #e0e0e0);
+}
+
+.action-btn.is-paused {
+  background: var(--warning-color, #f59e0b);
+  border-color: var(--warning-color, #f59e0b);
+  color: white;
+}
+
+/* Main content - Round Table Layout */
+.discussion-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 55% 45%;
+  gap: 16px;
+  padding: 16px;
+  overflow: hidden;
+}
+
+.left-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.round-table-container {
+  flex-shrink: 0;
+  padding: 16px;
+  background: var(--bg-secondary, #1a1a2e);
+  border-radius: 8px;
+  border: 1px solid var(--border-color, #2d2d44);
+}
+
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Fallback layout for non-running or playback mode */
+.discussion-main-fallback {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Error overlay */
+.error-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.error-card {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  padding: 16px 24px;
+  max-width: 480px;
+  margin: 16px;
+  pointer-events: auto;
+}
+
+/* Footer */
+.discussion-footer {
+  padding: 12px 16px;
+  background: var(--bg-secondary, #1a1a2e);
+  border-top: 1px solid var(--border-color, #2d2d44);
+}
+
+/* Responsive layout */
+@media (max-width: 1024px) {
+  .discussion-main {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr auto;
+  }
+
+  .right-panel {
+    order: 1;
+    max-height: 300px;
+  }
+
+  .left-panel {
+    order: 2;
+  }
+}
+
+@media (max-width: 768px) {
+  .discussion-main {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .round-table-container {
+    display: none;
+  }
+
+  .right-panel {
+    max-height: 200px;
+  }
+}
+</style>
