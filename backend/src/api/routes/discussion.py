@@ -16,6 +16,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from src.agents import Summarizer
+from src.api.websocket.events import AgentStatus, create_error_event, create_status_event
+from src.api.websocket.manager import broadcast_sync
 from src.crew.discussion_crew import DiscussionCrew
 from src.memory.base import Discussion, Message
 from src.memory.discussion_memory import DiscussionMemory
@@ -49,7 +51,8 @@ class CreateDiscussionRequest(BaseModel):
     """Request body for creating a discussion."""
 
     topic: str = Field(..., min_length=1, description="The discussion topic")
-    rounds: int = Field(default=3, ge=1, le=10, description="Number of discussion rounds")
+    rounds: int = Field(default=10, ge=1, le=50, description="Number of discussion rounds")
+    auto_pause_interval: int = Field(default=5, ge=0, le=50, description="Auto-pause every N rounds (0=disabled)")
     attachment: AttachmentInfo | None = Field(default=None, description="Optional markdown attachment")
 
 
@@ -69,6 +72,7 @@ class DiscussionState(BaseModel):
     id: str
     topic: str
     rounds: int
+    auto_pause_interval: int = 5
     status: DiscussionStatus
     created_at: str
     started_at: str | None = None
@@ -113,7 +117,7 @@ class SummarizeRequest(BaseModel):
 class ContinueDiscussionRequest(BaseModel):
     """Request body for continuing a discussion."""
 
-    follow_up: str = Field(..., min_length=1, description="Follow-up topic or question to continue discussing")
+    follow_up: str = Field(default="", description="Follow-up topic or question to continue discussing (optional)")
     rounds: int = Field(default=2, ge=1, le=10, description="Number of additional discussion rounds")
 
 
@@ -181,7 +185,8 @@ class CreateCurrentDiscussionRequest(BaseModel):
     """Request body for creating a new global discussion."""
 
     topic: str = Field(..., min_length=1, description="The discussion topic")
-    rounds: int = Field(default=3, ge=1, le=10, description="Number of discussion rounds")
+    rounds: int = Field(default=10, ge=1, le=50, description="Number of discussion rounds")
+    auto_pause_interval: int = Field(default=5, ge=0, le=50, description="Auto-pause every N rounds (0=disabled)")
     attachment: AttachmentInfo | None = Field(default=None, description="Optional markdown attachment")
 
 
@@ -229,6 +234,43 @@ def get_current_discussion() -> DiscussionState | None:
     """
     with _current_discussion_lock:
         return _current_discussion
+
+
+def cleanup_stale_discussions() -> int:
+    """Clean up stale 'running' discussions on server startup.
+
+    Any discussion stuck in 'running' state is marked as 'failed'
+    since the background task cannot survive a server restart.
+
+    Returns:
+        Number of discussions cleaned up.
+    """
+    cleaned = 0
+    if not _STATE_DIR.exists():
+        return cleaned
+
+    for path in _STATE_DIR.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("status") == DiscussionStatus.RUNNING:
+                data["status"] = DiscussionStatus.FAILED
+                data["error"] = "服务器重启，讨论中断"
+                data["completed_at"] = datetime.utcnow().isoformat()
+                path.write_text(
+                    json.dumps(data, ensure_ascii=True), encoding="utf-8"
+                )
+                logger.info("Cleaned up stale discussion: %s", data.get("id"))
+                cleaned += 1
+        except Exception as e:
+            logger.debug("Failed to clean up %s: %s", path, e)
+
+    # Also clear the in-memory current discussion
+    global _current_discussion
+    with _current_discussion_lock:
+        if _current_discussion and _current_discussion.status == DiscussionStatus.RUNNING:
+            _current_discussion = None
+
+    return cleaned
 
 
 def set_current_discussion(discussion: DiscussionState | None) -> None:
@@ -339,13 +381,14 @@ def _get_llm_from_config() -> Any | None:
 
 def _run_discussion_sync(discussion_id: str) -> None:
     """Run a discussion synchronously (for background task)."""
+    logger.info("Starting discussion %s in background thread", discussion_id)
     discussion = get_discussion_state(discussion_id)
     if discussion is None:
+        logger.error("Discussion %s not found, aborting", discussion_id)
         return
 
     try:
         if discussion.started_at is None:
-            # Defensive: allow direct invocation without /start setting status.
             discussion.status = DiscussionStatus.RUNNING
             discussion.started_at = datetime.utcnow().isoformat()
             save_discussion_state(discussion)
@@ -355,12 +398,15 @@ def _run_discussion_sync(discussion_id: str) -> None:
         if llm is None:
             raise RuntimeError("LLM not configured. Please configure OpenAI API key in admin panel.")
 
+        logger.info("Discussion %s: LLM configured, creating DiscussionCrew", discussion_id)
         crew = DiscussionCrew(discussion_id=discussion_id, llm=llm)
+        logger.info("Discussion %s: Starting crew.run()", discussion_id)
         result = crew.run(
             topic=discussion.topic,
             rounds=discussion.rounds,
             verbose=False,
             attachment=discussion.attachment.content if discussion.attachment else None,
+            auto_pause_interval=discussion.auto_pause_interval,
         )
 
         discussion.result = result
@@ -374,10 +420,29 @@ def _run_discussion_sync(discussion_id: str) -> None:
             set_current_discussion(discussion)
 
     except Exception as e:
+        logger.error("Discussion %s failed: %s", discussion_id, e)
         discussion.status = DiscussionStatus.FAILED
         discussion.error = str(e)
         discussion.completed_at = datetime.utcnow().isoformat()
         save_discussion_state(discussion)
+
+        # Broadcast failure to WebSocket clients
+        try:
+            error_event = create_error_event(
+                discussion_id=discussion_id,
+                content=str(e),
+            )
+            broadcast_sync(error_event.to_dict(), discussion_id=discussion_id)
+            status_event = create_status_event(
+                discussion_id=discussion_id,
+                agent_id="discussion",
+                agent_role="discussion",
+                status=AgentStatus.IDLE,
+                content="discussion_failed",
+            )
+            broadcast_sync(status_event.to_dict(), discussion_id=discussion_id)
+        except Exception:
+            logger.debug("Failed to broadcast discussion failure event")
 
         # Update global discussion state if this is the current discussion
         current = get_current_discussion()
@@ -487,15 +552,37 @@ async def create_current_discussion(
     with _current_discussion_lock:
         current = get_current_discussion()
         if current and current.status == DiscussionStatus.RUNNING:
-            # Return the existing running discussion
-            return CreateCurrentDiscussionResponse(
-                id=current.id,
-                topic=current.topic,
-                rounds=current.rounds,
-                status=current.status,
-                created_at=current.created_at,
-                message="讨论已在进行中，已自动加入",
-            )
+            # Check if the discussion is stale (running for too long)
+            is_stale = False
+            if current.started_at:
+                try:
+                    started = datetime.fromisoformat(current.started_at)
+                    elapsed = (datetime.utcnow() - started).total_seconds()
+                    if elapsed > 1800:  # 30 minutes
+                        is_stale = True
+                except (ValueError, TypeError):
+                    is_stale = True
+
+            if is_stale:
+                logger.warning(
+                    "Marking stale discussion %s as failed (started_at=%s)",
+                    current.id, current.started_at,
+                )
+                current.status = DiscussionStatus.FAILED
+                current.error = "讨论超时，已自动标记为失败"
+                current.completed_at = datetime.utcnow().isoformat()
+                save_discussion_state(current)
+                set_current_discussion(None)
+            else:
+                # Return the existing running discussion
+                return CreateCurrentDiscussionResponse(
+                    id=current.id,
+                    topic=current.topic,
+                    rounds=current.rounds,
+                    status=current.status,
+                    created_at=current.created_at,
+                    message="讨论已在进行中，已自动加入",
+                )
 
         # Create new discussion
         discussion_id = str(uuid.uuid4())
@@ -505,6 +592,7 @@ async def create_current_discussion(
             id=discussion_id,
             topic=request.topic,
             rounds=request.rounds,
+            auto_pause_interval=request.auto_pause_interval,
             status=DiscussionStatus.RUNNING,
             created_at=now,
             started_at=now,
@@ -591,6 +679,7 @@ async def create_discussion(request: CreateDiscussionRequest) -> CreateDiscussio
         id=discussion_id,
         topic=request.topic,
         rounds=request.rounds,
+        auto_pause_interval=request.auto_pause_interval,
         status=DiscussionStatus.PENDING,
         created_at=now,
         attachment=request.attachment,
@@ -829,10 +918,15 @@ def _build_continuation_context(
         "",
         "## 继续讨论",
         "",
-        "用户希望在以上讨论基础上，继续探讨以下问题：",
-        "",
-        f"**{follow_up}**",
     ])
+    if follow_up:
+        context_parts.extend([
+            "用户希望在以上讨论基础上，继续探讨以下问题：",
+            "",
+            f"**{follow_up}**",
+        ])
+    else:
+        context_parts.append("用户希望在以上讨论基础上，继续深入探讨原话题。")
 
     return "\n".join(context_parts)
 
@@ -883,7 +977,10 @@ async def continue_discussion(
     # Create new discussion with context
     new_discussion_id = str(uuid.uuid4())
     now = datetime.utcnow().isoformat()
-    combined_topic = f"[继续] {original.topic} - {request.follow_up[:50]}"
+    if request.follow_up:
+        combined_topic = f"[继续] {original.topic} - {request.follow_up[:50]}"
+    else:
+        combined_topic = f"[继续] {original.topic}"
 
     # Create attachment with context
     attachment = AttachmentInfo(

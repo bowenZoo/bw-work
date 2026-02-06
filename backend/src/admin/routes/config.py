@@ -38,6 +38,8 @@ ALLOWED_TEST_DOMAINS = [
     "dashscope-intl.aliyuncs.com",
     # MiniMax
     "api.minimaxi.com",
+    # 问问 AI
+    "api.wenwen-ai.com",
     # Langfuse
     "cloud.langfuse.com",
     "us.cloud.langfuse.com",

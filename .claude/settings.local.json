@@ -69,7 +69,13 @@
       "Bash(for db in /Users/bowen/workspace/claude/bw-work/backend/data/admin.db /Users/bowen/workspace/claude/bw-work/data/admin.db /Users/bowen/workspace/claude/bw-work/data/admin/admin.db)",
       "Bash(echo:*)",
       "Bash(npx vue-tsc:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(kill:*)",
+      "Bash(/opt/homebrew/bin/python3 -m uvicorn:*)",
+      "Bash(/opt/homebrew/bin/python3:*)",
+      "Bash(cat:*)",
+      "Bash(CREWAI_TELEMETRY_OPT_OUT=true .venv/bin/python:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

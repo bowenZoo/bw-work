@@ -81,8 +81,11 @@ const {
   viewerCount,
   connectionStatus: globalConnectionStatus,
   isDiscussionActive: globalIsActive,
+  isPaused: globalIsPaused,
+  autoPauseMessage: globalAutoPauseMessage,
   createDiscussion: createGlobalDiscussion,
   disconnect: disconnectGlobal,
+  resumeDiscussion: resumeGlobalDiscussion,
   agenda,
   fetchAgenda,
   addAgendaItem,
@@ -97,7 +100,7 @@ const {
   isLoading: liveLoading,
   error: liveError,
   isInProgress,
-  isPaused,
+  isPaused: perIsPaused,
   connectionStatus: perConnectionStatus,
   setError,
   createDiscussion: createPerDiscussion,
@@ -137,13 +140,26 @@ const connectionStatus = computed(() => {
 
 async function createDiscussion(topic: string) {
   if (isGlobalMode.value) {
-    const result = await createGlobalDiscussion(topic);
+    const autoPauseStr = sessionStorage.getItem('discussion_auto_pause_interval');
+    const autoPauseInterval = autoPauseStr ? parseInt(autoPauseStr, 10) : 5;
+    sessionStorage.removeItem('discussion_auto_pause_interval');
+    const result = await createGlobalDiscussion(topic, 10, undefined, autoPauseInterval);
     return result.id;
   }
   return createPerDiscussion(topic);
 }
 
 const isRunning = computed(() => discussion.value?.status === 'running');
+
+// Unified pause state (both global and per-discussion)
+const isPaused = computed(() => {
+  if (isGlobalMode.value) return globalIsPaused.value;
+  return perIsPaused.value;
+});
+const autoPauseMessage = computed(() => {
+  if (isGlobalMode.value) return globalAutoPauseMessage.value;
+  return '';
+});
 
 // Playback composable (only used in playback mode)
 const {
@@ -327,6 +343,15 @@ function handleResumed() {
   setPaused(false);
 }
 
+async function handleGlobalResume() {
+  try {
+    await resumeGlobalDiscussion();
+  } catch (e) {
+    console.error('Failed to resume discussion:', e);
+    setError(e instanceof Error ? e.message : '恢复讨论失败');
+  }
+}
+
 function handleUserMessageSent(content: string) {
   console.log('User message sent:', content);
   // The message will be included in the next agent's context after resume
@@ -363,11 +388,6 @@ function handleSpeedChange(newSpeed: number) {
   setSpeed(newSpeed);
 }
 
-// Navigate back to history
-function goBackToHistory() {
-  router.push({ name: 'history' });
-}
-
 // Navigate back to home
 function goBackToHome() {
   router.push({ name: 'home' });
@@ -401,12 +421,12 @@ function handleContinueClick() {
 }
 
 async function submitContinue() {
-  if (!continueFollowUp.value.trim() || !discussionId.value) return;
+  if (!discussionId.value) return;
 
   isContinuing.value = true;
   try {
     const response = await api.post(`/api/discussions/${discussionId.value}/continue`, {
-      follow_up: continueFollowUp.value.trim(),
+      follow_up: continueFollowUp.value.trim() || '',
       rounds: 2,
     });
 
@@ -510,16 +530,16 @@ onUnmounted(() => {
             </svg>
             <span>返回主页</span>
           </button>
-          <!-- Back to history button (playback mode) -->
+          <!-- Back to home button (playback mode) -->
           <button
             v-if="isPlaybackMode"
             class="flex items-center gap-1 text-gray-600 hover:text-gray-800"
-            @click="goBackToHistory"
+            @click="goBackToHome"
           >
             <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
             </svg>
-            <span>返回历史</span>
+            <span>返回主页</span>
           </button>
           <!-- Playback mode badge -->
           <span v-if="isPlaybackMode" class="px-2 py-1 bg-purple-100 text-purple-700 text-sm rounded">
@@ -595,6 +615,26 @@ onUnmounted(() => {
           </svg>
         </button>
       </div>
+    </div>
+
+    <!-- Auto-pause banner (global mode) -->
+    <div v-if="isPaused && isRunning" class="auto-pause-banner">
+      <div class="auto-pause-content">
+        <svg class="w-5 h-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span class="auto-pause-text">{{ autoPauseMessage || '讨论已暂停' }}</span>
+      </div>
+      <button
+        v-if="isGlobalMode"
+        class="auto-pause-resume-btn"
+        @click="handleGlobalResume"
+      >
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+        </svg>
+        继续讨论
+      </button>
     </div>
 
     <!-- Topic display (playback mode) -->
@@ -775,7 +815,7 @@ onUnmounted(() => {
             </button>
             <button
               class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 flex items-center gap-2"
-              :disabled="isContinuing || !continueFollowUp.trim()"
+              :disabled="isContinuing"
               @click="submitContinue"
             >
               <svg v-if="isContinuing" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -822,6 +862,44 @@ onUnmounted(() => {
   padding: 12px 16px;
   background: var(--bg-secondary, #1a1a2e);
   border-bottom: 1px solid var(--border-color, #2d2d44);
+}
+
+.auto-pause-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: #fef3c7;
+  border-bottom: 1px solid #fcd34d;
+}
+
+.auto-pause-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auto-pause-text {
+  font-size: 14px;
+  color: #92400e;
+  font-weight: 500;
+}
+
+.auto-pause-resume-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  background: #3b82f6;
+  color: white;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.auto-pause-resume-btn:hover {
+  background: #2563eb;
 }
 
 .discussion-header.playback {

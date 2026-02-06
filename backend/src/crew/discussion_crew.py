@@ -273,6 +273,10 @@ class DiscussionCrew:
         self._pause_check_interval = 0.5  # seconds
         self._pause_timeout = 30 * 60  # 30 minutes auto-finish timeout
 
+        # Auto-pause configuration
+        self._auto_pause_interval = 5  # pause every N rounds, 0=disabled
+        self._total_rounds = 0  # set during run()
+
         # Dynamic discussion control
         self._current_round = 0
         self._discussion_status = DiscussionStatus.CONTINUE
@@ -1160,6 +1164,24 @@ class DiscussionCrew:
         }
         self._broadcast_discussion_event(status_msg.get(status.value, ""))
 
+        # Auto-pause check: pause every N rounds (skip if this is the last round)
+        if (
+            self._auto_pause_interval > 0
+            and self._current_round > 0
+            and self._current_round % self._auto_pause_interval == 0
+            and self._current_round < self._total_rounds
+        ):
+            logger.info(
+                "Auto-pausing discussion %s at round %d (interval=%d)",
+                self._discussion_id,
+                self._current_round,
+                self._auto_pause_interval,
+            )
+            set_discussion_state(self._discussion_id, DiscussionState.PAUSED)
+            self._broadcast_discussion_event(
+                f"discussion_auto_paused:已完成第{self._current_round}轮讨论，等待继续"
+            )
+
     def _broadcast_error(self, content: str) -> None:
         """Broadcast an error event via WebSocket."""
         if self._discussion_id is None:
@@ -1288,6 +1310,7 @@ class DiscussionCrew:
         rounds: int = 2,
         verbose: bool = True,
         attachment: str | None = None,
+        auto_pause_interval: int = 5,
     ) -> str:
         """Run a design discussion on the given topic.
 
@@ -1296,12 +1319,17 @@ class DiscussionCrew:
             rounds: Number of discussion rounds (default: 3).
             verbose: Whether to print verbose output (default: True).
             attachment: Optional markdown attachment content.
+            auto_pause_interval: Auto-pause every N rounds (0=disabled).
 
         Returns:
             The final discussion result/summary.
         """
         # Initialize discussion record
         self._init_discussion(topic)
+
+        # Store auto-pause config
+        self._auto_pause_interval = auto_pause_interval
+        self._total_rounds = rounds
 
         # Initialize discussion state for pause/resume
         set_discussion_state(self._discussion_id, DiscussionState.RUNNING)

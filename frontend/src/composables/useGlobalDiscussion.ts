@@ -82,6 +82,7 @@ export type GlobalServerMessage = SyncMessage | ViewersMessage | AgendaMessage |
 export interface CreateCurrentDiscussionRequest {
   topic: string;
   rounds?: number;
+  auto_pause_interval?: number;
   attachment?: AttachmentInfo | null;
 }
 
@@ -113,6 +114,10 @@ export function useGlobalDiscussion() {
   const discussion = ref<GlobalDiscussion | null>(null);
   const messages = ref<Message[]>([]);
   const viewerCount = ref(0);
+
+  // Pause/resume state
+  const isPaused = ref(false);
+  const autoPauseMessage = ref('');
 
   // Agenda state
   const agenda = ref<Agenda | null>(null);
@@ -214,6 +219,33 @@ export function useGlobalDiscussion() {
         break;
 
       case 'status':
+        // Discussion-level events (completion, failure, pause, resume)
+        if (message.data?.agent_role === 'discussion' || message.data?.agent_id === 'discussion') {
+          const content = message.data.content || '';
+          if (content === 'discussion_completed') {
+            isPaused.value = false;
+            if (discussion.value) {
+              discussion.value = { ...discussion.value, status: 'completed' as any };
+            }
+          } else if (content === 'discussion_failed') {
+            isPaused.value = false;
+            if (discussion.value) {
+              discussion.value = { ...discussion.value, status: 'failed' as any };
+            }
+          } else if (content.startsWith('discussion_auto_paused')) {
+            isPaused.value = true;
+            // Extract message after colon: "discussion_auto_paused:已完成第5轮讨论，等待继续"
+            const colonIdx = content.indexOf(':');
+            autoPauseMessage.value = colonIdx >= 0 ? content.substring(colonIdx + 1) : '讨论已自动暂停';
+          } else if (content === 'discussion_paused') {
+            isPaused.value = true;
+            autoPauseMessage.value = '讨论已暂停';
+          } else if (content === 'discussion_resumed') {
+            isPaused.value = false;
+            autoPauseMessage.value = '';
+          }
+          break;
+        }
         // Agent status update - update agents store
         if (message.data?.agent_id && message.data?.status) {
           agentsStore.setAgentStatus(
@@ -458,12 +490,14 @@ export function useGlobalDiscussion() {
    */
   async function createDiscussion(
     topic: string,
-    rounds: number = 3,
-    attachment?: AttachmentInfo | null
+    rounds: number = 10,
+    attachment?: AttachmentInfo | null,
+    autoPauseInterval: number = 5,
   ): Promise<CreateCurrentDiscussionResponse> {
     const request: CreateCurrentDiscussionRequest = {
       topic,
       rounds,
+      auto_pause_interval: autoPauseInterval,
       attachment: attachment || null,
     };
 
@@ -473,6 +507,8 @@ export function useGlobalDiscussion() {
     );
 
     // Update local state
+    isPaused.value = false;
+    autoPauseMessage.value = '';
     discussion.value = {
       id: response.data.id,
       topic: response.data.topic,
@@ -487,6 +523,16 @@ export function useGlobalDiscussion() {
     }
 
     return response.data;
+  }
+
+  /**
+   * Resume a paused discussion.
+   */
+  async function resumeDiscussion(): Promise<void> {
+    if (!discussion.value?.id) return;
+    await api.post(`/api/discussions/${discussion.value.id}/resume`);
+    isPaused.value = false;
+    autoPauseMessage.value = '';
   }
 
   /**
@@ -540,6 +586,10 @@ export function useGlobalDiscussion() {
     isDiscussionActive,
     hasDiscussion,
 
+    // Pause/resume state
+    isPaused,
+    autoPauseMessage,
+
     // Agenda state
     agenda,
 
@@ -551,6 +601,7 @@ export function useGlobalDiscussion() {
     createDiscussion,
     joinDiscussion,
     getCurrentDiscussion,
+    resumeDiscussion,
 
     // Agenda methods
     fetchAgenda,

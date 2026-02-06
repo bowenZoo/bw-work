@@ -70,6 +70,8 @@ export interface AttachmentInfo {
 // API response types
 export interface CreateDiscussionRequest {
   topic: string;
+  rounds?: number;
+  auto_pause_interval?: number;
   attachment?: AttachmentInfo;
 }
 

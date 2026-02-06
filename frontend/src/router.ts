@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router';
 import HomeView from '@/views/HomeView.vue';
 import DiscussionView from '@/views/DiscussionView.vue';
-import HistoryView from '@/views/HistoryView.vue';
 import { useAdminStore } from '@/stores/admin';
 
 // Lazy load project view
@@ -48,8 +47,7 @@ const router = createRouter({
     },
     {
       path: '/history',
-      name: 'history',
-      component: HistoryView,
+      redirect: '/',
     },
     {
       path: '/project/:id',

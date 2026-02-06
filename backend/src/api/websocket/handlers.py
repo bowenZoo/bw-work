@@ -196,6 +196,14 @@ async def global_websocket_endpoint(websocket: WebSocket) -> None:
                 },
             })
 
+        # Send current viewer count directly to this client
+        await websocket.send_json({
+            "type": "viewers",
+            "data": {
+                "count": global_connection_manager.connection_count,
+            },
+        })
+
         # Message loop
         while True:
             data = await websocket.receive_text()

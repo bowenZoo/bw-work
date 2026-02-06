@@ -1,7 +1,14 @@
 """FastAPI application entry point."""
 
 import asyncio
+import logging
+import os
 from collections.abc import AsyncGenerator
+
+# Disable CrewAI telemetry and interactive prompts to prevent blocking in thread pools
+os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
+os.environ["OTEL_SDK_DISABLED"] = "true"
+os.environ["CREWAI_TESTING"] = "true"
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
@@ -9,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.api.routes import (
+    cleanup_stale_discussions,
     discussion_router,
     document_router,
     image_router,
@@ -24,6 +32,9 @@ from src.monitoring.langfuse_client import init_langfuse, shutdown_langfuse
 from src.admin.routes import admin_router
 from src.admin.database import AdminDatabase
 from src.admin.audit_log import AuditLogger
+
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -46,6 +57,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     audit_logger.cleanup_old_logs()
     # Cleanup expired refresh tokens
     admin_db.cleanup_expired_tokens()
+    # Cleanup stale "running" discussions from previous server session
+    cleaned = cleanup_stale_discussions()
+    if cleaned:
+        logger.info("Cleaned up %d stale discussion(s) on startup", cleaned)
     yield
     # Shutdown
     connection_manager.stop_sweep_task()
