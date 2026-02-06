@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import { Download, FileText, ChevronDown, ChevronRight, ExternalLink } from 'lucide-vue-next';
+import { Download, FileText, ChevronDown, ChevronRight } from 'lucide-vue-next';
 
 const props = defineProps<{
   projectId: string;
@@ -26,8 +26,8 @@ const headings = computed(() => {
   for (const line of lines) {
     const match = line.match(/^(#{1,6})\s+(.+)$/);
     if (match) {
-      const level = match[1].length;
-      const text = match[2].replace(/\*\*/g, ''); // Remove bold markers
+      const level = match[1]!.length;
+      const text = match[2]!.replace(/\*\*/g, ''); // Remove bold markers
       const id = text.toLowerCase().replace(/[^\w\u4e00-\u9fa5]+/g, '-');
       result.push({ level, text, id });
     }

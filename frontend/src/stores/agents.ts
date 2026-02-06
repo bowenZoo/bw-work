@@ -1,20 +1,33 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import type { Agent, AgentStatus } from '@/types';
+import leadAvatar from '@/assets/avatars/lead_planner.svg';
 import systemAvatar from '@/assets/avatars/system_designer.svg';
 import numberAvatar from '@/assets/avatars/number_designer.svg';
 import playerAvatar from '@/assets/avatars/player_advocate.svg';
+import visualAvatar from '@/assets/avatars/visual_concept.svg';
 
+const leadAvatarUrl =
+  (import.meta.env.VITE_AVATAR_LEAD_PLANNER as string | undefined) || leadAvatar;
 const systemAvatarUrl =
   (import.meta.env.VITE_AVATAR_SYSTEM_DESIGNER as string | undefined) || systemAvatar;
 const numberAvatarUrl =
   (import.meta.env.VITE_AVATAR_NUMBER_DESIGNER as string | undefined) || numberAvatar;
 const playerAvatarUrl =
   (import.meta.env.VITE_AVATAR_PLAYER_ADVOCATE as string | undefined) || playerAvatar;
+const visualAvatarUrl =
+  (import.meta.env.VITE_AVATAR_VISUAL_CONCEPT as string | undefined) || visualAvatar;
 
 export const useAgentsStore = defineStore('agents', () => {
   // State
   const agents = ref<Agent[]>([
+    {
+      id: 'lead_planner',
+      name: '主策划',
+      role: 'lead_planner',
+      status: 'idle',
+      avatarUrl: leadAvatarUrl,
+    },
     {
       id: 'system_designer',
       name: '系统策划',
@@ -35,6 +48,13 @@ export const useAgentsStore = defineStore('agents', () => {
       role: 'player_advocate',
       status: 'idle',
       avatarUrl: playerAvatarUrl,
+    },
+    {
+      id: 'visual_concept',
+      name: '视觉概念',
+      role: 'visual_concept',
+      status: 'idle',
+      avatarUrl: visualAvatarUrl,
     },
   ]);
 

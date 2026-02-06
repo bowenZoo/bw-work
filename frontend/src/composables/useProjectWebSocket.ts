@@ -130,7 +130,7 @@ export function useProjectWebSocket(options: UseProjectWebSocketOptions) {
       attemptReconnect();
     };
 
-    ws.onerror = (e) => {
+    ws.onerror = (_e) => {
       error.value = new Error('WebSocket connection error');
       options.onError?.(error.value);
     };

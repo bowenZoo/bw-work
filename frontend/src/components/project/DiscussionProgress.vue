@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed } from 'vue';
 import { Play, Pause, SkipForward, CheckCircle2, Clock, Loader2 } from 'lucide-vue-next';
 
 interface ModuleProgress {

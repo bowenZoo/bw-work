@@ -77,7 +77,7 @@ async function loadProject() {
   }
 }
 
-function handleGddUploaded(id: string, filename: string) {
+function handleGddUploaded(id: string, _filename: string) {
   gddId.value = id;
   gddStatus.value = 'parsing';
   pollGddStatus();

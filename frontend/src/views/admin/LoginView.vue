@@ -122,7 +122,7 @@ const isFormValid = computed(() => {
 
 onMounted(() => {
   // If already authenticated, redirect to dashboard
-  if (isAuthenticated.value) {
+  if (isAuthenticated) {
     router.push('/admin')
   }
   // Clear any previous errors

@@ -67,7 +67,9 @@
       "Bash(do)",
       "Bash(# 检查保存的讨论文件 ls -la /Users/bowen/workspace/claude/bw-work/backend/data/projects/default/discussions/)",
       "Bash(for db in /Users/bowen/workspace/claude/bw-work/backend/data/admin.db /Users/bowen/workspace/claude/bw-work/data/admin.db /Users/bowen/workspace/claude/bw-work/data/admin/admin.db)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(npx vue-tsc:*)",
+      "Bash(git reset:*)"
     ]
   }
 }

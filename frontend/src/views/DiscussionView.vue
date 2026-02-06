@@ -6,6 +6,7 @@ import { Header, Sidebar } from '@/components/layout';
 import { PlaybackControl } from '@/components/history';
 import { usePlayback } from '@/composables/usePlayback';
 import { useDiscussion } from '@/composables/useDiscussion';
+import api from '@/api';
 
 // Props for playback mode
 const props = defineProps<{
@@ -25,6 +26,11 @@ const discussionId = computed(() => route.params.id as string | undefined);
 // Get topic from query (for auto-start from home page)
 const topicFromQuery = computed(() => route.query.topic as string | undefined);
 const hasAutoStarted = ref(false);
+
+// Continue discussion modal state
+const showContinueModal = ref(false);
+const continueFollowUp = ref('');
+const isContinuing = ref(false);
 
 const {
   discussion,
@@ -177,6 +183,43 @@ function goBackToHome() {
   router.push({ name: 'home' });
 }
 
+// Handle continue discussion
+function handleContinueClick() {
+  showContinueModal.value = true;
+  continueFollowUp.value = '';
+}
+
+async function submitContinue() {
+  if (!continueFollowUp.value.trim() || !discussionId.value) return;
+
+  isContinuing.value = true;
+  try {
+    const response = await api.post(`/api/discussions/${discussionId.value}/continue`, {
+      follow_up: continueFollowUp.value.trim(),
+      rounds: 2,
+    });
+
+    if (response.data.new_discussion_id) {
+      showContinueModal.value = false;
+      // Navigate to the new discussion
+      router.push({
+        name: 'discussion',
+        params: { id: response.data.new_discussion_id },
+      });
+    }
+  } catch (error: any) {
+    console.error('Failed to continue discussion:', error);
+    setError(error.response?.data?.detail || '继续讨论失败');
+  } finally {
+    isContinuing.value = false;
+  }
+}
+
+function cancelContinue() {
+  showContinueModal.value = false;
+  continueFollowUp.value = '';
+}
+
 // Cleanup on unmount
 onUnmounted(() => {
   if (!isPlaybackMode.value) {
@@ -257,6 +300,7 @@ onUnmounted(() => {
           @pause="handlePause"
           @seek="handleSeek"
           @speed-change="handleSpeedChange"
+          @continue="handleContinueClick"
         />
 
         <!-- Error display in center -->
@@ -304,5 +348,46 @@ onUnmounted(() => {
       <Sidebar :is-open="true" :discussion-id="sidebarDiscussionId" />
     </div>
 
+    <!-- Continue Discussion Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showContinueModal"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+        @click.self="cancelContinue"
+      >
+        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-lg mx-4">
+          <h3 class="text-lg font-semibold text-gray-900 mb-4">继续讨论</h3>
+          <p class="text-gray-600 text-sm mb-4">
+            基于当前讨论的上下文，输入您想要继续探讨的问题或方向：
+          </p>
+          <textarea
+            v-model="continueFollowUp"
+            class="w-full h-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+            placeholder="例如：关于战斗系统的数值平衡，需要进一步讨论伤害计算公式..."
+            :disabled="isContinuing"
+          />
+          <div class="flex justify-end gap-3 mt-4">
+            <button
+              class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+              :disabled="isContinuing"
+              @click="cancelContinue"
+            >
+              取消
+            </button>
+            <button
+              class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 flex items-center gap-2"
+              :disabled="isContinuing || !continueFollowUp.trim()"
+              @click="submitContinue"
+            >
+              <svg v-if="isContinuing" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <span>{{ isContinuing ? '正在创建...' : '开始讨论' }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

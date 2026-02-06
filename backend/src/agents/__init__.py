@@ -2,6 +2,7 @@
 
 from src.agents.base import BaseAgent
 from src.agents.document_generator import DocumentGenerator, PlanningDocument
+from src.agents.lead_planner import LeadPlanner
 from src.agents.number_designer import NumberDesigner
 from src.agents.player_advocate import PlayerAdvocate
 from src.agents.summarizer import DiscussionSummary, Summarizer
@@ -10,6 +11,7 @@ from src.agents.visual_concept import VisualConceptAgent, create_visual_concept_
 
 __all__ = [
     "BaseAgent",
+    "LeadPlanner",
     "SystemDesigner",
     "NumberDesigner",
     "PlayerAdvocate",

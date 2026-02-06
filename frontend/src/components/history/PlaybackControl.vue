@@ -15,7 +15,13 @@ const emit = defineEmits<{
   pause: [];
   seek: [index: number];
   speedChange: [speed: number];
+  continue: [];
 }>();
+
+// Handle continue discussion
+function handleContinue() {
+  emit('continue');
+}
 
 // Progress percentage
 const progress = computed(() => {
@@ -180,24 +186,39 @@ function goToEnd() {
         {{ positionText }}
       </div>
 
-      <!-- Right: Speed selector -->
-      <div class="flex items-center gap-2">
-        <span class="text-sm text-gray-500">速度：</span>
-        <div class="flex gap-1">
-          <button
-            v-for="s in speedOptions"
-            :key="s"
-            :class="[
-              'px-2 py-1 text-sm rounded',
-              speed === s
-                ? 'bg-blue-500 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
-            ]"
-            @click="handleSpeedChange(s)"
-          >
-            {{ s }}x
-          </button>
+      <!-- Right: Speed selector and Continue button -->
+      <div class="flex items-center gap-4">
+        <!-- Speed selector -->
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-gray-500">速度：</span>
+          <div class="flex gap-1">
+            <button
+              v-for="s in speedOptions"
+              :key="s"
+              :class="[
+                'px-2 py-1 text-sm rounded',
+                speed === s
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+              ]"
+              @click="handleSpeedChange(s)"
+            >
+              {{ s }}x
+            </button>
+          </div>
         </div>
+
+        <!-- Continue discussion button -->
+        <button
+          class="px-4 py-2 bg-green-500 text-white text-sm rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 flex items-center gap-2"
+          title="基于此讨论继续"
+          @click="handleContinue"
+        >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+          </svg>
+          继续讨论
+        </button>
       </div>
     </div>
   </div>

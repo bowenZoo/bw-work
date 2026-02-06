@@ -105,6 +105,23 @@ class SummarizeRequest(BaseModel):
     regenerate: bool = Field(default=False, description="Force regenerate summary even if one exists")
 
 
+class ContinueDiscussionRequest(BaseModel):
+    """Request body for continuing a discussion."""
+
+    follow_up: str = Field(..., min_length=1, description="Follow-up topic or question to continue discussing")
+    rounds: int = Field(default=2, ge=1, le=10, description="Number of additional discussion rounds")
+
+
+class ContinueDiscussionResponse(BaseModel):
+    """Response for continuing a discussion."""
+
+    new_discussion_id: str = Field(..., description="ID of the new continuation discussion")
+    original_discussion_id: str = Field(..., description="ID of the original discussion")
+    topic: str = Field(..., description="Combined topic for the continuation")
+    status: DiscussionStatus = Field(..., description="Current status")
+    message: str = Field(..., description="Status message")
+
+
 class SummaryResponse(BaseModel):
     """Response containing discussion summary."""
 
@@ -117,6 +134,42 @@ class SummaryResponse(BaseModel):
     open_questions: list[str] = Field(default_factory=list)
     next_steps: list[str] = Field(default_factory=list)
     generated_at: str
+
+
+class DiscussionSummaryItem(BaseModel):
+    """Summary item for discussion list."""
+
+    id: str
+    project_id: str
+    topic: str
+    summary: str | None = None
+    message_count: int = 0
+    created_at: str
+    updated_at: str
+
+
+class DiscussionListResponse(BaseModel):
+    """Response for listing discussions."""
+
+    items: list[DiscussionSummaryItem]
+    hasMore: bool = Field(default=False, alias="hasMore")
+
+
+class MessageResponse(BaseModel):
+    """Response for a message."""
+
+    id: str
+    agent_id: str
+    agent_role: str
+    content: str
+    timestamp: str
+
+
+class DiscussionMessagesResponse(BaseModel):
+    """Response for discussion messages."""
+
+    discussion: DiscussionSummaryItem
+    messages: list[MessageResponse]
 
 
 # Discussion state persistence
@@ -269,6 +322,59 @@ async def _run_discussion_async(discussion_id: str) -> None:
     """Run discussion in a dedicated thread pool to avoid blocking the event loop."""
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(_DISCUSSION_EXECUTOR, _run_discussion_sync, discussion_id)
+
+
+@router.get("", response_model=DiscussionListResponse)
+async def list_discussions(
+    page: int = 1,
+    limit: int = 20,
+) -> DiscussionListResponse:
+    """List all discussions with pagination.
+
+    Returns a paginated list of discussions sorted by creation time (newest first).
+    """
+    offset = (page - 1) * limit
+
+    # First, try to get from discussion memory (persistent storage)
+    memory_discussions = _discussion_memory.list_all(offset=offset, limit=limit + 1)
+
+    items = []
+    for disc in memory_discussions[:limit]:
+        items.append(
+            DiscussionSummaryItem(
+                id=disc.id,
+                project_id=disc.project_id,
+                topic=disc.topic,
+                summary=disc.summary,
+                message_count=len(disc.messages),
+                created_at=disc.created_at.isoformat(),
+                updated_at=disc.updated_at.isoformat(),
+            )
+        )
+
+    # If memory has no results, also check in-memory state
+    if not items:
+        state_items = []
+        with _state_lock:
+            for disc_id, disc in _discussions.items():
+                state_items.append(
+                    DiscussionSummaryItem(
+                        id=disc.id,
+                        project_id="default",
+                        topic=disc.topic,
+                        summary=disc.result[:200] if disc.result else None,
+                        message_count=0,
+                        created_at=disc.created_at,
+                        updated_at=disc.completed_at or disc.started_at or disc.created_at,
+                    )
+                )
+        # Sort by created_at descending
+        state_items.sort(key=lambda x: x.created_at, reverse=True)
+        items = state_items[offset : offset + limit]
+
+    has_more = len(memory_discussions) > limit or (not memory_discussions and len(items) == limit)
+
+    return DiscussionListResponse(items=items, hasMore=has_more)
 
 
 @router.post("", response_model=CreateDiscussionResponse)
@@ -463,6 +569,180 @@ async def summarize_discussion(
         _discussion_memory.save(stored_discussion)
 
     return summary
+
+
+@router.post("/{discussion_id}/continue", response_model=ContinueDiscussionResponse)
+async def continue_discussion(
+    discussion_id: str,
+    request: ContinueDiscussionRequest,
+) -> ContinueDiscussionResponse:
+    """Continue a completed discussion with a follow-up topic.
+
+    Creates a new discussion that builds upon the original discussion's context.
+    The new discussion will include the previous discussion's summary and decisions
+    as context for the agents.
+    """
+    # Check if original discussion exists and is completed
+    original = get_discussion_state(discussion_id)
+    if original is None:
+        raise HTTPException(status_code=404, detail="Original discussion not found")
+
+    if original.status != DiscussionStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Can only continue completed discussions. Current status: {original.status}",
+        )
+
+    # Load the original discussion from memory to get full context
+    stored_discussion = _discussion_memory.load(discussion_id)
+    if stored_discussion is None:
+        # Fall back to just using the result
+        stored_discussion = Discussion(
+            id=discussion_id,
+            project_id="default",
+            topic=original.topic,
+            messages=[],
+            summary=original.result,
+            created_at=datetime.now(),
+        )
+
+    # Build context from original discussion
+    context_parts = [
+        f"## 前序讨论上下文",
+        f"",
+        f"### 原始话题: {original.topic}",
+        f"",
+    ]
+
+    # Add summary if available
+    if stored_discussion.summary:
+        context_parts.extend([
+            "### 讨论总结",
+            stored_discussion.summary[:2000],  # Limit context size
+            "",
+        ])
+
+    # Add key messages (last few messages from each agent)
+    if stored_discussion.messages:
+        context_parts.append("### 关键讨论内容")
+        agent_last_messages: dict[str, str] = {}
+        for msg in stored_discussion.messages:
+            agent_last_messages[msg.agent_role] = msg.content[:500]
+
+        for role, content in agent_last_messages.items():
+            context_parts.append(f"**{role}**: {content}...")
+        context_parts.append("")
+
+    context_parts.extend([
+        "---",
+        "",
+        f"## 继续讨论",
+        f"",
+        f"用户希望在以上讨论基础上，继续探讨以下问题：",
+        f"",
+        f"**{request.follow_up}**",
+    ])
+
+    combined_context = "\n".join(context_parts)
+
+    # Create new discussion with context
+    new_discussion_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    combined_topic = f"[继续] {original.topic} - {request.follow_up[:50]}"
+
+    # Create attachment with context
+    attachment = AttachmentInfo(
+        filename="previous_discussion_context.md",
+        content=combined_context,
+    )
+
+    new_discussion = DiscussionState(
+        id=new_discussion_id,
+        topic=combined_topic,
+        rounds=request.rounds,
+        status=DiscussionStatus.PENDING,
+        created_at=now,
+        attachment=attachment,
+    )
+    save_discussion_state(new_discussion)
+
+    # Auto-start the new discussion
+    new_discussion.status = DiscussionStatus.RUNNING
+    new_discussion.started_at = now
+    save_discussion_state(new_discussion)
+
+    # Run in background
+    asyncio.create_task(_run_discussion_async(new_discussion_id))
+
+    return ContinueDiscussionResponse(
+        new_discussion_id=new_discussion_id,
+        original_discussion_id=discussion_id,
+        topic=combined_topic,
+        status=DiscussionStatus.RUNNING,
+        message="继续讨论已开始，新讨论将基于之前的上下文进行。",
+    )
+
+
+@router.get("/{discussion_id}/messages", response_model=DiscussionMessagesResponse)
+async def get_discussion_messages(discussion_id: str) -> DiscussionMessagesResponse:
+    """Get all messages for a discussion.
+
+    Returns the discussion with all its messages for playback.
+    """
+    # First, try to load from persistent memory
+    stored_discussion = _discussion_memory.load(discussion_id)
+
+    if stored_discussion:
+        return DiscussionMessagesResponse(
+            discussion=DiscussionSummaryItem(
+                id=stored_discussion.id,
+                project_id=stored_discussion.project_id,
+                topic=stored_discussion.topic,
+                summary=stored_discussion.summary,
+                message_count=len(stored_discussion.messages),
+                created_at=stored_discussion.created_at.isoformat(),
+                updated_at=stored_discussion.updated_at.isoformat(),
+            ),
+            messages=[
+                MessageResponse(
+                    id=msg.id,
+                    agent_id=msg.agent_id,
+                    agent_role=msg.agent_role,
+                    content=msg.content,
+                    timestamp=msg.timestamp.isoformat(),
+                )
+                for msg in stored_discussion.messages
+            ],
+        )
+
+    # Fall back to in-memory state
+    discussion = get_discussion_state(discussion_id)
+    if discussion is None:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    # For in-memory state, we don't have individual messages
+    return DiscussionMessagesResponse(
+        discussion=DiscussionSummaryItem(
+            id=discussion.id,
+            project_id="default",
+            topic=discussion.topic,
+            summary=discussion.result[:200] if discussion.result else None,
+            message_count=1 if discussion.result else 0,
+            created_at=discussion.created_at,
+            updated_at=discussion.completed_at or discussion.started_at or discussion.created_at,
+        ),
+        messages=[
+            MessageResponse(
+                id="result",
+                agent_id="discussion",
+                agent_role="Discussion",
+                content=discussion.result or "",
+                timestamp=discussion.completed_at or discussion.created_at,
+            )
+        ]
+        if discussion.result
+        else [],
+    )
 
 
 @router.get("/{discussion_id}/summary", response_model=SummaryResponse)

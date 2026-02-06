@@ -398,7 +398,7 @@ def get_session_cost(session_id: str) -> dict[str, Any] | None:
             observations_response = client.api.observations.get_many(
                 trace_id=trace_id,
                 type="GENERATION",
-                limit=200,
+                limit=100,
             )
             observations = getattr(observations_response, "data", observations_response) or []
 
