@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue';
-import { ChevronDown, ChevronUp, RotateCcw } from 'lucide-vue-next';
+import { ref, computed, onMounted } from 'vue';
+import { ChevronDown, ChevronUp, RotateCcw, Settings2 } from 'lucide-vue-next';
 import { getAvailableAgents } from '@/api/discussion';
 import type { AgentConfig } from '@/types';
 
@@ -20,18 +20,18 @@ const isLoadingDefaults = ref(false);
 
 // All available agent roles (order matters for display)
 const AGENT_ROLES = [
-  { id: 'lead_planner', name: '主策划', locked: true },
-  { id: 'system_designer', name: '系统策划', locked: false },
-  { id: 'number_designer', name: '数值策划', locked: false },
-  { id: 'player_advocate', name: '玩家代言人', locked: false },
-  { id: 'visual_concept', name: '视觉概念', locked: false },
+  { id: 'lead_planner', name: '主策划', emoji: '👔', locked: true },
+  { id: 'system_designer', name: '系统策划', emoji: '⚙️', locked: false },
+  { id: 'number_designer', name: '数值策划', emoji: '📊', locked: false },
+  { id: 'player_advocate', name: '玩家代言人', emoji: '🎮', locked: false },
+  { id: 'visual_concept', name: '视觉概念', emoji: '🎨', locked: false },
 ];
 
 // Currently selected agent for editing
 const selectedAgentId = ref<string | null>(null);
 
-// Expanded state
-const isExpanded = ref(false);
+// Show advanced editor
+const showEditor = ref(false);
 
 // Local copy of agents list
 const localAgents = computed({
@@ -62,7 +62,6 @@ function toggleAgent(agentId: string) {
     // First toggle from "all enabled" mode — start with all except this one
     const allIds = AGENT_ROLES.filter(r => !r.locked).map(r => r.id);
     const without = allIds.filter(id => id !== agentId);
-    // Add lead_planner (locked)
     emit('update:agents', ['lead_planner', ...without]);
   } else {
     const idx = current.indexOf(agentId);
@@ -123,6 +122,13 @@ function updateFocusAreas(agentId: string, text: string) {
   updateConfigField(agentId, 'focus_areas', areas);
 }
 
+function toggleEditor() {
+  showEditor.value = !showEditor.value;
+  if (showEditor.value && !selectedAgentId.value) {
+    selectedAgentId.value = 'system_designer';
+  }
+}
+
 // Fetch default configs from API
 async function loadDefaults() {
   isLoadingDefaults.value = true;
@@ -139,55 +145,64 @@ async function loadDefaults() {
 onMounted(() => {
   loadDefaults();
 });
-
-// Select first enabled non-locked agent when expanded
-watch(isExpanded, (expanded) => {
-  if (expanded && !selectedAgentId.value) {
-    selectedAgentId.value = 'system_designer';
-  }
-});
 </script>
 
 <template>
   <div class="agent-config-editor">
-    <button class="expand-toggle" @click="isExpanded = !isExpanded">
-      <span class="toggle-label">Agent 配置</span>
-      <span class="toggle-hint">自定义参与者和提示词</span>
-      <component :is="isExpanded ? ChevronUp : ChevronDown" class="toggle-icon" />
+    <!-- Section label -->
+    <label class="section-label">参与 Agent</label>
+
+    <!-- Agent chips (always visible) -->
+    <div class="agent-chips">
+      <button
+        v-for="role in AGENT_ROLES"
+        :key="role.id"
+        class="agent-chip"
+        :class="{
+          'is-active': isAgentEnabled(role.id),
+          'is-locked': role.locked,
+          'has-overrides': hasOverrides(role.id),
+        }"
+        @click="role.locked ? undefined : toggleAgent(role.id)"
+        :title="role.locked ? '必选参与者' : (isAgentEnabled(role.id) ? '点击移除' : '点击添加')"
+      >
+        <span class="chip-emoji">{{ role.emoji }}</span>
+        <span class="chip-name">{{ role.name }}</span>
+        <span v-if="role.locked" class="chip-lock">必选</span>
+        <span v-if="hasOverrides(role.id)" class="chip-dot" />
+      </button>
+    </div>
+
+    <!-- Customize prompt toggle -->
+    <button class="customize-toggle" @click="toggleEditor">
+      <Settings2 class="customize-icon" />
+      <span>自定义提示词</span>
+      <component :is="showEditor ? ChevronUp : ChevronDown" class="toggle-arrow" />
     </button>
 
-    <div v-if="isExpanded" class="config-body">
-      <!-- Agent list (left side) -->
-      <div class="agent-list">
-        <div
+    <!-- Editor panel -->
+    <div v-if="showEditor" class="editor-panel">
+      <!-- Agent tabs -->
+      <div class="editor-tabs">
+        <button
           v-for="role in AGENT_ROLES"
           :key="role.id"
-          class="agent-item"
+          class="editor-tab"
           :class="{
             'is-selected': selectedAgentId === role.id,
             'is-disabled': !isAgentEnabled(role.id),
-            'is-locked': role.locked,
           }"
           @click="selectedAgentId = role.id"
         >
-          <label class="agent-checkbox" @click.stop>
-            <input
-              type="checkbox"
-              :checked="isAgentEnabled(role.id)"
-              :disabled="role.locked"
-              @change="toggleAgent(role.id)"
-            />
-          </label>
-          <span class="agent-name">{{ role.name }}</span>
-          <span v-if="role.locked" class="locked-badge">必选</span>
-          <span v-if="hasOverrides(role.id)" class="modified-dot" title="已自定义" />
-        </div>
+          <span class="tab-emoji">{{ role.emoji }}</span>
+          <span>{{ role.name }}</span>
+          <span v-if="hasOverrides(role.id)" class="tab-dot" />
+        </button>
       </div>
 
-      <!-- Config editor (right side) -->
+      <!-- Config form -->
       <div v-if="selectedAgentId" class="config-form">
         <div class="config-header">
-          <span class="config-title">{{ AGENT_ROLES.find(r => r.id === selectedAgentId)?.name }}</span>
           <button
             v-if="hasOverrides(selectedAgentId)"
             class="reset-btn"
@@ -214,7 +229,7 @@ watch(isExpanded, (expanded) => {
           <label class="field-label">目标</label>
           <textarea
             class="field-textarea"
-            rows="3"
+            rows="2"
             :value="getAgentConfig(selectedAgentId).goal"
             :placeholder="defaultConfigs[selectedAgentId]?.goal || '角色目标'"
             @input="updateConfigField(selectedAgentId!, 'goal', ($event.target as HTMLTextAreaElement).value)"
@@ -225,7 +240,7 @@ watch(isExpanded, (expanded) => {
           <label class="field-label">背景故事</label>
           <textarea
             class="field-textarea"
-            rows="4"
+            rows="3"
             :value="getAgentConfig(selectedAgentId).backstory"
             :placeholder="defaultConfigs[selectedAgentId]?.backstory || '角色背景'"
             @input="updateConfigField(selectedAgentId!, 'backstory', ($event.target as HTMLTextAreaElement).value)"
@@ -250,110 +265,75 @@ watch(isExpanded, (expanded) => {
 
 <style scoped>
 .agent-config-editor {
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.expand-toggle {
   display: flex;
-  align-items: center;
-  width: 100%;
-  padding: 10px 14px;
-  background: var(--bg-secondary, #fafafa);
-  border: none;
-  cursor: pointer;
+  flex-direction: column;
   gap: 8px;
-  transition: background 0.15s;
 }
 
-.expand-toggle:hover {
-  background: #f3f4f6;
-}
-
-.toggle-label {
+.section-label {
   font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary, #374151);
-}
-
-.toggle-hint {
-  font-size: 12px;
-  color: var(--text-secondary, #9ca3af);
-  flex: 1;
-  text-align: left;
-}
-
-.toggle-icon {
-  width: 16px;
-  height: 16px;
-  color: var(--text-secondary, #9ca3af);
-}
-
-.config-body {
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  border-top: 1px solid var(--border-color, #e5e7eb);
-  min-height: 280px;
-}
-
-.agent-list {
-  border-right: 1px solid var(--border-color, #e5e7eb);
-  background: var(--bg-secondary, #fafafa);
-  padding: 6px 0;
-}
-
-.agent-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 12px;
-  cursor: pointer;
-  transition: background 0.15s;
-  font-size: 13px;
-  color: var(--text-primary, #374151);
-}
-
-.agent-item:hover {
-  background: #e5e7eb;
-}
-
-.agent-item.is-selected {
-  background: white;
   font-weight: 500;
-  border-right: 2px solid var(--primary-color, #3b82f6);
+  color: var(--text-primary, #374151);
 }
 
-.agent-item.is-disabled {
-  opacity: 0.4;
+/* ===== Agent Chips ===== */
+.agent-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.agent-checkbox input {
-  width: 14px;
-  height: 14px;
+.agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 20px;
+  font-size: 13px;
+  border: 1.5px solid var(--border-color, #e5e7eb);
+  background: white;
+  color: var(--text-secondary, #9ca3af);
   cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
 }
 
-.agent-checkbox input:disabled {
-  cursor: not-allowed;
+.agent-chip:hover:not(.is-locked) {
+  border-color: #d1d5db;
 }
 
-.agent-name {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.agent-chip.is-active {
+  border-color: var(--primary-color, #3b82f6);
+  background: rgba(59, 130, 246, 0.06);
+  color: var(--text-primary, #374151);
 }
 
-.locked-badge {
+.agent-chip.is-locked {
+  cursor: default;
+  border-color: #d1d5db;
+  background: #f9fafb;
+  color: var(--text-primary, #374151);
+}
+
+.chip-emoji {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.chip-name {
+  font-weight: 500;
+}
+
+.chip-lock {
   font-size: 10px;
-  padding: 1px 4px;
+  padding: 0 4px;
   background: #e5e7eb;
   color: #6b7280;
   border-radius: 3px;
+  line-height: 1.4;
 }
 
-.modified-dot {
+.chip-dot {
   width: 6px;
   height: 6px;
   background: var(--primary-color, #3b82f6);
@@ -361,25 +341,110 @@ watch(isExpanded, (expanded) => {
   flex-shrink: 0;
 }
 
+/* ===== Customize Toggle ===== */
+.customize-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary, #9ca3af);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 0;
+  transition: color 0.15s;
+  align-self: flex-start;
+}
+
+.customize-toggle:hover {
+  color: var(--primary-color, #3b82f6);
+}
+
+.customize-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.toggle-arrow {
+  width: 13px;
+  height: 13px;
+}
+
+/* ===== Editor Panel ===== */
+.editor-panel {
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.editor-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-color, #e5e7eb);
+  background: var(--bg-secondary, #fafafa);
+  overflow-x: auto;
+}
+
+.editor-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-secondary, #6b7280);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.editor-tab:hover {
+  color: var(--text-primary, #374151);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.editor-tab.is-selected {
+  color: var(--primary-color, #3b82f6);
+  border-bottom-color: var(--primary-color, #3b82f6);
+  background: white;
+}
+
+.editor-tab.is-disabled {
+  opacity: 0.35;
+}
+
+.tab-emoji {
+  font-size: 13px;
+}
+
+.tab-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--primary-color, #3b82f6);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ===== Config Form ===== */
 .config-form {
-  padding: 12px 16px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: 300px;
   overflow-y: auto;
-  max-height: 360px;
 }
 
 .config-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  min-height: 0;
 }
 
-.config-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary, #111827);
+.config-header:empty {
+  display: none;
 }
 
 .reset-btn {
@@ -406,6 +471,7 @@ watch(isExpanded, (expanded) => {
   height: 12px;
 }
 
+/* ===== Form Fields ===== */
 .form-field {
   display: flex;
   flex-direction: column;
@@ -459,31 +525,5 @@ watch(isExpanded, (expanded) => {
 .field-hint {
   font-size: 11px;
   color: var(--text-weak, #d1d5db);
-}
-
-@media (max-width: 640px) {
-  .config-body {
-    grid-template-columns: 1fr;
-  }
-
-  .agent-list {
-    display: flex;
-    overflow-x: auto;
-    border-right: none;
-    border-bottom: 1px solid var(--border-color, #e5e7eb);
-    padding: 4px 8px;
-    gap: 4px;
-  }
-
-  .agent-item {
-    white-space: nowrap;
-    border-radius: 6px;
-    padding: 5px 10px;
-  }
-
-  .agent-item.is-selected {
-    border-right: none;
-    border-bottom: 2px solid var(--primary-color, #3b82f6);
-  }
 }
 </style>
