@@ -56,9 +56,7 @@ const router = createRouter({
     },
     {
       path: '/discussion/:id/playback',
-      name: 'discussion-playback',
-      component: DiscussionView,
-      props: { mode: 'playback' },
+      redirect: (to) => ({ name: 'discussion-by-id', params: { id: to.params.id } }),
     },
     // Admin routes
     {

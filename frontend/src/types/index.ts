@@ -103,6 +103,7 @@ export interface DiscussionSummary {
   topic: string;
   summary: string | null;
   message_count: number;
+  status: string | null;
   created_at: string;
   updated_at: string;
 }

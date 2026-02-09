@@ -32,10 +32,8 @@ const route = useRoute();
 const router = useRouter();
 const agentsStore = useAgentsStore();
 
-// Determine if we're in playback mode
-const isPlaybackMode = computed(() => {
-  return props.mode === 'playback' || route.name === 'discussion-playback';
-});
+// Playback mode is no longer used — completed discussions show all messages directly
+const isPlaybackMode = computed(() => false);
 
 // Determine if we're using global discussion mode (no :id in route)
 const isGlobalMode = computed(() => {
@@ -413,7 +411,7 @@ async function fetchDiscussionChain(discId: string) {
 // Handle chain item click
 function handleChainSelect(targetId: string) {
   router.push({
-    name: 'discussion-playback',
+    name: 'discussion-by-id',
     params: { id: targetId },
   });
 }
@@ -519,13 +517,10 @@ onUnmounted(() => {
 <template>
   <div class="discussion-layout">
     <!-- Header -->
-    <Header :connection-status="isPlaybackMode ? 'disconnected' : connectionStatus">
-      <!-- Navigation and mode indicator -->
+    <Header :connection-status="connectionStatus">
       <template #extra>
         <div class="flex items-center gap-2">
-          <!-- Back to home button (live mode) -->
           <button
-            v-if="!isPlaybackMode"
             class="flex items-center gap-1 text-gray-600 hover:text-gray-800"
             @click="goBackToHome"
           >
@@ -534,23 +529,12 @@ onUnmounted(() => {
             </svg>
             <span>返回主页</span>
           </button>
-          <!-- Back to home button (playback mode) -->
-          <button
-            v-if="isPlaybackMode"
-            class="flex items-center gap-1 text-gray-600 hover:text-gray-800"
-            @click="goBackToHome"
-          >
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-            </svg>
-            <span>返回主页</span>
-          </button>
-          <!-- Playback mode badge -->
-          <span v-if="isPlaybackMode" class="px-2 py-1 bg-purple-100 text-purple-700 text-sm rounded">
-            回放模式
+          <!-- Completed badge -->
+          <span v-if="discussion?.status === 'completed'" class="px-2 py-1 bg-green-50 text-green-700 text-sm rounded">
+            已完成
           </span>
           <!-- Global mode viewer count -->
-          <span v-if="isGlobalMode && !isPlaybackMode" class="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 text-sm rounded">
+          <span v-if="isGlobalMode" class="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 text-sm rounded">
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
@@ -561,8 +545,8 @@ onUnmounted(() => {
       </template>
     </Header>
 
-    <!-- Topic Card Header (live mode with discussion) -->
-    <div v-if="topicDisplay && !isPlaybackMode" class="discussion-header">
+    <!-- Topic Card Header -->
+    <div v-if="topicDisplay" class="discussion-header">
       <div class="header-content">
         <TopicCard
           :topic="topicDisplay"
@@ -579,7 +563,7 @@ onUnmounted(() => {
           <button
             v-if="continuedFrom"
             class="view-original-btn"
-            @click="router.push({ name: 'discussion-playback', params: { id: continuedFrom } })"
+            @click="router.push({ name: 'discussion-by-id', params: { id: continuedFrom } })"
           >
             查看原讨论
           </button>
@@ -653,39 +637,6 @@ onUnmounted(() => {
       </button>
     </div>
 
-    <!-- Topic display (playback mode) -->
-    <div
-      v-else-if="topicDisplay && isPlaybackMode"
-      class="discussion-header playback"
-    >
-      <div class="playback-header-content">
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="text-gray-500 text-sm">讨论主题:</span>
-          <h2 class="text-lg font-medium text-gray-900">{{ topicDisplay }}</h2>
-          <span class="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">
-            回放
-          </span>
-          <!-- Continuation badge in playback -->
-          <span
-            v-if="isContinuation"
-            class="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded flex items-center gap-1"
-          >
-            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-            </svg>
-            续前讨论
-          </span>
-        </div>
-        <!-- Discussion chain in playback mode -->
-        <DiscussionChain
-          v-if="discussionChain.length > 1"
-          :chain="discussionChain"
-          :current-index="chainCurrentIndex"
-          class="mt-2"
-          @select="handleChainSelect"
-        />
-      </div>
-    </div>
 
     <!-- Main content area - Round Table Layout -->
     <main v-if="isRunning && !isPlaybackMode" class="discussion-main">
@@ -727,26 +678,12 @@ onUnmounted(() => {
       </section>
     </main>
 
-    <!-- Fallback: Original Chat Layout (for non-running or playback mode) -->
+    <!-- Chat Layout (for non-running discussions: pending, completed, failed) -->
     <main v-else class="discussion-main-fallback">
       <ChatContainer
         :messages="displayMessages"
         :is-loading="isLoading"
         class="flex-1"
-      />
-
-      <!-- Playback controls (playback mode) -->
-      <PlaybackControl
-        v-if="isPlaybackMode && totalMessages > 0"
-        :current-index="currentIndex"
-        :total-messages="totalMessages"
-        :is-playing="isPlaying"
-        :speed="speed"
-        @play="handlePlay"
-        @pause="handlePause"
-        @seek="handleSeek"
-        @speed-change="handleSpeedChange"
-        @continue="handleContinueClick"
       />
     </main>
 
@@ -776,15 +713,15 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Footer: Input Box -->
+    <!-- Footer -->
     <footer class="discussion-footer">
-      <!-- Input box (live mode only, for starting new discussions) -->
+      <!-- Input box for starting new discussions (no discussion yet) -->
       <InputBox
-        v-if="!isPlaybackMode && !isRunning"
+        v-if="!discussion && !isRunning"
         :disabled="isInProgress"
-        :discussion-id="discussion?.id ?? undefined"
-        :is-running="isRunning"
-        :is-paused="isPaused"
+        :discussion-id="undefined"
+        :is-running="false"
+        :is-paused="false"
         placeholder="输入讨论主题..."
         @submit="handleSubmit"
         @paused="handlePaused"
@@ -792,15 +729,25 @@ onUnmounted(() => {
         @error="handleInterventionError"
       />
 
-      <!-- User input box (live mode, when discussion is running) -->
+      <!-- User input box when discussion is running -->
       <UserInputBox
-        v-if="!isPlaybackMode && isRunning && discussion?.id"
+        v-if="isRunning && discussion?.id"
         :discussion-id="discussion.id"
         :disabled="!isRunning"
         placeholder="发表你的观点（会自动暂停、注入、恢复）..."
         @send="handleUserMessageSent"
         @error="handleUserInputError"
       />
+
+      <!-- Continue button for completed discussions -->
+      <div v-if="discussion?.status === 'completed' && discussionId" class="completed-footer">
+        <button class="continue-discussion-btn" @click="handleContinueClick">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+          </svg>
+          <span>继续讨论</span>
+        </button>
+      </div>
     </footer>
 
     <!-- Continue Discussion Modal -->
@@ -876,7 +823,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--bg-primary, #0f0f1a);
+  background: var(--bg-primary);
 }
 
 .discussion-header {
@@ -884,8 +831,8 @@ onUnmounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   padding: 12px 16px;
-  background: var(--bg-secondary, #1a1a2e);
-  border-bottom: 1px solid var(--border-color, #2d2d44);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .auto-pause-banner {
@@ -914,7 +861,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   padding: 6px 14px;
-  background: #3b82f6;
+  background: var(--primary-color);
   color: white;
   border-radius: 6px;
   font-size: 13px;
@@ -923,12 +870,7 @@ onUnmounted(() => {
 }
 
 .auto-pause-resume-btn:hover {
-  background: #2563eb;
-}
-
-.discussion-header.playback {
-  background: white;
-  border-bottom: 1px solid #e5e7eb;
+  background: #171717;
 }
 
 .header-content {
@@ -938,21 +880,15 @@ onUnmounted(() => {
   flex: 1;
 }
 
-.playback-header-content {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
 .continuation-indicator {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  background-color: rgba(16, 185, 129, 0.15);
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  background-color: rgba(5, 150, 105, 0.08);
+  border: 1px solid rgba(5, 150, 105, 0.2);
   border-radius: 6px;
-  color: #10b981;
+  color: var(--success-color);
   font-size: 12px;
   font-weight: 500;
   width: fit-content;
@@ -960,15 +896,15 @@ onUnmounted(() => {
 
 .view-original-btn {
   padding: 2px 8px;
-  background-color: rgba(255, 255, 255, 0.2);
+  background-color: rgba(5, 150, 105, 0.1);
   border-radius: 4px;
-  color: #059669;
+  color: var(--success-color);
   font-size: 11px;
   transition: background-color 0.2s;
 }
 
 .view-original-btn:hover {
-  background-color: rgba(255, 255, 255, 0.4);
+  background-color: rgba(5, 150, 105, 0.2);
 }
 
 .header-actions {
@@ -981,30 +917,30 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  background: var(--bg-tertiary, #16162a);
-  border: 1px solid var(--border-color, #2d2d44);
-  color: var(--text-secondary, #888);
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .action-btn:hover {
-  background: var(--bg-hover, #1f1f3a);
-  color: var(--text-primary, #e0e0e0);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .action-btn.is-paused {
-  background: var(--warning-color, #f59e0b);
-  border-color: var(--warning-color, #f59e0b);
+  background: var(--warning-color);
+  border-color: var(--warning-color);
   color: white;
 }
 
 .action-btn.is-active {
-  background: var(--primary-color, #6366f1);
-  border-color: var(--primary-color, #6366f1);
+  background: var(--primary-color);
+  border-color: var(--primary-color);
   color: white;
 }
 
@@ -1013,24 +949,24 @@ onUnmounted(() => {
   flex: 1;
   display: grid;
   grid-template-columns: 55% 45%;
-  gap: 16px;
-  padding: 16px;
+  gap: 12px;
+  padding: 12px;
   overflow: hidden;
 }
 
 .left-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   overflow: hidden;
 }
 
 .round-table-container {
   flex-shrink: 0;
   padding: 16px;
-  background: var(--bg-secondary, #1a1a2e);
-  border-radius: 8px;
-  border: 1px solid var(--border-color, #2d2d44);
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
 }
 
 .right-panel {
@@ -1062,8 +998,7 @@ onUnmounted(() => {
 .error-card {
   background: #fef2f2;
   border: 1px solid #fecaca;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
   padding: 16px 24px;
   max-width: 480px;
   margin: 16px;
@@ -1073,8 +1008,31 @@ onUnmounted(() => {
 /* Footer */
 .discussion-footer {
   padding: 12px 16px;
-  background: var(--bg-secondary, #1a1a2e);
-  border-top: 1px solid var(--border-color, #2d2d44);
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+}
+
+.completed-footer {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+.continue-discussion-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 24px;
+  background: var(--primary-color);
+  color: white;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: opacity 0.2s;
+}
+
+.continue-discussion-btn:hover {
+  opacity: 0.85;
 }
 
 /* Responsive layout */

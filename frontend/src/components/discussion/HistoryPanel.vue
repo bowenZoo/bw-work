@@ -126,10 +126,10 @@ watch(() => props.messages.length, async () => {
 .history-panel {
   display: flex;
   flex-direction: column;
-  background: var(--bg-secondary, #1a1a2e);
-  border-radius: 8px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
   overflow: hidden;
-  border: 1px solid var(--border-color, #2d2d44);
+  border: 1px solid var(--border-color);
   min-height: 100px;
   max-height: 300px;
 }
@@ -143,24 +143,24 @@ watch(() => props.messages.length, async () => {
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  background: var(--bg-tertiary, #16162a);
+  background: var(--bg-primary);
   cursor: pointer;
   user-select: none;
   flex-shrink: 0;
 }
 
 .panel-header:hover {
-  background: var(--bg-hover, #1f1f3a);
+  background: var(--bg-hover);
 }
 
 .header-icon {
   font-size: 10px;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
 }
 
 .header-title {
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   font-size: 14px;
 }
 
@@ -173,7 +173,7 @@ watch(() => props.messages.length, async () => {
 .filter-tab {
   padding: 4px 8px;
   font-size: 11px;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
@@ -182,14 +182,14 @@ watch(() => props.messages.length, async () => {
 }
 
 .filter-tab:hover {
-  background: var(--bg-hover, #1f1f3a);
-  color: var(--text-primary, #e0e0e0);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .filter-tab.active {
-  background: var(--primary-color, #6366f1);
+  background: var(--primary-color);
   color: white;
-  border-color: var(--primary-color, #6366f1);
+  border-color: var(--primary-color);
 }
 
 .messages-container {
@@ -203,7 +203,7 @@ watch(() => props.messages.length, async () => {
   align-items: center;
   justify-content: center;
   height: 60px;
-  color: var(--text-secondary, #888);
+  color: var(--text-weak);
   font-size: 13px;
 }
 
@@ -212,13 +212,13 @@ watch(() => props.messages.length, async () => {
   align-items: flex-start;
   gap: 8px;
   padding: 8px;
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
   transition: background 0.2s;
 }
 
 .message-item:hover {
-  background: var(--bg-tertiary, #16162a);
+  background: var(--bg-tertiary);
 }
 
 .message-icon {
@@ -229,13 +229,13 @@ watch(() => props.messages.length, async () => {
 .message-role {
   font-size: 12px;
   font-weight: 600;
-  color: var(--primary-color, #6366f1);
+  color: var(--text-primary);
   flex-shrink: 0;
 }
 
 .message-content {
   font-size: 12px;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
   line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -248,15 +248,15 @@ watch(() => props.messages.length, async () => {
 }
 
 .messages-container::-webkit-scrollbar-track {
-  background: var(--bg-tertiary, #16162a);
+  background: var(--bg-secondary);
 }
 
 .messages-container::-webkit-scrollbar-thumb {
-  background: var(--border-color, #2d2d44);
+  background: var(--border-color);
   border-radius: 3px;
 }
 
 .messages-container::-webkit-scrollbar-thumb:hover {
-  background: var(--text-secondary, #888);
+  background: var(--text-weak);
 }
 </style>

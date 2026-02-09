@@ -116,6 +116,32 @@ class BaseAgent(ABC):
 3. 指出你认为需要关注的风险或挑战
 """
 
+    def respond_sync(self, context: str) -> str:
+        """Synchronously generate a response to the given context.
+
+        Creates a temporary Crew with a single task and runs it synchronously.
+
+        Args:
+            context: The discussion context to respond to.
+
+        Returns:
+            The agent's response as a string.
+        """
+        task = Task(
+            description=self._build_response_prompt(context),
+            expected_output=f"{self.role}对讨论内容的专业分析和建议",
+            agent=self.build_agent(),
+        )
+
+        crew = Crew(
+            agents=[self.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+
+        result = crew.kickoff()
+        return str(result)
+
     async def respond_async(self, context: str) -> str:
         """Asynchronously generate a response to the given context.
 

@@ -125,7 +125,7 @@ watch(inputContent, () => {
           v-model="inputContent"
           :placeholder="placeholder"
           :disabled="disabled"
-          class="w-full px-4 py-2 pr-16 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+          class="w-full px-4 py-2 pr-16 border border-gray-200 rounded-md resize-none focus:ring-2 focus:ring-[#0A0A0A] focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
           rows="2"
           @keydown="handleKeydown"
         />
@@ -140,7 +140,7 @@ watch(inputContent, () => {
 
       <!-- Send button -->
       <button
-        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+        class="px-4 py-2 bg-[#0A0A0A] text-white rounded-md hover:bg-[#171717] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
         :disabled="!canSend"
         @click="handleSend"
       >

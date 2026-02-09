@@ -125,7 +125,7 @@ function joinDiscussion() {
 }
 
 function viewWorkspace(workspace: DiscussionSummary) {
-  router.push({ name: 'discussion-playback', params: { id: workspace.id } });
+  router.push({ name: 'discussion-by-id', params: { id: workspace.id } });
 }
 
 // New discussion
@@ -326,7 +326,7 @@ onUnmounted(() => {
           </div>
           <button
             class="view-btn-sm"
-            @click="router.push({ name: 'discussion-playback', params: { id: currentDiscussion.id } })"
+            @click="router.push({ name: 'discussion-by-id', params: { id: currentDiscussion.id } })"
           >
             查看
           </button>
@@ -361,7 +361,14 @@ onUnmounted(() => {
               {{ workspace.summary.length > 120 ? workspace.summary.slice(0, 120) + '...' : workspace.summary }}
             </p>
             <div class="workspace-meta">
-              <span class="meta-badge completed-badge">已完成</span>
+              <span
+                class="meta-badge"
+                :class="{
+                  'completed-badge': !workspace.status || workspace.status === 'completed',
+                  'running-badge': workspace.status === 'running',
+                  'failed-badge': workspace.status === 'failed',
+                }"
+              >{{ workspace.status === 'running' ? '进行中' : workspace.status === 'failed' ? '已中断' : '已完成' }}</span>
               <span class="meta-item">
                 <MessageSquare class="w-3.5 h-3.5" />
                 {{ workspace.message_count }} 条消息
@@ -883,6 +890,16 @@ onUnmounted(() => {
 .completed-badge {
   background: #f0fdf4;
   color: #16a34a;
+}
+
+.running-badge {
+  background: #fefce8;
+  color: #ca8a04;
+}
+
+.failed-badge {
+  background: #fef2f2;
+  color: #dc2626;
 }
 
 .meta-item {

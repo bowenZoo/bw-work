@@ -107,12 +107,12 @@ function handleAgentClick(agentId: string) {
   transform: translate(-50%, -50%);
   width: 60px;
   height: 60px;
-  background: var(--bg-tertiary, #16162a);
+  background: var(--bg-tertiary);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px solid var(--border-color, #2d2d44);
+  border: 2px solid var(--border-color);
   z-index: 2;
 }
 
@@ -161,8 +161,8 @@ function handleAgentClick(agentId: string) {
   height: 56px;
   border-radius: 50%;
   overflow: hidden;
-  background: var(--bg-secondary, #1a1a2e);
-  border: 3px solid var(--border-color, #2d2d44);
+  background: var(--bg-secondary);
+  border: 3px solid var(--border-color);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -181,29 +181,26 @@ function handleAgentClick(agentId: string) {
 
 /* Status-based border colors */
 .status-idle .agent-avatar {
-  border-color: var(--border-color, #2d2d44);
+  border-color: var(--border-color);
 }
 
 .status-thinking .agent-avatar {
-  border-color: var(--warning-color, #f59e0b);
+  border-color: var(--warning-color);
   animation: pulse 1.5s ease-in-out infinite;
 }
 
 .status-speaking .agent-avatar,
 .is-speaking .agent-avatar {
-  border-color: var(--success-color, #22c55e);
-  box-shadow: 0 0 20px rgba(34, 197, 94, 0.4);
+  border-color: var(--success-color);
   transform: scale(1.1);
 }
 
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
-    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
   }
   50% {
-    opacity: 0.8;
-    box-shadow: 0 0 0 8px rgba(245, 158, 11, 0);
+    opacity: 0.7;
   }
 }
 
@@ -214,20 +211,20 @@ function handleAgentClick(agentId: string) {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 2px solid var(--bg-secondary, #1a1a2e);
+  border: 2px solid var(--bg-secondary);
 }
 
 .dot-idle {
-  background: var(--text-secondary, #888);
+  background: var(--text-weak);
 }
 
 .dot-thinking {
-  background: var(--warning-color, #f59e0b);
+  background: var(--warning-color);
   animation: blink 1s ease-in-out infinite;
 }
 
 .dot-speaking {
-  background: var(--success-color, #22c55e);
+  background: var(--success-color);
 }
 
 @keyframes blink {
@@ -245,7 +242,7 @@ function handleAgentClick(agentId: string) {
 .agent-name {
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   white-space: nowrap;
 }
 
@@ -255,21 +252,21 @@ function handleAgentClick(agentId: string) {
 }
 
 .text-idle {
-  color: var(--text-secondary, #888);
+  color: var(--text-weak);
 }
 
 .text-thinking {
-  color: var(--warning-color, #f59e0b);
+  color: var(--warning-color);
 }
 
 .text-speaking {
-  color: var(--success-color, #22c55e);
+  color: var(--success-color);
 }
 
 /* Connection lines (decorative) */
 .connection-line {
   position: absolute;
-  background: var(--border-color, #2d2d44);
+  background: var(--border-color);
   z-index: -1;
 }
 

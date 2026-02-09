@@ -268,6 +268,8 @@ class DiscussionCrew:
         self._task_agent_roles: list[str] = []
         self._task_index = 0
         self._abort_reason: str | None = None
+        self._unsaved_message_count = 0  # Track messages since last incremental save
+        self._INCREMENTAL_SAVE_INTERVAL = 3  # Save to disk every N messages
 
         # Pause/resume state
         self._pause_check_interval = 0.5  # seconds
@@ -724,6 +726,13 @@ class DiscussionCrew:
         )
         self._current_discussion = discussion
         self._messages = []
+        self._unsaved_message_count = 0
+
+        # Save immediately so the discussion exists in DiscussionMemory
+        # even if the server restarts before crew.kickoff() completes
+        self._discussion_memory.save(discussion)
+        logger.info("Discussion initialized and saved: %s", self._discussion_id)
+
         return discussion
 
     def _record_message(self, agent_role: str, content: str) -> None:
@@ -735,12 +744,34 @@ class DiscussionCrew:
         """
         message = Message(
             id=str(uuid4()),
-            agent_id=agent_role.lower().replace(" ", "_"),
+            agent_id=self._role_to_agent_id(agent_role),
             agent_role=agent_role,
             content=content,
             timestamp=datetime.now(),
         )
         self._messages.append(message)
+
+        # Incremental save to persist messages periodically
+        self._unsaved_message_count += 1
+        if self._unsaved_message_count >= self._INCREMENTAL_SAVE_INTERVAL:
+            self._incremental_save()
+
+    def _incremental_save(self) -> None:
+        """Save current messages to DiscussionMemory without summary."""
+        if self._current_discussion is None:
+            return
+        self._current_discussion.messages = list(self._messages)
+        self._current_discussion.updated_at = datetime.now()
+        try:
+            self._discussion_memory.save(self._current_discussion)
+            self._unsaved_message_count = 0
+            logger.debug(
+                "Incremental save: %s (%d messages)",
+                self._current_discussion.id,
+                len(self._messages),
+            )
+        except Exception as e:
+            logger.warning("Incremental save failed: %s", e)
 
     def _save_discussion(self, summary: str | None = None) -> None:
         """Save the current discussion to memory.
@@ -1009,6 +1040,17 @@ class DiscussionCrew:
 
         return tasks
 
+    def _role_to_agent_id(self, agent_role: str) -> str:
+        """Map agent role (Chinese display name) to frontend agent ID.
+
+        Looks up the role_name from registered agents, falling back to
+        sanitized role string.
+        """
+        for agent in self._agents:
+            if agent.role == agent_role:
+                return agent.role_name
+        return agent_role.lower().replace(" ", "_")
+
     def _broadcast_status(
         self,
         agent_role: str,
@@ -1026,9 +1068,10 @@ class DiscussionCrew:
             return
 
         try:
+            agent_id = self._role_to_agent_id(agent_role)
             event = create_status_event(
                 discussion_id=self._discussion_id,
-                agent_id=agent_role.lower().replace(" ", "_"),
+                agent_id=agent_id,
                 agent_role=agent_role,
                 status=status,
                 content=content,
@@ -1057,9 +1100,10 @@ class DiscussionCrew:
         msg_sequence = sequence if sequence is not None else self._next_sequence()
 
         try:
+            agent_id = self._role_to_agent_id(agent_role)
             event = create_message_event(
                 discussion_id=self._discussion_id,
-                agent_id=agent_role.lower().replace(" ", "_"),
+                agent_id=agent_id,
                 agent_role=agent_role,
                 content=content,
                 sequence=msg_sequence,
@@ -1352,8 +1396,11 @@ class DiscussionCrew:
             ) as span:
                 trace_span = span
                 task_callback = self._build_task_callback(trace_span)
+                built_agents = [agent.build_agent() for agent in self._agents]
+                logger.info("Discussion %s: %d agents, %d tasks", self._discussion_id, len(built_agents), len(tasks))
+
                 crew = Crew(
-                    agents=[agent.build_agent() for agent in self._agents],
+                    agents=built_agents,
                     tasks=tasks,
                     process=Process.sequential,
                     verbose=verbose,
@@ -1361,6 +1408,7 @@ class DiscussionCrew:
                 )
 
                 result = crew.kickoff()
+                logger.info("Discussion %s: crew.kickoff() completed", self._discussion_id)
 
                 if self._abort_reason:
                     raise DiscussionTimeoutError(self._abort_reason)
@@ -1406,6 +1454,296 @@ class DiscussionCrew:
             # Clean up discussion state
             cleanup_discussion_state(self._discussion_id)
             # Broadcast idle status on error
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+            raise
+
+    # ------------------------------------------------------------------
+    # Orchestrated (dynamic speaker) mode - sync helpers
+    # ------------------------------------------------------------------
+
+    def _lead_planner_opening_sync(
+        self,
+        topic: str,
+        attachment: str | None = None,
+    ) -> str:
+        """Generate Lead Planner's opening statement synchronously."""
+        opening_prompt = self._lead_planner.create_opening_prompt(topic, attachment)
+        history_context = self._load_history_context(topic)
+        if history_context:
+            opening_prompt += f"\n\n---\n参考历史信息：\n{history_context}\n---\n"
+
+        task = Task(
+            description=opening_prompt,
+            expected_output="讨论开场：明确目标、关键问题、讨论范围和期望产出",
+            agent=self._lead_planner.build_agent(),
+        )
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+        result = crew.kickoff()
+        return str(result)
+
+    def _lead_planner_summary_sync(
+        self,
+        round_num: int,
+        topic: str,
+        context: str,
+    ) -> str:
+        """Generate Lead Planner's round summary synchronously."""
+        summary_prompt = self._lead_planner.create_round_summary_prompt(round_num, topic)
+        full_prompt = f"{summary_prompt}\n\n---\n讨论记录：\n{context}"
+
+        task = Task(
+            description=full_prompt,
+            expected_output=f"第{round_num}轮总结：共识、分歧、需深入的问题、下一轮发言人",
+            agent=self._lead_planner.build_agent(),
+        )
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+        result = crew.kickoff()
+        return str(result)
+
+    def _lead_planner_final_decision_sync(
+        self,
+        topic: str,
+        context: str,
+    ) -> str:
+        """Generate Lead Planner's final decision document synchronously."""
+        final_prompt = self._lead_planner.create_final_decision_prompt(topic)
+        full_prompt = f"{final_prompt}\n\n---\n讨论记录：\n{context}"
+
+        task = Task(
+            description=full_prompt,
+            expected_output="策划决策文档：设计概述、关键决策及理由、待确认事项、下一步行动",
+            agent=self._lead_planner.build_agent(),
+        )
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+        result = crew.kickoff()
+        return str(result)
+
+    def run_orchestrated(
+        self,
+        topic: str,
+        max_rounds: int = 10,
+        verbose: bool = False,
+        attachment: str | None = None,
+        auto_pause_interval: int = 5,
+    ) -> str:
+        """Run a dynamically orchestrated discussion.
+
+        Unlike run() which pre-creates all tasks and uses fixed rotation,
+        this method runs round-by-round with the Lead Planner deciding
+        who speaks each round, enabling natural conversation flow.
+
+        Args:
+            topic: The design topic to discuss.
+            max_rounds: Maximum number of discussion rounds.
+            verbose: Whether to print verbose output.
+            attachment: Optional markdown attachment content.
+            auto_pause_interval: Auto-pause every N rounds (0=disabled).
+
+        Returns:
+            The final discussion result/decision document.
+        """
+        from src.crew.mention_parser import parse_next_speakers
+
+        # Initialize discussion record
+        self._init_discussion(topic)
+        self._auto_pause_interval = auto_pause_interval
+        self._total_rounds = max_rounds
+
+        # Initialize discussion state for pause/resume
+        set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
+        self._abort_reason = None
+
+        trace_metadata = self._prepare_trace_metadata(topic, max_rounds)
+        trace_span: Any | None = None
+
+        try:
+            with start_trace_context(
+                name="discussion_orchestrated",
+                session_id=self._discussion_id,
+                metadata=trace_metadata,
+            ) as span:
+                trace_span = span
+
+                # --- Phase 0: Lead Planner Opening ---
+                self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                opening = self._lead_planner_opening_sync(topic, attachment)
+
+                self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                self._broadcast_message(self._lead_planner.role, opening)
+                self._record_message(self._lead_planner.role, opening)
+                self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                # Build discussion context
+                context = f"议题：{topic}\n\n主策划开场：\n{opening}"
+                round_num = 0
+
+                # --- Phase 1-N: Dynamic Discussion Rounds ---
+                while round_num < max_rounds:
+                    round_num += 1
+                    self._current_round = round_num
+
+                    # Determine who speaks this round
+                    source_text = opening if round_num == 1 else latest_summary
+                    next_speakers = parse_next_speakers(source_text)
+
+                    # Filter agents to those who should speak
+                    if next_speakers:
+                        agents_to_call = [
+                            agent for agent in self._discussion_agents
+                            if agent.role in next_speakers
+                        ]
+                    else:
+                        agents_to_call = list(self._discussion_agents)
+
+                    # Fallback: if parsing missed everything, all agents respond
+                    if not agents_to_call:
+                        agents_to_call = list(self._discussion_agents)
+
+                    # Broadcast who is participating this round
+                    participating_names = [a.role for a in agents_to_call]
+                    self._broadcast_discussion_event(
+                        f"第{round_num}轮：{', '.join(participating_names)} 参与讨论"
+                    )
+                    logger.info(
+                        "Discussion %s round %d: speakers=%s",
+                        self._discussion_id,
+                        round_num,
+                        participating_names,
+                    )
+
+                    # Each selected agent responds sequentially
+                    for agent in agents_to_call:
+                        self._broadcast_status(agent.role, AgentStatus.THINKING)
+                        response = agent.respond_sync(context)
+                        self._broadcast_status(agent.role, AgentStatus.SPEAKING)
+                        self._broadcast_message(agent.role, response)
+                        self._record_message(agent.role, response)
+                        self._broadcast_status(agent.role, AgentStatus.IDLE)
+                        context += f"\n\n{agent.role}：\n{response}"
+
+                    # Check for pause/intervention
+                    injected_messages = self._check_pause_and_wait()
+                    if self._abort_reason:
+                        raise DiscussionTimeoutError(self._abort_reason)
+                    if injected_messages:
+                        self._inject_user_messages(injected_messages)
+                        for msg in injected_messages:
+                            context += f"\n\n用户介入：\n{msg.get('content', '')}"
+
+                    # Lead Planner summarizes this round
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                    latest_summary = self._lead_planner_summary_sync(round_num, topic, context)
+
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                    self._broadcast_message(self._lead_planner.role, latest_summary)
+                    self._record_message(self._lead_planner.role, latest_summary)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+                    context += f"\n\n主策划总结（第{round_num}轮）：\n{latest_summary}"
+
+                    # Parse discussion status
+                    status, questions = parse_discussion_status(latest_summary)
+                    self._discussion_status = status
+                    self._pending_questions = questions
+
+                    if status == DiscussionStatus.SUFFICIENT:
+                        logger.info(
+                            "Discussion %s: sufficient after round %d",
+                            self._discussion_id,
+                            round_num,
+                        )
+                        break
+
+                    # Auto-pause check
+                    if (
+                        self._auto_pause_interval > 0
+                        and round_num % self._auto_pause_interval == 0
+                        and round_num < max_rounds
+                    ):
+                        logger.info(
+                            "Auto-pausing discussion %s at round %d (interval=%d)",
+                            self._discussion_id,
+                            round_num,
+                            self._auto_pause_interval,
+                        )
+                        set_discussion_state(
+                            self._discussion_id, DiscussionState.PAUSED
+                        )
+                        self._broadcast_discussion_event(
+                            f"discussion_auto_paused:已完成第{round_num}轮讨论，等待继续"
+                        )
+                        injected = self._check_pause_and_wait()
+                        if self._abort_reason:
+                            raise DiscussionTimeoutError(self._abort_reason)
+                        if injected:
+                            self._inject_user_messages(injected)
+                            for msg in injected:
+                                context += f"\n\n用户介入：\n{msg.get('content', '')}"
+
+                    self._broadcast_discussion_event(f"第{round_num}轮讨论完成")
+
+                # --- Final Phase: Lead Planner Decision ---
+                self._broadcast_discussion_event("正在生成最终决策文档...")
+                self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                final_decision = self._lead_planner_final_decision_sync(topic, context)
+
+                self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                self._broadcast_message(self._lead_planner.role, final_decision)
+                self._record_message(self._lead_planner.role, final_decision)
+                self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                self._finalize_trace(trace_span, result=final_decision)
+
+            # Save discussion to memory
+            self._save_discussion(summary=final_decision)
+
+            # Extract and save decisions
+            try:
+                self._save_decisions(final_decision, topic)
+            except Exception as e:
+                logger.warning("Failed to save decisions: %s", e)
+
+            # Generate visual concepts if enabled
+            if self._visual_concept is not None:
+                try:
+                    loop = asyncio.new_event_loop()
+                    try:
+                        loop.run_until_complete(
+                            self._generate_visual_concepts(final_decision)
+                        )
+                    finally:
+                        loop.close()
+                except Exception as e:
+                    logger.warning("Failed to generate visual concepts: %s", e)
+
+            # Cleanup
+            set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
+            cleanup_discussion_state(self._discussion_id)
+
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+            self._broadcast_discussion_event("discussion_completed")
+
+            return final_decision
+
+        except Exception as exc:
+            self._finalize_trace(trace_span, error=exc)
+            self._broadcast_error(str(exc))
+            self._broadcast_discussion_event("discussion_failed")
+            self._save_discussion()
+            cleanup_discussion_state(self._discussion_id)
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
             raise

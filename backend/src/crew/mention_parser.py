@@ -101,6 +101,65 @@ def parse_mentioned_roles(text: str) -> list[str]:
     return list(mentioned)
 
 
+def parse_speaker_block(text: str) -> list[str] | None:
+    """Parse explicit speaker assignment block from Lead Planner output.
+
+    Looks for a ```speakers block that lists which roles should speak next.
+
+    Args:
+        text: The Lead Planner's output text.
+
+    Returns:
+        List of role names if block found and valid, None otherwise.
+    """
+    match = re.search(r"```speakers\s*\n(.+?)\n```", text, re.DOTALL)
+    if not match:
+        return None
+
+    raw = match.group(1).strip()
+    # Split by comma, Chinese comma, or newline
+    candidates = re.split(r"[,，\n]", raw)
+
+    # Build alias → role mapping
+    alias_map: dict[str, str] = {}
+    for p in ROLE_PATTERNS:
+        alias_map[p.role] = p.role
+        for alias in p.aliases:
+            alias_map[alias] = p.role
+
+    result: list[str] = []
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        if candidate in alias_map:
+            role = alias_map[candidate]
+            if role not in result:
+                result.append(role)
+
+    return result if result else None
+
+
+def parse_next_speakers(text: str) -> list[str]:
+    """Parse who should speak next from Lead Planner's output.
+
+    Tries structured ```speakers block first, falls back to mention-based parsing.
+
+    Args:
+        text: The Lead Planner's output text.
+
+    Returns:
+        List of role names that should respond. Empty list means all respond.
+    """
+    # Try structured block first
+    speakers = parse_speaker_block(text)
+    if speakers is not None:
+        return speakers
+
+    # Fallback to mention-based parsing
+    return parse_mentioned_roles(text)
+
+
 def get_all_roles() -> list[str]:
     """Get all defined role names.
 

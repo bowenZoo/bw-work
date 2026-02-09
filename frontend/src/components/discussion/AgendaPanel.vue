@@ -143,10 +143,10 @@ function toggleCollapse() {
 
 <style scoped>
 .agenda-panel {
-  background: var(--bg-secondary, #1a1a2e);
-  border-radius: 8px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
   overflow: hidden;
-  border: 1px solid var(--border-color, #2d2d44);
+  border: 1px solid var(--border-color);
 }
 
 .agenda-header {
@@ -154,14 +154,14 @@ function toggleCollapse() {
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
-  background: var(--bg-tertiary, #16162a);
+  background: var(--bg-primary);
   cursor: pointer;
   user-select: none;
   transition: background 0.2s;
 }
 
 .agenda-header:hover {
-  background: var(--bg-hover, #1f1f3a);
+  background: var(--bg-hover);
 }
 
 .agenda-icon {
@@ -170,11 +170,11 @@ function toggleCollapse() {
 
 .agenda-title {
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .agenda-current-indicator {
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
 }
 
 .agenda-current {
@@ -182,7 +182,7 @@ function toggleCollapse() {
   display: flex;
   align-items: center;
   gap: 4px;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   font-size: 14px;
 }
 
@@ -191,13 +191,13 @@ function toggleCollapse() {
 }
 
 .current-marker {
-  color: var(--primary-color, #6366f1);
+  color: var(--text-secondary);
   font-size: 12px;
   margin-left: 4px;
 }
 
 .agenda-toggle {
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
@@ -206,7 +206,7 @@ function toggleCollapse() {
 }
 
 .agenda-empty {
-  color: var(--text-secondary, #888);
+  color: var(--text-weak);
   text-align: center;
   padding: 20px;
 }
@@ -223,17 +223,17 @@ function toggleCollapse() {
   gap: 8px;
   padding: 8px 12px;
   border-radius: 6px;
-  background: var(--bg-tertiary, #16162a);
+  background: var(--bg-tertiary);
   transition: all 0.2s;
 }
 
 .agenda-item:hover {
-  background: var(--bg-hover, #1f1f3a);
+  background: var(--bg-hover);
 }
 
 .agenda-item.is-current {
-  border-left: 3px solid var(--primary-color, #6366f1);
-  background: var(--bg-active, #1e1e3f);
+  border-left: 3px solid var(--primary-color);
+  background: var(--bg-active);
 }
 
 .item-status {
@@ -243,52 +243,52 @@ function toggleCollapse() {
 }
 
 .item-index {
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
   font-size: 14px;
   min-width: 24px;
 }
 
 .item-title {
   flex: 1;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   font-size: 14px;
 }
 
 .status-completed .item-title {
-  color: var(--success-color, #22c55e);
+  color: var(--success-color);
 }
 
 .status-in-progress .item-title {
-  color: var(--primary-color, #6366f1);
+  color: var(--primary-color);
   font-weight: 500;
 }
 
 .status-skipped .item-title {
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
   text-decoration: line-through;
 }
 
 .btn-view-summary {
   padding: 4px 8px;
   font-size: 12px;
-  color: var(--primary-color, #6366f1);
+  color: var(--primary-color);
   background: transparent;
-  border: 1px solid var(--primary-color, #6366f1);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .btn-view-summary:hover {
-  background: var(--primary-color, #6366f1);
+  background: var(--primary-color);
   color: white;
 }
 
 .current-badge {
   padding: 2px 6px;
   font-size: 11px;
-  color: var(--primary-color, #6366f1);
-  background: rgba(99, 102, 241, 0.1);
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
   border-radius: 4px;
 }
 
@@ -298,16 +298,16 @@ function toggleCollapse() {
   gap: 8px;
   padding: 8px 12px;
   border-radius: 6px;
-  border: 1px dashed var(--border-color, #2d2d44);
-  color: var(--text-secondary, #888);
+  border: 1px dashed var(--border-color);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .agenda-add:hover {
-  border-color: var(--primary-color, #6366f1);
-  color: var(--primary-color, #6366f1);
-  background: rgba(99, 102, 241, 0.05);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  background: rgba(10, 10, 10, 0.03);
 }
 
 .add-icon {
@@ -324,27 +324,27 @@ function toggleCollapse() {
   gap: 8px;
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid var(--border-color, #2d2d44);
+  border-top: 1px solid var(--border-color);
 }
 
 .progress-bar {
   flex: 1;
   height: 4px;
-  background: var(--bg-tertiary, #16162a);
+  background: var(--bg-tertiary);
   border-radius: 2px;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: var(--primary-color, #6366f1);
+  background: var(--primary-color);
   border-radius: 2px;
   transition: width 0.3s ease;
 }
 
 .progress-text {
   font-size: 12px;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
   min-width: 40px;
   text-align: right;
 }

@@ -51,7 +51,7 @@ function handleAttachmentClick() {
 </script>
 
 <template>
-  <div class="bg-white border border-gray-200 rounded-lg shadow-sm">
+  <div class="bg-white border border-gray-200 rounded-md">
     <!-- 标题栏 -->
     <div class="px-4 py-3 border-b border-gray-100 bg-gray-50 rounded-t-lg">
       <div class="flex items-center gap-2">

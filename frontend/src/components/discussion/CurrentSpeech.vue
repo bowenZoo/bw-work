@@ -98,10 +98,10 @@ const hasContent = computed(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-secondary, #1a1a2e);
-  border-radius: 8px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
   overflow: hidden;
-  border: 1px solid var(--border-color, #2d2d44);
+  border: 1px solid var(--border-color);
 }
 
 .speech-header {
@@ -109,8 +109,8 @@ const hasContent = computed(() => {
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
-  background: var(--bg-tertiary, #16162a);
-  border-bottom: 1px solid var(--border-color, #2d2d44);
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .header-icon {
@@ -119,7 +119,7 @@ const hasContent = computed(() => {
 
 .header-title {
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .streaming-indicator {
@@ -132,7 +132,7 @@ const hasContent = computed(() => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--primary-color, #6366f1);
+  background: var(--primary-color);
   animation: bounce 1.4s infinite ease-in-out both;
 }
 
@@ -171,8 +171,8 @@ const hasContent = computed(() => {
   height: 40px;
   border-radius: 50%;
   overflow: hidden;
-  background: var(--bg-tertiary, #16162a);
-  border: 2px solid var(--primary-color, #6366f1);
+  background: var(--bg-tertiary);
+  border: 2px solid var(--primary-color);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -191,12 +191,12 @@ const hasContent = computed(() => {
 .speaker-name {
   font-weight: 600;
   font-size: 16px;
-  color: var(--primary-color, #6366f1);
+  color: var(--text-primary);
 }
 
 .speech-bubble {
-  background: var(--bg-tertiary, #16162a);
-  border-radius: 12px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
   padding: 16px;
   position: relative;
 }
@@ -210,12 +210,12 @@ const hasContent = computed(() => {
   height: 0;
   border-left: 8px solid transparent;
   border-right: 8px solid transparent;
-  border-bottom: 8px solid var(--bg-tertiary, #16162a);
+  border-bottom: 8px solid var(--bg-tertiary);
 }
 
 .speech-text {
-  color: var(--text-primary, #e0e0e0);
-  font-size: 15px;
+  color: var(--text-primary);
+  font-size: 14px;
   line-height: 1.7;
 }
 
@@ -232,7 +232,7 @@ const hasContent = computed(() => {
 .speech-text :deep(h2),
 .speech-text :deep(h3),
 .speech-text :deep(h4) {
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   margin: 16px 0 8px;
 }
 
@@ -247,11 +247,11 @@ const hasContent = computed(() => {
 }
 
 .speech-text :deep(strong) {
-  color: var(--primary-color, #6366f1);
+  color: var(--primary-color);
 }
 
 .speech-text :deep(code) {
-  background: var(--bg-secondary, #1a1a2e);
+  background: rgba(0, 0, 0, 0.06);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: monospace;
@@ -259,15 +259,15 @@ const hasContent = computed(() => {
 }
 
 .speech-text :deep(blockquote) {
-  border-left: 3px solid var(--primary-color, #6366f1);
+  border-left: 3px solid var(--border-color);
   margin: 12px 0;
   padding-left: 12px;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
 }
 
 .typing-cursor {
   display: inline-block;
-  color: var(--primary-color, #6366f1);
+  color: var(--primary-color);
   animation: blink 1s step-end infinite;
   margin-left: 2px;
 }
@@ -284,16 +284,16 @@ const hasContent = computed(() => {
   justify-content: center;
   height: 100%;
   min-height: 200px;
-  color: var(--text-secondary, #888);
+  color: var(--text-weak);
   gap: 12px;
 }
 
 .no-speech-icon {
   font-size: 48px;
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 .no-speech-text {
-  font-size: 16px;
+  font-size: 14px;
 }
 </style>

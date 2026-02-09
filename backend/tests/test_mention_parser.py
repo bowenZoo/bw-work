@@ -7,6 +7,8 @@ from src.crew.mention_parser import (
     ROLE_PATTERNS,
     get_all_roles,
     parse_mentioned_roles,
+    parse_next_speakers,
+    parse_speaker_block,
 )
 
 
@@ -139,6 +141,114 @@ class TestParseMentionedRoles:
         text = "系统策划,你怎么看？"
         roles = parse_mentioned_roles(text)
         assert "系统策划" in roles
+
+
+class TestParseSpeakerBlock:
+    """Tests for parse_speaker_block function."""
+
+    def test_basic_two_speakers(self):
+        """Test parsing a speaker block with two roles."""
+        text = """一些讨论内容
+
+```speakers
+系统策划, 数值策划
+```
+
+后续内容"""
+        result = parse_speaker_block(text)
+        assert result == ["系统策划", "数值策划"]
+
+    def test_single_speaker(self):
+        """Test parsing a speaker block with one role."""
+        text = """内容
+```speakers
+系统策划
+```"""
+        result = parse_speaker_block(text)
+        assert result == ["系统策划"]
+
+    def test_all_three_speakers(self):
+        """Test parsing a speaker block with all three roles."""
+        text = """```speakers
+系统策划, 数值策划, 玩家代言人
+```"""
+        result = parse_speaker_block(text)
+        assert result == ["系统策划", "数值策划", "玩家代言人"]
+
+    def test_aliases_resolved(self):
+        """Test that aliases in speaker block are resolved to full names."""
+        text = """```speakers
+系统, 玩家
+```"""
+        result = parse_speaker_block(text)
+        assert result == ["系统策划", "玩家代言人"]
+
+    def test_chinese_comma(self):
+        """Test parsing with Chinese comma separator."""
+        text = """```speakers
+系统策划，数值策划
+```"""
+        result = parse_speaker_block(text)
+        assert result == ["系统策划", "数值策划"]
+
+    def test_newline_separator(self):
+        """Test parsing with newline separator."""
+        text = """```speakers
+系统策划
+数值策划
+```"""
+        result = parse_speaker_block(text)
+        assert result == ["系统策划", "数值策划"]
+
+    def test_no_block_returns_none(self):
+        """Test that missing block returns None."""
+        text = "没有 speaker block 的文本"
+        result = parse_speaker_block(text)
+        assert result is None
+
+    def test_empty_block_returns_none(self):
+        """Test that empty block returns None."""
+        text = """```speakers
+
+```"""
+        result = parse_speaker_block(text)
+        assert result is None
+
+    def test_no_duplicates(self):
+        """Test that duplicate roles are deduplicated."""
+        text = """```speakers
+系统策划, 系统
+```"""
+        result = parse_speaker_block(text)
+        assert result == ["系统策划"]
+
+
+class TestParseNextSpeakers:
+    """Tests for parse_next_speakers function."""
+
+    def test_prefers_speaker_block(self):
+        """Test that speaker block takes precedence over mentions."""
+        text = """系统策划你好，我们来讨论技术架构。
+从玩家角度来看也很重要。
+
+```speakers
+数值策划
+```"""
+        result = parse_next_speakers(text)
+        # Block says only 数值策划, even though text mentions 系统策划 and 玩家
+        assert result == ["数值策划"]
+
+    def test_fallback_to_mentions(self):
+        """Test fallback to mention parsing when no block."""
+        text = "请系统策划来分析这个架构问题"
+        result = parse_next_speakers(text)
+        assert "系统策划" in result
+
+    def test_no_match_returns_empty(self):
+        """Test empty list when nothing matches."""
+        text = "大家觉得怎么样？"
+        result = parse_next_speakers(text)
+        assert result == []
 
 
 class TestGetAllRoles:

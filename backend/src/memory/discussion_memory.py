@@ -8,8 +8,10 @@
 """
 
 import json
+import os
 import shutil
 import sqlite3
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -183,8 +185,19 @@ class DiscussionMemory(MemoryStore[Discussion]):
         file_path = self._get_discussion_path(discussion.project_id, discussion.id)
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(self._discussion_to_dict(discussion), f, ensure_ascii=False, indent=2)
+        # Atomic write: write to temp file then rename to prevent corruption
+        fd, tmp_path = tempfile.mkstemp(dir=str(file_path.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self._discussion_to_dict(discussion), f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, str(file_path))
+        except BaseException:
+            # Clean up temp file on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
         # 更新 SQLite 索引
         conn = self._connect()

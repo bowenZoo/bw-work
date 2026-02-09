@@ -153,6 +153,7 @@ class DiscussionSummaryItem(BaseModel):
     topic: str
     summary: str | None = None
     message_count: int = 0
+    status: str | None = None
     created_at: str
     updated_at: str
 
@@ -218,6 +219,9 @@ _DISCUSSION_EXECUTOR = ThreadPoolExecutor(
 # In-memory cache for quick reads (also persisted to disk)
 _discussions: dict[str, DiscussionState] = {}
 
+# Hold references to background tasks to prevent GC before completion
+_background_tasks: set[asyncio.Task] = set()
+
 # Store generated summaries
 _summaries: dict[str, SummaryResponse] = {}
 
@@ -241,6 +245,8 @@ def cleanup_stale_discussions() -> int:
 
     Any discussion stuck in 'running' state is marked as 'failed'
     since the background task cannot survive a server restart.
+    Also ensures the discussion exists in DiscussionMemory so it
+    appears in the discussion list.
 
     Returns:
         Number of discussions cleaned up.
@@ -259,6 +265,32 @@ def cleanup_stale_discussions() -> int:
                 path.write_text(
                     json.dumps(data, ensure_ascii=False), encoding="utf-8"
                 )
+
+                # Ensure the discussion exists in DiscussionMemory
+                disc_id = data.get("id")
+                if disc_id:
+                    stored = _discussion_memory.load(disc_id)
+                    if stored is None:
+                        # Discussion was never saved to DiscussionMemory
+                        # Create a minimal entry so it appears in list
+                        from src.memory.base import Discussion as DiscussionRecord
+                        created_at_str = data.get("created_at", datetime.utcnow().isoformat())
+                        try:
+                            created_at = datetime.fromisoformat(created_at_str)
+                        except (ValueError, TypeError):
+                            created_at = datetime.utcnow()
+                        disc_record = DiscussionRecord(
+                            id=disc_id,
+                            project_id="default",
+                            topic=data.get("topic", "未知话题"),
+                            messages=[],
+                            summary="讨论因服务器重启中断",
+                            created_at=created_at,
+                            updated_at=datetime.now(),
+                        )
+                        _discussion_memory.save(disc_record)
+                        logger.info("Saved stale discussion to DiscussionMemory: %s", disc_id)
+
                 logger.info("Cleaned up stale discussion: %s", data.get("id"))
                 cleaned += 1
         except Exception as e:
@@ -377,10 +409,13 @@ def _get_llm_from_config() -> Any | None:
         llm_kwargs: dict[str, Any] = {
             "model": model,
             "api_key": api_key,
+            "timeout": 120,
+            "max_retries": 2,
         }
         if base_url:
             llm_kwargs["base_url"] = base_url
 
+        logger.info("Creating ChatOpenAI: model=%s, base_url=%s, timeout=120s", model, base_url)
         return ChatOpenAI(**llm_kwargs)
     except ImportError as e:
         logger.error("Error importing ChatOpenAI: %s", e)
@@ -436,12 +471,10 @@ def _run_discussion_sync(discussion_id: str) -> None:
         if llm is None:
             raise RuntimeError("LLM not configured. Please configure OpenAI API key in admin panel.")
 
-        logger.info("Discussion %s: LLM configured, creating DiscussionCrew", discussion_id)
-        crew = DiscussionCrew(discussion_id=discussion_id, llm=llm)
-        logger.info("Discussion %s: Starting crew.run()", discussion_id)
-        result = crew.run(
+        crew = DiscussionCrew(discussion_id=discussion_id, llm=llm, enable_visual_concept=True)
+        result = crew.run_orchestrated(
             topic=discussion.topic,
-            rounds=discussion.rounds,
+            max_rounds=discussion.rounds,
             verbose=False,
             attachment=discussion.attachment.content if discussion.attachment else None,
             auto_pause_interval=discussion.auto_pause_interval,
@@ -496,8 +529,11 @@ def _run_discussion_sync(discussion_id: str) -> None:
 
 async def _run_discussion_async(discussion_id: str) -> None:
     """Run discussion in a dedicated thread pool to avoid blocking the event loop."""
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(_DISCUSSION_EXECUTOR, _run_discussion_sync, discussion_id)
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_DISCUSSION_EXECUTOR, _run_discussion_sync, discussion_id)
+    except Exception as e:
+        logger.error("Discussion async wrapper failed for %s: %s", discussion_id, e, exc_info=True)
 
 
 @router.get("", response_model=DiscussionListResponse)
@@ -516,6 +552,9 @@ async def list_discussions(
 
     items = []
     for disc in memory_discussions[:limit]:
+        # Look up status from DiscussionState (disk/memory)
+        state = get_discussion_state(disc.id)
+        status = state.status.value if state else "completed"
         items.append(
             DiscussionSummaryItem(
                 id=disc.id,
@@ -523,6 +562,7 @@ async def list_discussions(
                 topic=disc.topic,
                 summary=disc.summary,
                 message_count=len(disc.messages),
+                status=status,
                 created_at=disc.created_at.isoformat(),
                 updated_at=disc.updated_at.isoformat(),
             )
@@ -540,6 +580,7 @@ async def list_discussions(
                         topic=disc.topic,
                         summary=disc.result[:200] if disc.result else None,
                         message_count=0,
+                        status=disc.status.value,
                         created_at=disc.created_at,
                         updated_at=disc.completed_at or disc.started_at or disc.created_at,
                     )
@@ -648,7 +689,9 @@ async def create_current_discussion(
         save_discussion_state(discussion)
 
     # Run in background (outside the lock)
-    asyncio.create_task(_run_discussion_async(discussion_id))
+    task = asyncio.create_task(_run_discussion_async(discussion_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return CreateCurrentDiscussionResponse(
         id=discussion_id,
@@ -787,7 +830,9 @@ async def start_discussion(
     save_discussion_state(discussion)
 
     # Run in background
-    asyncio.create_task(_run_discussion_async(discussion_id))
+    task = asyncio.create_task(_run_discussion_async(discussion_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return StartDiscussionResponse(
         id=discussion_id,
@@ -1053,7 +1098,9 @@ async def continue_discussion(
     save_discussion_state(new_discussion)
 
     # Run in background
-    asyncio.create_task(_run_discussion_async(new_discussion_id))
+    task = asyncio.create_task(_run_discussion_async(new_discussion_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return ContinueDiscussionResponse(
         new_discussion_id=new_discussion_id,

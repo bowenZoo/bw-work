@@ -404,8 +404,15 @@ def broadcast_sync(message: dict[str, Any], discussion_id: str | None = None) ->
         discussion_id: Optional discussion ID for per-discussion broadcast (deprecated).
     """
     if _main_loop is None:
-        logger.debug("Event loop not set, skipping broadcast")
+        logger.warning("broadcast_sync: _main_loop is None! Message type=%s DROPPED", message.get("type"))
         return
+
+    logger.debug(
+        "broadcast_sync: type=%s, global_clients=%d, discussion_id=%s",
+        message.get("type"),
+        global_connection_manager.connection_count,
+        discussion_id,
+    )
 
     try:
         # Broadcast to all global connections

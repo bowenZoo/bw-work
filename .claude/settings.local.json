@@ -75,7 +75,14 @@
       "Bash(/opt/homebrew/bin/python3:*)",
       "Bash(cat:*)",
       "Bash(CREWAI_TELEMETRY_OPT_OUT=true .venv/bin/python:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npx vite build)",
+      "Bash(# 先清理之前的 running 讨论 .venv/bin/python -c \"\" import json from pathlib import Path from datetime import datetime state_dir = Path\\(''data/projects/.discussion_state''\\) if state_dir.exists\\(\\): for path in state_dir.glob\\(''*.json''\\): data = json.loads\\(path.read_text\\(encoding=''utf-8''\\)\\) if data.get\\(''status''\\) == ''running'': data[''status''] = ''failed'' data[''error''] = ''debug cleanup'' data[''completed_at''] = datetime.utcnow\\(\\).isoformat\\(\\) path.write_text\\(json.dumps\\(data, ensure_ascii=False\\), encoding=''utf-8''\\) print\\(f''Cleaned: {data[\\\\\"\"id\\\\\"\"][:12]}''\\) \"\" sleep 3 # 清空日志 sleep 2 # 创建新讨论 echo \"\"=== Creating discussion ===\"\" curl -s -X POST http://localhost:18000/api/discussions/current \\\\ -H \"\"Content-Type: application/json\"\" \\\\ -d ''{\"\"topic\"\":\"\"debug test\"\",\"\"rounds\"\":1}'')",
+      "Bash(# 检查后端是否还活着 curl -s http://localhost:18000/api/discussions/current)",
+      "Bash(.venv/bin/python3 << 'EOF'\nimport base64\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\n\n# Key from the file\nkey_b64 = \"bM8pDpM5vmXPjFag3OzGdOLByyaAfVe7wFkOOysvPtE=\"\nkey = base64.b64decode\\(key_b64\\)\n\n# Encrypted API key from database\nencrypted = \"8UFUxdgez2eS6AdgzXn0UMaNN11hQZBcHDXLyK50tu6q+8ZBLNLC/xVKLTxlesIoZGm3aDa5FTlCAm2a36QkN5tWQgzE+F5uWPYVN5osuQ==\"\n\n# Decrypt\ndata = base64.b64decode\\(encrypted\\)\nnonce = data[:12]\nciphertext = data[12:]\n\naesgcm = AESGCM\\(key\\)\nplaintext = aesgcm.decrypt\\(nonce, ciphertext, None\\)\napi_key = plaintext.decode\\('utf-8'\\)\n\nprint\\(f\"Decrypted API Key: {api_key}\"\\)\nEOF)",
+      "Bash(grep:*)",
+      "Skill(restart)",
+      "Skill(restart:*)"
     ]
   }
 }
