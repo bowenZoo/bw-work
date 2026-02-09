@@ -66,6 +66,25 @@ function handleFocusSection(sectionId: string) {
 function closeDocPreview() {
   showDocPreview.value = false
 }
+
+function downloadPreviewFile() {
+  if (!previewFilename.value) return
+  // Try to get content from docContents (WebSocket real-time data)
+  const content = props.docContents?.get(previewFilename.value)
+  if (content) {
+    triggerDownload(previewFilename.value, content)
+  }
+}
+
+function triggerDownload(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
 </script>
 
 <template>
@@ -101,7 +120,17 @@ function closeDocPreview() {
         <div class="doc-preview-modal">
           <div class="doc-preview-header">
             <span class="doc-preview-title">{{ previewFilename }}</span>
-            <button class="doc-preview-close" @click="closeDocPreview">&times;</button>
+            <div class="doc-preview-actions">
+              <button class="doc-preview-download" @click="downloadPreviewFile" title="下载文档">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span>下载</span>
+              </button>
+              <button class="doc-preview-close" @click="closeDocPreview">&times;</button>
+            </div>
           </div>
           <div class="doc-preview-body">
             <InlineDesignDocs
@@ -219,6 +248,37 @@ function closeDocPreview() {
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.doc-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doc-preview-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.doc-preview-download svg {
+  width: 15px;
+  height: 15px;
+}
+
+.doc-preview-download:hover {
+  color: var(--primary-color);
+  border-color: var(--primary-color);
+  background: rgba(99, 102, 241, 0.08);
 }
 
 .doc-preview-close {
