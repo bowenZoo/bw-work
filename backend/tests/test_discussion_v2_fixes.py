@@ -59,9 +59,12 @@ class TestWebSocketRouteOrdering:
     def test_global_websocket_ping_pong(self, client):
         """Global WebSocket should respond to ping with pong."""
         with client.websocket_connect("/ws/discussion") as ws:
-            # Consume initial viewers (direct send) + viewers (connect broadcast)
-            _ = ws.receive_json()  # viewers from handler
-            _ = ws.receive_json()  # viewers from connect broadcast
+            # Consume initial messages: sync (always sent) + viewers + viewers (connect broadcast)
+            msgs_to_consume = []
+            for _ in range(3):
+                msgs_to_consume.append(ws.receive_json())
+            msg_types = [m["type"] for m in msgs_to_consume]
+            assert "sync" in msg_types, f"Expected sync in initial messages, got {msg_types}"
 
             # Now test ping/pong
             ws.send_json({"type": "ping"})

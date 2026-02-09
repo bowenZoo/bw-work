@@ -9,9 +9,8 @@ import {
   AttachmentPreview,
   UserInputBox,
   AgendaPanel,
-  RoundTable,
-  CurrentSpeech,
-  HistoryPanel,
+  CompactAgentBar,
+  StageSummaryPanel,
   AgendaSummaryModal,
   DiscussionChain,
   DesignDocsPanel,
@@ -21,7 +20,7 @@ import { useDiscussion } from '@/composables/useDiscussion';
 import { useGlobalDiscussion } from '@/composables/useGlobalDiscussion';
 import { useAgentsStore } from '@/stores/agents';
 import api from '@/api';
-import type { AgendaItem, Agent, AgentStatus, DiscussionChainItem } from '@/types';
+import type { AgendaItem, AgentStatus, DiscussionChainItem } from '@/types';
 
 // Props for playback mode
 const props = defineProps<{
@@ -62,13 +61,8 @@ const selectedAgendaItem = ref<AgendaItem | null>(null);
 // Design docs panel state
 const showDesignDocs = ref(false);
 
-// Current speech tracking
-const currentSpeaker = ref<Agent | null>(null);
-const currentSpeechContent = ref('');
-const isStreaming = ref(false);
-
-// History filter
-const historyFilter = ref('');
+// Agent filter (for CompactAgentBar click)
+const agentFilter = ref<string | null>(null);
 
 // Discussion chain state
 const discussionChain = ref<DiscussionChainItem[]>([]);
@@ -153,6 +147,13 @@ async function createDiscussion(topic: string) {
 
 const isRunning = computed(() => discussion.value?.status === 'running');
 
+// Show round table layout when discussion has messages (running, completed, or failed)
+const showRoundTableLayout = computed(() => {
+  if (!discussion.value) return false;
+  if (isRunning.value) return true;
+  return displayMessages.value.length > 0;
+});
+
 // Unified pause state (both global and per-discussion)
 const isPaused = computed(() => {
   if (isGlobalMode.value) return globalIsPaused.value;
@@ -188,6 +189,12 @@ const displayMessages = computed(() => {
   return messages.value;
 });
 
+// Filtered messages for ChatContainer (respects agent filter)
+const filteredMessages = computed(() => {
+  if (!agentFilter.value) return displayMessages.value;
+  return displayMessages.value.filter(m => m.agentId === agentFilter.value);
+});
+
 // Loading state
 const isLoading = computed(() => {
   if (isPlaybackMode.value) {
@@ -216,10 +223,11 @@ const topicDisplay = computed(() => {
 const currentAttachment = computed(() => discussion.value?.attachment);
 
 // Discussion status for TopicCard
-const discussionStatus = computed<'pending' | 'running' | 'completed'>(() => {
+const discussionStatus = computed<'pending' | 'running' | 'completed' | 'failed'>(() => {
   const status = discussion.value?.status;
   if (status === 'running') return 'running';
   if (status === 'completed') return 'completed';
+  if (status === 'failed') return 'failed';
   return 'pending';
 });
 
@@ -237,35 +245,6 @@ const speakingAgentId = computed(() => {
   return agentsStore.speakingAgent?.id;
 });
 
-// Update current speech when speaking agent changes
-watch(
-  () => agentsStore.speakingAgent,
-  (speaker) => {
-    if (speaker) {
-      currentSpeaker.value = speaker;
-      isStreaming.value = true;
-    } else {
-      isStreaming.value = false;
-    }
-  }
-);
-
-// Update current speech content from latest message by speaking agent
-watch(
-  displayMessages,
-  (msgs) => {
-    if (currentSpeaker.value && msgs.length > 0) {
-      // Find the latest message from the current speaker
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        if (msgs[i].agentId === currentSpeaker.value.id) {
-          currentSpeechContent.value = msgs[i].content;
-          break;
-        }
-      }
-    }
-  },
-  { deep: true }
-);
 
 // Load playback data when entering playback mode
 watch(
@@ -496,14 +475,9 @@ async function handleSkipAgendaItem(itemId: string) {
   await skipAgendaItem(itemId);
 }
 
-// RoundTable agent click handler
+// CompactAgentBar agent click handler — toggle filter
 function handleAgentClick(agentId: string) {
-  historyFilter.value = agentId;
-}
-
-// History filter change
-function handleHistoryFilterChange(filter: string) {
-  historyFilter.value = filter;
+  agentFilter.value = agentFilter.value === agentId ? null : agentId;
 }
 
 // Cleanup on unmount
@@ -638,47 +612,48 @@ onUnmounted(() => {
     </div>
 
 
-    <!-- Main content area - Round Table Layout -->
-    <main v-if="isRunning && !isPlaybackMode" class="discussion-main">
-      <!-- Left Panel -->
-      <aside class="left-panel">
-        <!-- Agenda Panel -->
+    <!-- Main content area -->
+    <main v-if="showRoundTableLayout && !isPlaybackMode" class="discussion-main">
+      <!-- Left Panel: Agent Bar + Message Feed -->
+      <div class="left-panel">
+        <!-- Compact Agent Bar -->
+        <CompactAgentBar
+          :agents="agentsStore.agents"
+          :statuses="agentStatuses"
+          :current-speaker="speakingAgentId"
+          @select-agent="handleAgentClick"
+        />
+
+        <!-- Agent filter indicator -->
+        <div v-if="agentFilter" class="filter-indicator">
+          <span>筛选: {{ agentsStore.getAgentById(agentFilter)?.name || agentFilter }}</span>
+          <button class="clear-filter-btn" @click="agentFilter = null">&times;</button>
+        </div>
+
+        <!-- Agenda Panel (only when agenda has items) -->
         <AgendaPanel
+          v-if="agenda && agenda.items.length > 0"
           :agenda="agenda"
           @view-summary="handleViewSummary"
           @skip-item="handleSkipAgendaItem"
           @add-item="handleAddAgendaItem"
         />
 
-        <!-- Round Table -->
-        <div class="round-table-container">
-          <RoundTable
-            :agents="agentsStore.agents.slice(0, 4)"
-            :statuses="agentStatuses"
-            :current-speaker="speakingAgentId"
-            @select-agent="handleAgentClick"
-          />
-        </div>
-
-        <!-- History Panel -->
-        <HistoryPanel
-          :messages="displayMessages"
-          :filter="historyFilter"
-          @filter-change="handleHistoryFilterChange"
+        <!-- Message Feed -->
+        <ChatContainer
+          :messages="filteredMessages"
+          :is-loading="isLoading"
+          class="message-feed"
         />
-      </aside>
+      </div>
 
-      <!-- Right Panel - Current Speech -->
+      <!-- Right Panel: Stage Summary -->
       <section class="right-panel">
-        <CurrentSpeech
-          :speaker="currentSpeaker"
-          :content="currentSpeechContent"
-          :is-streaming="isStreaming"
-        />
+        <StageSummaryPanel :messages="displayMessages" />
       </section>
     </main>
 
-    <!-- Chat Layout (for non-running discussions: pending, completed, failed) -->
+    <!-- Fallback layout (no discussion yet) -->
     <main v-else class="discussion-main-fallback">
       <ChatContainer
         :messages="displayMessages"
@@ -944,11 +919,11 @@ onUnmounted(() => {
   color: white;
 }
 
-/* Main content - Round Table Layout */
+/* Main content - Two Column Layout */
 .discussion-main {
   flex: 1;
   display: grid;
-  grid-template-columns: 55% 45%;
+  grid-template-columns: 60% 40%;
   gap: 12px;
   padding: 12px;
   overflow: hidden;
@@ -957,16 +932,40 @@ onUnmounted(() => {
 .left-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
+  min-height: 0;
   overflow: hidden;
 }
 
-.round-table-container {
-  flex-shrink: 0;
-  padding: 16px;
-  background: var(--bg-secondary);
-  border-radius: 6px;
+.message-feed {
+  flex: 1;
+  min-height: 0;
   border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.filter-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: rgba(10, 10, 10, 0.05);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.clear-filter-btn {
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-weak);
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.clear-filter-btn:hover {
+  color: var(--text-primary);
 }
 
 .right-panel {
@@ -1056,10 +1055,6 @@ onUnmounted(() => {
   .discussion-main {
     padding: 8px;
     gap: 8px;
-  }
-
-  .round-table-container {
-    display: none;
   }
 
   .right-panel {

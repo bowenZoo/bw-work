@@ -197,6 +197,12 @@ export function useGlobalDiscussion() {
         if (message.data.messages) {
           messages.value = message.data.messages.map(normalizeMessage);
         }
+        // Fallback: if sync returns no discussion, double-check via REST API.
+        // This handles edge cases like server restart where WebSocket state
+        // may not be populated yet but the API can still return the discussion.
+        if (!message.data.discussion) {
+          fetchCurrentDiscussionFallback();
+        }
         break;
 
       case 'viewers':
@@ -283,6 +289,30 @@ export function useGlobalDiscussion() {
       timestamp: msg.timestamp,
       sequence: msg.sequence,
     };
+  }
+
+  // Fallback: fetch current discussion via REST API when WebSocket sync returns null.
+  // Handles edge cases like server restart, race conditions, or stale WebSocket state.
+  let fallbackPending = false;
+  async function fetchCurrentDiscussionFallback() {
+    if (fallbackPending) return;
+    fallbackPending = true;
+    try {
+      const response = await api.post<JoinDiscussionResponse>(
+        '/api/discussions/current/join'
+      );
+      if (response.data?.discussion && !discussion.value) {
+        console.log('REST API fallback found discussion:', response.data.discussion.id);
+        discussion.value = response.data.discussion as GlobalDiscussion;
+        if (response.data.messages) {
+          messages.value = response.data.messages.map(normalizeMessage);
+        }
+      }
+    } catch {
+      // No discussion available - this is the expected case when truly empty
+    } finally {
+      fallbackPending = false;
+    }
   }
 
   // Handle agenda events

@@ -1,4 +1,7 @@
 {
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
   "permissions": {
     "allow": [
       "Bash(git add:*)",
@@ -82,7 +85,8 @@
       "Bash(.venv/bin/python3 << 'EOF'\nimport base64\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\n\n# Key from the file\nkey_b64 = \"bM8pDpM5vmXPjFag3OzGdOLByyaAfVe7wFkOOysvPtE=\"\nkey = base64.b64decode\\(key_b64\\)\n\n# Encrypted API key from database\nencrypted = \"8UFUxdgez2eS6AdgzXn0UMaNN11hQZBcHDXLyK50tu6q+8ZBLNLC/xVKLTxlesIoZGm3aDa5FTlCAm2a36QkN5tWQgzE+F5uWPYVN5osuQ==\"\n\n# Decrypt\ndata = base64.b64decode\\(encrypted\\)\nnonce = data[:12]\nciphertext = data[12:]\n\naesgcm = AESGCM\\(key\\)\nplaintext = aesgcm.decrypt\\(nonce, ciphertext, None\\)\napi_key = plaintext.decode\\('utf-8'\\)\n\nprint\\(f\"Decrypted API Key: {api_key}\"\\)\nEOF)",
       "Bash(grep:*)",
       "Skill(restart)",
-      "Skill(restart:*)"
+      "Skill(restart:*)",
+      "Bash(brew install:*)"
     ]
   }
 }

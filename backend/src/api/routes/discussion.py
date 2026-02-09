@@ -305,6 +305,50 @@ def cleanup_stale_discussions() -> int:
     return cleaned
 
 
+def restore_latest_discussion() -> None:
+    """Restore the most recent discussion as the current discussion on startup.
+
+    Scans persisted state files and loads the newest one, so that clients
+    connecting via WebSocket can see the last discussion's topic and messages.
+    Only restores if no current discussion is set (avoids overwriting a valid one).
+
+    Should be called from lifespan handler after cleanup_stale_discussions().
+    """
+    global _current_discussion
+    with _current_discussion_lock:
+        if _current_discussion is not None:
+            return  # Don't overwrite an existing (e.g. completed) discussion
+
+    if not _STATE_DIR.exists():
+        logger.info("No state directory found at %s, nothing to restore", _STATE_DIR.resolve())
+        return
+
+    latest: DiscussionState | None = None
+    latest_time = ""
+    file_count = 0
+
+    for path in _STATE_DIR.glob("*.json"):
+        file_count += 1
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            created_at = data.get("created_at", "")
+            if created_at > latest_time:
+                latest_time = created_at
+                latest = DiscussionState(**data)
+        except Exception as e:
+            logger.warning("Failed to parse state file %s: %s", path, e)
+
+    if latest is not None:
+        with _current_discussion_lock:
+            _current_discussion = latest
+        logger.info(
+            "Restored latest discussion on startup: id=%s, status=%s, topic=%s",
+            latest.id, latest.status, latest.topic[:50],
+        )
+    else:
+        logger.info("No restorable discussion found (%d state files scanned)", file_count)
+
+
 def set_current_discussion(discussion: DiscussionState | None) -> None:
     """Set the current global discussion.
 

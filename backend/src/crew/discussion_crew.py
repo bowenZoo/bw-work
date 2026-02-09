@@ -269,7 +269,7 @@ class DiscussionCrew:
         self._task_index = 0
         self._abort_reason: str | None = None
         self._unsaved_message_count = 0  # Track messages since last incremental save
-        self._INCREMENTAL_SAVE_INTERVAL = 3  # Save to disk every N messages
+        self._INCREMENTAL_SAVE_INTERVAL = 1  # Save to disk after every message
 
         # Pause/resume state
         self._pause_check_interval = 0.5  # seconds

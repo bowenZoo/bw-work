@@ -25,6 +25,7 @@ from src.api.routes import (
     memory_router,
     monitoring_router,
     project_router,
+    restore_latest_discussion,
 )
 from src.api.websocket import connection_manager, websocket_router
 from src.api.websocket.manager import global_connection_manager, set_event_loop
@@ -62,6 +63,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     cleaned = cleanup_stale_discussions()
     if cleaned:
         logger.info("Cleaned up %d stale discussion(s) on startup", cleaned)
+    # Restore latest discussion so WebSocket sync can serve it to new clients
+    restore_latest_discussion()
     yield
     # Shutdown
     connection_manager.stop_sweep_task()

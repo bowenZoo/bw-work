@@ -96,7 +96,7 @@ function handleAgentClick(agentId: string) {
   position: relative;
   width: 100%;
   aspect-ratio: 1;
-  max-width: 300px;
+  max-width: 200px;
   margin: 0 auto;
 }
 
@@ -105,8 +105,8 @@ function handleAgentClick(agentId: string) {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 60px;
-  height: 60px;
+  width: 40px;
+  height: 40px;
   background: var(--bg-tertiary);
   border-radius: 50%;
   display: flex;
@@ -117,7 +117,7 @@ function handleAgentClick(agentId: string) {
 }
 
 .center-icon {
-  font-size: 24px;
+  font-size: 18px;
 }
 
 .agent-seat {
@@ -157,12 +157,12 @@ function handleAgentClick(agentId: string) {
 
 .agent-avatar {
   position: relative;
-  width: 56px;
-  height: 56px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   overflow: hidden;
   background: var(--bg-secondary);
-  border: 3px solid var(--border-color);
+  border: 2px solid var(--border-color);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -176,7 +176,7 @@ function handleAgentClick(agentId: string) {
 }
 
 .avatar-fallback {
-  font-size: 24px;
+  font-size: 18px;
 }
 
 /* Status-based border colors */

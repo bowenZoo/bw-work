@@ -11,3 +11,5 @@ export { default as HistoryPanel } from './HistoryPanel.vue';
 export { default as AgendaSummaryModal } from './AgendaSummaryModal.vue';
 export { default as DiscussionChain } from './DiscussionChain.vue';
 export { default as DesignDocsPanel } from './DesignDocsPanel.vue';
+export { default as CompactAgentBar } from './CompactAgentBar.vue';
+export { default as StageSummaryPanel } from './StageSummaryPanel.vue';

@@ -130,12 +130,12 @@ watch(() => props.messages.length, async () => {
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid var(--border-color);
-  min-height: 100px;
-  max-height: 300px;
+  flex: 1;
+  min-height: 0;
 }
 
 .history-panel.collapsed {
-  max-height: 44px;
+  flex: 0 0 auto;
 }
 
 .panel-header {

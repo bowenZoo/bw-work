@@ -121,6 +121,10 @@ async def global_websocket_endpoint(websocket: WebSocket) -> None:
     try:
         # Send current discussion state and historical messages
         current = _get_current_discussion()
+        logger.info(
+            "WebSocket sync: current_discussion=%s",
+            f"id={current.id}, status={current.status}" if current else "None",
+        )
         if current:
             # Load historical messages
             stored = _discussion_memory.load(current.id)
@@ -152,6 +156,15 @@ async def global_websocket_endpoint(websocket: WebSocket) -> None:
                         "error": current.error,
                     },
                     "messages": messages,
+                },
+            })
+        else:
+            # No current discussion - send empty sync so frontend resets state
+            await websocket.send_json({
+                "type": "sync",
+                "data": {
+                    "discussion": None,
+                    "messages": [],
                 },
             })
 
