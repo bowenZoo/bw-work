@@ -113,6 +113,17 @@ function formatDate(isoStr: string): string {
 }
 
 const isEmpty = computed(() => !isLoading.value && files.value.length === 0)
+
+function downloadCurrentFile() {
+  if (!selectedContent.value) return
+  const blob = new Blob([selectedContent.value.content], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = selectedContent.value.filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
 </script>
 
 <template>
@@ -218,7 +229,20 @@ const isEmpty = computed(() => !isLoading.value && files.value.length === 0)
                 <div class="loading-spinner"></div>
                 <span>加载中...</span>
               </div>
-              <div v-else-if="selectedContent" class="markdown-body" v-html="renderedContent"></div>
+              <template v-else-if="selectedContent">
+                <div class="preview-toolbar">
+                  <span class="preview-filename">{{ selectedContent.filename }}</span>
+                  <button class="btn btn-download" @click="downloadCurrentFile" title="下载文档">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    <span>下载</span>
+                  </button>
+                </div>
+                <div class="markdown-body" v-html="renderedContent"></div>
+              </template>
               <div v-else class="preview-placeholder">
                 <p>选择左侧文件查看内容</p>
               </div>
@@ -526,6 +550,46 @@ const isEmpty = computed(() => !isLoading.value && files.value.length === 0)
   flex: 1;
   overflow-y: auto;
   padding: 24px 32px;
+}
+
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color, #2d2d44);
+}
+
+.preview-filename {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  font-family: monospace;
+}
+
+.btn-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--text-secondary, #888);
+  background: transparent;
+  border: 1px solid var(--border-color, #2d2d44);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-download svg {
+  width: 16px;
+  height: 16px;
+}
+
+.btn-download:hover {
+  color: var(--primary-color, #6366f1);
+  border-color: var(--primary-color, #6366f1);
+  background: rgba(99, 102, 241, 0.1);
 }
 
 .preview-placeholder {

@@ -134,6 +134,17 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`
 }
 
+function downloadCurrentFile() {
+  if (!selectedContent.value) return
+  const blob = new Blob([selectedContent.value.content], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = selectedContent.value.filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 const renderedContent = computed(() => {
   if (!selectedContent.value?.content) return ''
   return toSanitizedMarkdownHtml(selectedContent.value.content)
@@ -189,7 +200,19 @@ const renderedContent = computed(() => {
           <div class="loading-spinner"></div>
           <span>加载中...</span>
         </div>
-        <div v-else-if="selectedContent" class="markdown-body" v-html="renderedContent"></div>
+        <template v-else-if="selectedContent">
+          <div class="content-toolbar">
+            <button class="download-btn" @click="downloadCurrentFile" title="下载文档">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              <span>下载</span>
+            </button>
+          </div>
+          <div class="markdown-body" v-html="renderedContent"></div>
+        </template>
         <div v-else class="empty-state">
           <span class="empty-text">选择文件查看内容</span>
         </div>
@@ -263,6 +286,36 @@ const renderedContent = computed(() => {
   flex: 1;
   overflow-y: auto;
   padding: 14px;
+}
+
+.content-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.download-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.download-btn:hover {
+  color: var(--primary-color);
+  border-color: var(--primary-color);
 }
 
 .loading-state {
