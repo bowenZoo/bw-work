@@ -8,6 +8,7 @@ pydantic-settings>=2.1.0
 pyyaml>=6.0.1
 httpx>=0.25.0
 openai>=1.0.0
+langchain-openai>=1.0.0
 
 # Document parsing dependencies (for GDD processing)
 pymupdf>=1.23.0  # PDF parsing

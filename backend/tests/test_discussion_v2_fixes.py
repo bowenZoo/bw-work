@@ -4,16 +4,18 @@ Covers: WebSocket route ordering, path traversal protection,
 stale discussion cleanup, API endpoint validation.
 """
 
+import asyncio
 import json
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from src.api.main import app
+from src.api.routes import discussion as discussion_module
 from src.api.routes.discussion import (
     DiscussionState,
     DiscussionStatus,
@@ -23,6 +25,7 @@ from src.api.routes.discussion import (
     get_current_discussion,
     set_current_discussion,
 )
+from src.memory.discussion_memory import DiscussionMemory
 
 
 @pytest.fixture
@@ -30,12 +33,94 @@ def client():
     return TestClient(app)
 
 
+# Track files that existed before the test session started,
+# so we can clean up anything created by tests.
+_prod_state_dir = discussion_module._STATE_DIR
+_prod_disc_dir = Path(discussion_module._discussion_memory.data_dir) / "default" / "discussions"
+
+
 @pytest.fixture(autouse=True)
-def reset_state():
-    """Reset global discussion state before/after each test."""
+def reset_state(tmp_path):
+    """Reset global discussion state and redirect disk I/O to tmp dirs."""
     set_current_discussion(None)
+
+    # Clean up any leftovers from previous test's background threads
+    _cleanup_test_artifacts()
+
+    # Snapshot existing files so we know what to preserve
+    _snapshot_prod_files()
+
+    # Redirect _STATE_DIR to a temp directory so tests don't pollute prod data
+    tmp_state_dir = tmp_path / "state"
+    tmp_state_dir.mkdir()
+    discussion_module._STATE_DIR = tmp_state_dir
+
+    # Redirect _discussion_memory to a temp directory
+    original_memory = discussion_module._discussion_memory
+    discussion_module._discussion_memory = DiscussionMemory(
+        data_dir=str(tmp_path / "projects"),
+    )
+
+    # Also redirect the handler's _discussion_memory
+    from src.api.websocket import handlers as ws_handlers
+    original_ws_memory = ws_handlers._discussion_memory
+    ws_handlers._discussion_memory = discussion_module._discussion_memory
+
+    # Mock background task launchers to prevent stale writes to prod dirs
+    _noop_async = AsyncMock()
+    patches = [
+        patch.object(discussion_module, "_run_discussion_async", _noop_async),
+        patch.object(discussion_module, "_run_discussion_extend_async", _noop_async),
+    ]
+    for p in patches:
+        p.start()
+
     yield
+
+    for p in patches:
+        p.stop()
+
+    # Restore originals
     set_current_discussion(None)
+    discussion_module._STATE_DIR = _prod_state_dir
+    discussion_module._discussion_memory = original_memory
+    ws_handlers._discussion_memory = original_ws_memory
+
+    # Best-effort cleanup (background threads may still be writing)
+    _cleanup_test_artifacts()
+
+
+# Files that existed before tests — these should not be deleted
+_preserved_state_files: set[Path] = set()
+_preserved_disc_files: set[Path] = set()
+
+
+def _snapshot_prod_files():
+    global _preserved_state_files, _preserved_disc_files
+    _preserved_state_files = set(_prod_state_dir.glob("*.json")) if _prod_state_dir.exists() else set()
+    _preserved_disc_files = set(_prod_disc_dir.glob("*.json")) if _prod_disc_dir.exists() else set()
+
+
+def _cleanup_test_artifacts():
+    """Remove files created by test background threads in prod dirs."""
+    if _prod_state_dir.exists():
+        for f in _prod_state_dir.glob("*.json"):
+            if f not in _preserved_state_files:
+                f.unlink(missing_ok=True)
+    if _prod_disc_dir.exists():
+        for f in _prod_disc_dir.glob("*.json"):
+            if f not in _preserved_disc_files:
+                f.unlink(missing_ok=True)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def final_cleanup():
+    """Final cleanup after all tests — waits for background threads then cleans."""
+    _snapshot_prod_files()
+    yield
+    # Wait for straggler background threads to finish
+    time.sleep(1)
+    _cleanup_test_artifacts()
 
 
 # ============================================================
@@ -59,9 +144,9 @@ class TestWebSocketRouteOrdering:
     def test_global_websocket_ping_pong(self, client):
         """Global WebSocket should respond to ping with pong."""
         with client.websocket_connect("/ws/discussion") as ws:
-            # Consume initial messages: sync (always sent) + viewers + viewers (connect broadcast)
+            # Consume initial messages: sync + lobby_sync + viewers + viewers (connect broadcast)
             msgs_to_consume = []
-            for _ in range(3):
+            for _ in range(4):
                 msgs_to_consume.append(ws.receive_json())
             msg_types = [m["type"] for m in msgs_to_consume]
             assert "sync" in msg_types, f"Expected sync in initial messages, got {msg_types}"
@@ -72,8 +157,12 @@ class TestWebSocketRouteOrdering:
             assert response["type"] == "pong"
 
     def test_per_discussion_websocket_still_works(self, client):
-        """Per-discussion WebSocket at /ws/{id} should still work."""
+        """Per-discussion WebSocket at /ws/{id} should send sync then handle ping."""
         with client.websocket_connect("/ws/test-123") as ws:
+            # First message is the initial sync
+            sync_response = ws.receive_json()
+            assert sync_response["type"] == "sync"
+            # Then ping/pong should work
             ws.send_json({"type": "ping"})
             response = ws.receive_json()
             assert response["type"] == "pong"
@@ -91,17 +180,14 @@ class TestWebSocketRouteOrdering:
         set_current_discussion(discussion)
 
         with client.websocket_connect("/ws/discussion") as ws:
-            # Collect all initial messages
+            # Collect all initial messages: sync + lobby_sync + viewers + viewers
             messages = []
-            msg = ws.receive_json()
-            messages.append(msg)
-            # If sync was sent, expect viewers too
-            if msg["type"] == "sync":
-                msg2 = ws.receive_json()
-                messages.append(msg2)
+            for _ in range(4):
+                messages.append(ws.receive_json())
 
             types = [m["type"] for m in messages]
             assert "viewers" in types, f"Expected 'viewers' in {types}"
+            assert "lobby_sync" in types, f"Expected 'lobby_sync' in {types}"
 
             # If sync was received, verify its content
             sync_msgs = [m for m in messages if m["type"] == "sync"]
@@ -217,8 +303,8 @@ class TestStaleDiscussionCleanup:
         assert data["topic"] == "Fresh new discussion"
         assert data["id"] != "stale-old"
 
-    def test_post_current_returns_existing_running(self, client):
-        """POST /api/discussions/current returns existing recent discussion."""
+    def test_post_current_creates_new_even_when_running(self, client):
+        """POST /api/discussions/current always creates a new discussion (multi-discussion support)."""
         recent = DiscussionState(
             id="recent-running",
             topic="Recent running discussion",
@@ -231,13 +317,13 @@ class TestStaleDiscussionCleanup:
 
         response = client.post(
             "/api/discussions/current",
-            json={"topic": "Should not create", "rounds": 2},
+            json={"topic": "New concurrent discussion", "rounds": 2},
         )
         assert response.status_code == 200
         data = response.json()
-        # Returns existing discussion with a message
-        assert data["id"] == "recent-running"
-        assert data["message"] is not None  # "讨论已在进行中，已自动加入"
+        # A new discussion should always be created
+        assert data["id"] != "recent-running"
+        assert data["topic"] == "New concurrent discussion"
 
 
 # ============================================================

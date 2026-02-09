@@ -67,6 +67,10 @@ export const useAgentsStore = defineStore('agents', () => {
     agents.value.filter(agent => agent.status === 'thinking')
   );
 
+  const writingAgent = computed(() =>
+    agents.value.find(agent => agent.status === 'writing')
+  );
+
   const getAgentById = computed(() => (id: string) =>
     agents.value.find(agent => agent.id === id)
   );
@@ -96,17 +100,52 @@ export const useAgentsStore = defineStore('agents', () => {
     });
   }
 
+  /**
+   * Set which agents are active for the current discussion.
+   * Agents not in the list get filtered out of display.
+   */
+  const activeAgentIds = ref<string[] | null>(null);
+
+  const activeAgents = computed(() => {
+    if (!activeAgentIds.value) return agents.value;
+    return agents.value.filter(a => activeAgentIds.value!.includes(a.id));
+  });
+
+  function setDiscussionAgents(agentIds: string[]) {
+    activeAgentIds.value = agentIds;
+  }
+
+  function clearDiscussionAgents() {
+    activeAgentIds.value = null;
+  }
+
+  /**
+   * Bulk set agent statuses (from sync message).
+   */
+  function setDiscussionAgentStatuses(statuses: Record<string, AgentStatus>) {
+    resetAllAgentsStatus();
+    for (const [agentId, status] of Object.entries(statuses)) {
+      setAgentStatus(agentId, status);
+    }
+  }
+
   return {
     // State
     agents,
+    activeAgentIds,
     // Getters
     speakingAgent,
     thinkingAgents,
+    writingAgent,
     getAgentById,
     getAgentByRole,
+    activeAgents,
     // Actions
     setAgentStatus,
     setAgentStatusByRole,
     resetAllAgentsStatus,
+    setDiscussionAgents,
+    clearDiscussionAgents,
+    setDiscussionAgentStatuses,
   };
 });

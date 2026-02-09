@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -175,13 +176,58 @@ async def organize_discussion(discussion_id: str) -> OrganizeResponse:
     return result
 
 
+def _get_realtime_docs_dir(discussion_id: str, project_id: str = "default") -> Path | None:
+    """Get the real-time docs directory for a discussion (created by DocWriter)."""
+    docs_dir = Path("data/projects") / project_id / discussion_id / "docs"
+    if docs_dir.exists() and any(docs_dir.glob("*.md")):
+        return docs_dir
+    return None
+
+
+def _list_realtime_docs(docs_dir: Path) -> list[DesignDocItem]:
+    """List .md files from a real-time docs directory."""
+    import re
+    from datetime import datetime
+
+    result = []
+    for path in sorted(docs_dir.glob("*.md")):
+        content = path.read_text(encoding="utf-8")
+        title_match = re.match(r"^#\s+(.+)", content)
+        title = title_match.group(1) if title_match else path.stem
+        stat = path.stat()
+        result.append(DesignDocItem(
+            filename=path.name,
+            title=title,
+            size=len(content.encode("utf-8")),
+            created_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        ))
+    return result
+
+
 @router.get("/{discussion_id}/design-docs", response_model=DesignDocsListResponse)
 async def list_design_docs(discussion_id: str) -> DesignDocsListResponse:
-    """List all organized design documents for a discussion."""
+    """List all organized design documents for a discussion.
+
+    Checks real-time docs directory first (from DocWriter during document-centric mode),
+    then falls back to DocOrganizer index.
+    """
     state = get_discussion_state(discussion_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
+    # Try real-time docs first
+    rt_dir = _get_realtime_docs_dir(discussion_id)
+    if rt_dir:
+        files = _list_realtime_docs(rt_dir)
+        if files:
+            return DesignDocsListResponse(
+                discussion_id=discussion_id,
+                topic=state.topic,
+                files=files,
+                created_at=files[0].created_at if files else None,
+            )
+
+    # Fallback to DocOrganizer
     organizer = DocOrganizer()
     index = organizer.load_index("default", discussion_id)
 
@@ -209,30 +255,112 @@ async def list_design_docs(discussion_id: str) -> DesignDocsListResponse:
     )
 
 
-@router.get("/{discussion_id}/design-docs/{filename}", response_model=DesignDocContentResponse)
+@router.get("/{discussion_id}/design-docs/{filename:path}", response_model=DesignDocContentResponse)
 async def get_design_doc(discussion_id: str, filename: str) -> DesignDocContentResponse:
-    """Get the content of a single design document."""
+    """Get the content of a single design document.
+
+    Checks real-time docs directory first, then falls back to DocOrganizer.
+    """
+    import re
+
     state = get_discussion_state(discussion_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
+    # Sanitize filename to prevent path traversal
+    safe_filename = Path(filename).name
+
+    # Try real-time docs first
+    rt_dir = _get_realtime_docs_dir(discussion_id)
+    if rt_dir:
+        filepath = rt_dir / safe_filename
+        if filepath.exists() and filepath.resolve().is_relative_to(rt_dir.resolve()):
+            content = filepath.read_text(encoding="utf-8")
+            title_match = re.match(r"^#\s+(.+)", content)
+            title = title_match.group(1) if title_match else filepath.stem
+            return DesignDocContentResponse(
+                filename=safe_filename,
+                title=title,
+                content=content,
+            )
+
+    # Fallback to DocOrganizer
     organizer = DocOrganizer()
 
-    # Get title from index
     index = organizer.load_index("default", discussion_id)
-    title = filename
+    title = safe_filename
     if index:
         for f in index.get("files", []):
-            if f["filename"] == filename:
-                title = f.get("title", filename)
+            if f["filename"] == safe_filename:
+                title = f.get("title", safe_filename)
                 break
 
-    content = organizer.load_document("default", discussion_id, filename)
+    content = organizer.load_document("default", discussion_id, safe_filename)
     if content is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
     return DesignDocContentResponse(
-        filename=filename,
+        filename=safe_filename,
         title=title,
         content=content,
     )
+
+
+# ============================================================
+# Document-centric API Endpoints
+# ============================================================
+
+
+class FocusSectionRequest(BaseModel):
+    """Request to focus on a specific section."""
+
+    section_id: str = Field(..., description="Section ID to focus on (e.g., 's1')")
+
+
+class DocPlanResponse(BaseModel):
+    """Response for doc plan."""
+
+    discussion_id: str
+    doc_plan: dict | None = None
+
+
+@router.get("/{discussion_id}/doc-plan", response_model=DocPlanResponse)
+async def get_doc_plan(discussion_id: str) -> DocPlanResponse:
+    """Get the document plan for a discussion."""
+    state = get_discussion_state(discussion_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    # Load from discussion memory
+    stored = _discussion_memory.load(discussion_id)
+    doc_plan = stored.doc_plan if stored else None
+
+    return DocPlanResponse(
+        discussion_id=discussion_id,
+        doc_plan=doc_plan,
+    )
+
+
+@router.post("/{discussion_id}/focus-section")
+async def focus_section(discussion_id: str, request: FocusSectionRequest):
+    """User requests to jump to a specific section for discussion.
+
+    Injects a focus: message into the discussion state so the next
+    round picks up the specified section.
+    """
+    from src.crew.discussion_crew import add_injected_message
+
+    state = get_discussion_state(discussion_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    if state.status not in (DiscussionStatus.RUNNING,):
+        raise HTTPException(status_code=400, detail="讨论未在运行中")
+
+    add_injected_message(discussion_id, {
+        "role": "user",
+        "content": f"focus:{request.section_id}",
+        "source": "intervention",
+    })
+
+    return {"status": "ok", "message": f"已请求跳转到章节 {request.section_id}"}

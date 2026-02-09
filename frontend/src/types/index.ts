@@ -1,5 +1,5 @@
 // Agent status types
-export type AgentStatus = 'thinking' | 'speaking' | 'idle';
+export type AgentStatus = 'thinking' | 'speaking' | 'idle' | 'writing';
 
 export type AgentRole = 'lead_planner' | 'system_designer' | 'number_designer' | 'player_advocate' | 'visual_concept';
 
@@ -103,6 +103,7 @@ export interface DiscussionSummary {
   topic: string;
   summary: string | null;
   message_count: number;
+  doc_count: number;
   status: string | null;
   created_at: string;
   updated_at: string;
@@ -240,4 +241,126 @@ export interface OrganizeResponse {
   file_count: number;
   files: DesignDocItem[];
   message: string;
+}
+
+// Round summary types
+export interface RoundSummary {
+  round: number;
+  content: string;
+  key_points: string[];
+  open_questions: string[];
+  generated_at: string;
+}
+
+export interface RoundSummariesResponse {
+  discussion_id: string;
+  summaries: RoundSummary[];
+}
+
+// Doc update WebSocket event
+export interface DocUpdateEvent {
+  discussion_id: string;
+  round: number;
+  file_count: number;
+  files: { filename: string; title: string }[];
+  generated_at: string;
+}
+
+// Document-centric discussion types
+export type SectionStatus = 'pending' | 'in_progress' | 'completed'
+
+export interface SectionPlan {
+  id: string
+  title: string
+  description: string
+  status: SectionStatus
+}
+
+export interface FilePlan {
+  filename: string
+  title: string
+  sections: SectionPlan[]
+}
+
+export interface DocPlan {
+  discussion_id: string
+  topic: string
+  files: FilePlan[]
+  current_section_id: string | null
+}
+
+// Document-centric WebSocket events
+export interface DocPlanWsEvent {
+  type: 'doc_plan'
+  data: {
+    discussion_id: string
+    doc_plan: DocPlan
+    timestamp: string
+  }
+}
+
+export interface SectionFocusWsEvent {
+  type: 'section_focus'
+  data: {
+    discussion_id: string
+    section_id: string
+    section_title: string
+    filename: string
+    timestamp: string
+  }
+}
+
+export interface SectionUpdateWsEvent {
+  type: 'section_update'
+  data: {
+    discussion_id: string
+    filename: string
+    section_id: string
+    content: string
+    timestamp: string
+  }
+}
+
+// Agent configuration for customization
+export interface AgentConfig {
+  role: string
+  goal: string
+  backstory: string
+  focus_areas: string[]
+  communication_style?: string
+}
+
+// Lobby (active discussions list)
+export interface LobbyDiscussion {
+  id: string
+  topic: string
+  rounds: number
+  status: DiscussionStatus
+  created_at: string
+  agents: string[]
+}
+
+// Create discussion request with agent customization
+export interface CreateCurrentDiscussionRequest {
+  topic: string
+  rounds?: number
+  auto_pause_interval?: number
+  attachment?: AttachmentInfo | null
+  agents?: string[]
+  agent_configs?: Record<string, Partial<AgentConfig>>
+}
+
+// Create discussion response (from POST /current)
+export interface CreateCurrentDiscussionResponse {
+  id: string
+  topic: string
+  rounds: number
+  status: DiscussionStatus
+  created_at: string
+  message?: string | null
+}
+
+// Available agents response
+export interface AvailableAgentsResponse {
+  agents: Record<string, AgentConfig>
 }

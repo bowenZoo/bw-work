@@ -392,39 +392,44 @@ class GlobalConnectionManager:
 global_connection_manager = GlobalConnectionManager()
 
 
-def broadcast_sync(message: dict[str, Any], discussion_id: str | None = None) -> None:
+def broadcast_sync(
+    message: dict[str, Any],
+    discussion_id: str | None = None,
+    lobby_event: bool = False,
+) -> None:
     """Broadcast a message from synchronous code.
 
     This function bridges sync code (like CrewAI callbacks) to async WebSocket broadcast.
-    Uses the global connection manager by default. If discussion_id is provided,
-    also broadcasts to the per-discussion connection manager for backward compatibility.
 
     Args:
         message: The message data to send.
-        discussion_id: Optional discussion ID for per-discussion broadcast (deprecated).
+        discussion_id: Target specific discussion connections.
+        lobby_event: If True, also broadcast to global (lobby) connections.
     """
     if _main_loop is None:
         logger.warning("broadcast_sync: _main_loop is None! Message type=%s DROPPED", message.get("type"))
         return
 
     logger.debug(
-        "broadcast_sync: type=%s, global_clients=%d, discussion_id=%s",
+        "broadcast_sync: type=%s, global_clients=%d, discussion_id=%s, lobby=%s",
         message.get("type"),
         global_connection_manager.connection_count,
         discussion_id,
+        lobby_event,
     )
 
     try:
-        # Broadcast to all global connections
-        asyncio.run_coroutine_threadsafe(
-            global_connection_manager.broadcast(message),
-            _main_loop,
-        )
-
-        # Also broadcast to per-discussion connections for backward compatibility
+        # Per-discussion broadcast
         if discussion_id:
             asyncio.run_coroutine_threadsafe(
                 connection_manager.broadcast(discussion_id, message),
+                _main_loop,
+            )
+
+        # Lobby broadcast (for lifecycle events visible to all)
+        if lobby_event:
+            asyncio.run_coroutine_threadsafe(
+                global_connection_manager.broadcast(message),
                 _main_loop,
             )
     except Exception as exc:

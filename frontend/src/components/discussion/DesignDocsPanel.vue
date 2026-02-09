@@ -2,6 +2,7 @@
 import { ref, watch, computed } from 'vue'
 import type { DesignDocItem, DesignDocContentResponse } from '@/types'
 import { listDesignDocs, getDesignDoc, organizeDiscussion } from '@/api/design-docs'
+import { toSanitizedMarkdownHtml } from '@/utils/markdown'
 
 const props = defineProps<{
   visible: boolean
@@ -94,6 +95,11 @@ function handleOverlayClick(event: MouseEvent) {
     handleClose()
   }
 }
+
+const renderedContent = computed(() => {
+  if (!selectedContent.value?.content) return ''
+  return toSanitizedMarkdownHtml(selectedContent.value.content)
+})
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -212,7 +218,7 @@ const isEmpty = computed(() => !isLoading.value && files.value.length === 0)
                 <div class="loading-spinner"></div>
                 <span>加载中...</span>
               </div>
-              <div v-else-if="selectedContent" class="markdown-body" v-html="renderMarkdown(selectedContent.content)"></div>
+              <div v-else-if="selectedContent" class="markdown-body" v-html="renderedContent"></div>
               <div v-else class="preview-placeholder">
                 <p>选择左侧文件查看内容</p>
               </div>
@@ -224,37 +230,6 @@ const isEmpty = computed(() => !isLoading.value && files.value.length === 0)
   </Teleport>
 </template>
 
-<script lang="ts">
-function renderMarkdown(text: string): string {
-  if (!text) return ''
-  return text
-    .replace(/^#### (.+)$/gm, '<h5 class="md-h5">$1</h5>')
-    .replace(/^### (.+)$/gm, '<h4 class="md-h4">$1</h4>')
-    .replace(/^## (.+)$/gm, '<h3 class="md-h3">$1</h3>')
-    .replace(/^# (.+)$/gm, '<h2 class="md-h2">$1</h2>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code>$1</code>')
-    .replace(/^\|(.+)\|$/gm, (match) => {
-      const cells = match.split('|').filter(Boolean).map(c => c.trim())
-      if (cells.every(c => /^[-:]+$/.test(c))) return ''
-      const tag = 'td'
-      return '<tr>' + cells.map(c => `<${tag}>${c}</${tag}>`).join('') + '</tr>'
-    })
-    .replace(/(<tr>.*<\/tr>\n?)+/g, '<table>$&</table>')
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>')
-    .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br>')
-}
-
-export default {
-  methods: {
-    renderMarkdown
-  }
-}
-</script>
 
 <style scoped>
 .panel-overlay {

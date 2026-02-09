@@ -35,6 +35,7 @@ class VisualConceptAgent(BaseAgent):
     def __init__(
         self,
         llm: Any | None = None,
+        config_overrides: dict | None = None,
         image_service: ImageService | None = None,
         style_manager: StyleManager | None = None,
         project_id: str = "",
@@ -43,11 +44,12 @@ class VisualConceptAgent(BaseAgent):
 
         Args:
             llm: Optional LLM instance.
+            config_overrides: Optional dict to override role config values.
             image_service: Image generation service instance.
             style_manager: Style manager instance.
             project_id: Current project ID for image storage.
         """
-        super().__init__(llm)
+        super().__init__(llm, config_overrides=config_overrides)
         self._image_service = image_service
         self._style_manager = style_manager
         self._project_id = project_id

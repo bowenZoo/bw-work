@@ -81,6 +81,8 @@ class DiscussionState(BaseModel):
     error: str | None = None
     attachment: AttachmentInfo | None = None
     continued_from: str | None = None  # 原讨论 ID（如果是续前讨论）
+    agents: list[str] = Field(default_factory=list)  # 参与的 agent role_name 列表
+    agent_configs: dict = Field(default_factory=dict)  # role_name -> config 覆盖
 
 
 class GetDiscussionResponse(BaseModel):
@@ -131,6 +133,22 @@ class ContinueDiscussionResponse(BaseModel):
     message: str = Field(..., description="Status message")
 
 
+class ExtendDiscussionRequest(BaseModel):
+    """Request body for extending a completed discussion with more rounds."""
+
+    follow_up: str = Field(default="", description="Follow-up topic or question")
+    additional_rounds: int = Field(default=10, ge=1, le=50, description="Additional rounds to discuss")
+
+
+class ExtendDiscussionResponse(BaseModel):
+    """Response for extending a discussion."""
+
+    id: str = Field(..., description="Discussion ID (same as original)")
+    topic: str = Field(..., description="Discussion topic")
+    status: DiscussionStatus = Field(..., description="Current status")
+    message: str = Field(..., description="Status message")
+
+
 class SummaryResponse(BaseModel):
     """Response containing discussion summary."""
 
@@ -153,6 +171,7 @@ class DiscussionSummaryItem(BaseModel):
     topic: str
     summary: str | None = None
     message_count: int = 0
+    doc_count: int = 0
     status: str | None = None
     created_at: str
     updated_at: str
@@ -189,6 +208,8 @@ class CreateCurrentDiscussionRequest(BaseModel):
     rounds: int = Field(default=10, ge=1, le=50, description="Number of discussion rounds")
     auto_pause_interval: int = Field(default=5, ge=0, le=50, description="Auto-pause every N rounds (0=disabled)")
     attachment: AttachmentInfo | None = Field(default=None, description="Optional markdown attachment")
+    agents: list[str] = Field(default_factory=list, description="Agent role names to participate")
+    agent_configs: dict = Field(default_factory=dict, description="Per-agent config overrides")
 
 
 class CreateCurrentDiscussionResponse(BaseModel):
@@ -213,7 +234,7 @@ class JoinDiscussionResponse(BaseModel):
 _STATE_DIR = Path(os.environ.get("DISCUSSION_STATUS_DIR", "data/projects/.discussion_state"))
 _state_lock = threading.Lock()
 _DISCUSSION_EXECUTOR = ThreadPoolExecutor(
-    max_workers=int(os.environ.get("DISCUSSION_MAX_WORKERS", "4"))
+    max_workers=int(os.environ.get("DISCUSSION_MAX_WORKERS", "8"))
 )
 
 # In-memory cache for quick reads (also persisted to disk)
@@ -229,6 +250,9 @@ _summaries: dict[str, SummaryResponse] = {}
 _current_discussion: DiscussionState | None = None
 _current_discussion_lock = threading.RLock()
 
+# Per-discussion agent statuses: discussion_id -> {agent_id -> status}
+_per_discussion_agent_statuses: dict[str, dict[str, str]] = {}
+
 
 def get_current_discussion() -> DiscussionState | None:
     """Get the current global discussion.
@@ -238,6 +262,26 @@ def get_current_discussion() -> DiscussionState | None:
     """
     with _current_discussion_lock:
         return _current_discussion
+
+
+def get_agent_statuses(discussion_id: str | None = None) -> dict[str, str]:
+    """Get current agent statuses for a discussion."""
+    if discussion_id:
+        return dict(_per_discussion_agent_statuses.get(discussion_id, {}))
+    return {}
+
+
+def set_agent_status(discussion_id: str, agent_id: str, status: str) -> None:
+    """Update a single agent's status for a discussion."""
+    _per_discussion_agent_statuses.setdefault(discussion_id, {})[agent_id] = status
+
+
+def reset_agent_statuses(discussion_id: str | None = None) -> None:
+    """Reset agent statuses. If discussion_id given, reset only that discussion."""
+    if discussion_id:
+        _per_discussion_agent_statuses.pop(discussion_id, None)
+    else:
+        _per_discussion_agent_statuses.clear()
 
 
 def cleanup_stale_discussions() -> int:
@@ -515,11 +559,16 @@ def _run_discussion_sync(discussion_id: str) -> None:
         if llm is None:
             raise RuntimeError("LLM not configured. Please configure OpenAI API key in admin panel.")
 
-        crew = DiscussionCrew(discussion_id=discussion_id, llm=llm, enable_visual_concept=True)
-        result = crew.run_orchestrated(
+        crew = DiscussionCrew(
+            discussion_id=discussion_id,
+            llm=llm,
+            enable_visual_concept=True,
+            agent_roles=discussion.agents or None,
+            agent_configs=discussion.agent_configs or None,
+        )
+        result = crew.run_document_centric(
             topic=discussion.topic,
             max_rounds=discussion.rounds,
-            verbose=False,
             attachment=discussion.attachment.content if discussion.attachment else None,
             auto_pause_interval=discussion.auto_pause_interval,
         )
@@ -580,6 +629,110 @@ async def _run_discussion_async(discussion_id: str) -> None:
         logger.error("Discussion async wrapper failed for %s: %s", discussion_id, e, exc_info=True)
 
 
+def _run_discussion_extend_sync(
+    discussion_id: str,
+    follow_up: str,
+    additional_rounds: int,
+) -> None:
+    """Run discussion extension synchronously (for background task)."""
+    logger.info("Extending discussion %s (+%d rounds)", discussion_id, additional_rounds)
+    discussion = get_discussion_state(discussion_id)
+    if discussion is None:
+        logger.error("Discussion %s not found for extend", discussion_id)
+        return
+
+    try:
+        llm = _get_llm_from_config()
+        if llm is None:
+            raise RuntimeError("LLM not configured.")
+
+        crew = DiscussionCrew(
+            discussion_id=discussion_id,
+            llm=llm,
+            enable_visual_concept=True,
+            agent_roles=discussion.agents or None,
+            agent_configs=discussion.agent_configs or None,
+        )
+        result = crew.extend_orchestrated(
+            topic=discussion.topic,
+            follow_up=follow_up,
+            additional_rounds=additional_rounds,
+        )
+
+        discussion.result = result
+        discussion.status = DiscussionStatus.COMPLETED
+        discussion.completed_at = datetime.utcnow().isoformat()
+        save_discussion_state(discussion)
+
+        current = get_current_discussion()
+        if current and current.id == discussion_id:
+            set_current_discussion(discussion)
+
+        try:
+            _auto_organize_docs(discussion_id)
+        except Exception as org_err:
+            logger.warning("Auto-organize failed for extend %s: %s", discussion_id, org_err)
+
+    except Exception as e:
+        logger.error("Discussion extend %s failed: %s", discussion_id, e)
+        discussion.status = DiscussionStatus.FAILED
+        discussion.error = str(e)
+        discussion.completed_at = datetime.utcnow().isoformat()
+        save_discussion_state(discussion)
+
+        try:
+            error_event = create_error_event(
+                discussion_id=discussion_id, content=str(e)
+            )
+            broadcast_sync(error_event.to_dict(), discussion_id=discussion_id)
+            status_event = create_status_event(
+                discussion_id=discussion_id,
+                agent_id="discussion",
+                agent_role="discussion",
+                status=AgentStatus.IDLE,
+                content="discussion_failed",
+            )
+            broadcast_sync(status_event.to_dict(), discussion_id=discussion_id)
+        except Exception:
+            logger.debug("Failed to broadcast extend failure event")
+
+        current = get_current_discussion()
+        if current and current.id == discussion_id:
+            set_current_discussion(discussion)
+
+
+async def _run_discussion_extend_async(
+    discussion_id: str,
+    follow_up: str,
+    additional_rounds: int,
+) -> None:
+    """Run discussion extension in thread pool."""
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            _DISCUSSION_EXECUTOR,
+            _run_discussion_extend_sync,
+            discussion_id,
+            follow_up,
+            additional_rounds,
+        )
+    except Exception as e:
+        logger.error("Extend async wrapper failed for %s: %s", discussion_id, e, exc_info=True)
+
+
+def _get_doc_count(discussion_id: str, project_id: str = "default") -> int:
+    """Get the number of design documents for a discussion."""
+    try:
+        from src.agents.doc_organizer import DocOrganizer
+        organizer = DocOrganizer()
+        index = organizer.load_index(project_id, discussion_id)
+        if index and "files" in index:
+            return len(index["files"])
+    except Exception:
+        pass
+    return 0
+
+
 @router.get("", response_model=DiscussionListResponse)
 async def list_discussions(
     page: int = 1,
@@ -606,6 +759,7 @@ async def list_discussions(
                 topic=disc.topic,
                 summary=disc.summary,
                 message_count=len(disc.messages),
+                doc_count=_get_doc_count(disc.id, disc.project_id),
                 status=status,
                 created_at=disc.created_at.isoformat(),
                 updated_at=disc.updated_at.isoformat(),
@@ -679,40 +833,7 @@ async def create_current_discussion(
     The discussion is automatically started after creation.
     """
     with _current_discussion_lock:
-        current = get_current_discussion()
-        if current and current.status == DiscussionStatus.RUNNING:
-            # Check if the discussion is stale (running for too long)
-            is_stale = False
-            if current.started_at:
-                try:
-                    started = datetime.fromisoformat(current.started_at)
-                    elapsed = (datetime.utcnow() - started).total_seconds()
-                    if elapsed > 1800:  # 30 minutes
-                        is_stale = True
-                except (ValueError, TypeError):
-                    is_stale = True
-
-            if is_stale:
-                logger.warning(
-                    "Marking stale discussion %s as failed (started_at=%s)",
-                    current.id, current.started_at,
-                )
-                current.status = DiscussionStatus.FAILED
-                current.error = "讨论超时，已自动标记为失败"
-                current.completed_at = datetime.utcnow().isoformat()
-                save_discussion_state(current)
-                set_current_discussion(None)
-            else:
-                # Return the existing running discussion
-                return CreateCurrentDiscussionResponse(
-                    id=current.id,
-                    topic=current.topic,
-                    rounds=current.rounds,
-                    status=current.status,
-                    created_at=current.created_at,
-                    message="讨论已在进行中，已自动加入",
-                )
-
+        # Always allow creating new discussions (no longer block if one is running)
         # Create new discussion
         discussion_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
@@ -726,9 +847,11 @@ async def create_current_discussion(
             created_at=now,
             started_at=now,
             attachment=request.attachment,
+            agents=request.agents if hasattr(request, 'agents') and request.agents else [],
+            agent_configs=request.agent_configs if hasattr(request, 'agent_configs') and request.agent_configs else {},
         )
 
-        # Save to both global state and persistent storage
+        # _current_discussion points to the most recently created discussion
         set_current_discussion(discussion)
         save_discussion_state(discussion)
 
@@ -736,6 +859,25 @@ async def create_current_discussion(
     task = asyncio.create_task(_run_discussion_async(discussion_id))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+
+    # Notify lobby WebSocket clients about the new discussion
+    broadcast_sync(
+        {
+            "type": "status",
+            "data": {
+                "discussion_id": discussion_id,
+                "agent_id": "discussion",
+                "agent_role": "discussion",
+                "content": "discussion_created",
+                "topic": request.topic,
+                "rounds": request.rounds,
+                "status": "running",
+                "agents": request.agents or [],
+                "timestamp": now,
+            },
+        },
+        lobby_event=True,
+    )
 
     return CreateCurrentDiscussionResponse(
         id=discussion_id,
@@ -824,6 +966,76 @@ async def create_discussion(request: CreateDiscussionRequest) -> CreateDiscussio
         status=DiscussionStatus.PENDING,
         created_at=now,
     )
+
+
+@router.get("/active")
+async def list_active_discussions():
+    """返回所有 running/paused 状态的讨论。"""
+    active = []
+    seen_ids: set[str] = set()
+
+    # Check in-memory cache
+    with _state_lock:
+        for did, state in _discussions.items():
+            if state.status in (DiscussionStatus.RUNNING, DiscussionStatus.PENDING):
+                seen_ids.add(did)
+                active.append({
+                    "id": state.id,
+                    "topic": state.topic,
+                    "rounds": state.rounds,
+                    "status": state.status.value,
+                    "created_at": state.created_at,
+                    "agents": state.agents,
+                })
+
+    # Also check disk state files for any not yet in memory
+    if _STATE_DIR.exists():
+        for path in _STATE_DIR.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                did = data.get("id", "")
+                if did in seen_ids:
+                    continue
+                if data.get("status") in ("running", "pending"):
+                    seen_ids.add(did)
+                    active.append({
+                        "id": did,
+                        "topic": data.get("topic", ""),
+                        "rounds": data.get("rounds", 0),
+                        "status": data.get("status", ""),
+                        "created_at": data.get("created_at", ""),
+                        "agents": data.get("agents", []),
+                    })
+            except Exception:
+                pass
+
+    return {"discussions": active}
+
+
+@router.get("/available-agents")
+async def list_available_agents():
+    """返回所有可用 Agent 及其默认配置。"""
+    from src.config.settings import load_role_config
+
+    agents = {}
+    for role_name in [
+        "lead_planner",
+        "system_designer",
+        "number_designer",
+        "player_advocate",
+        "visual_concept",
+    ]:
+        try:
+            config = load_role_config(role_name)
+            agents[role_name] = {
+                "role": config.get("role", ""),
+                "goal": config.get("goal", ""),
+                "backstory": config.get("backstory", ""),
+                "focus_areas": config.get("focus_areas", []),
+            }
+        except Exception:
+            pass
+    return {"agents": agents}
 
 
 @router.get("/{discussion_id}", response_model=GetDiscussionResponse)
@@ -1155,6 +1367,64 @@ async def continue_discussion(
     )
 
 
+@router.post("/{discussion_id}/extend", response_model=ExtendDiscussionResponse)
+async def extend_discussion(
+    discussion_id: str,
+    request: ExtendDiscussionRequest,
+) -> ExtendDiscussionResponse:
+    """Extend a completed discussion with additional rounds.
+
+    Unlike /continue which creates a new discussion, /extend resumes the
+    same discussion in-place, preserving the discussion ID and all history.
+    """
+    discussion = get_discussion_state(discussion_id)
+    if discussion is None:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    if discussion.status not in (DiscussionStatus.COMPLETED, DiscussionStatus.FAILED):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only completed or failed discussions can be extended. Current: {discussion.status}",
+        )
+
+    # Re-activate the discussion
+    discussion.status = DiscussionStatus.RUNNING
+    discussion.completed_at = None
+    discussion.error = None
+    discussion.rounds += request.additional_rounds
+    save_discussion_state(discussion)
+
+    # Update global discussion state
+    with _current_discussion_lock:
+        set_current_discussion(discussion)
+
+    # Broadcast status change so connected clients update immediately
+    status_event = create_status_event(
+        discussion_id=discussion_id,
+        agent_id="discussion",
+        agent_role="discussion",
+        status=AgentStatus.IDLE,
+        content="discussion_resumed",
+    )
+    broadcast_sync(status_event.to_dict(), discussion_id=discussion_id)
+
+    # Run in background
+    task = asyncio.create_task(
+        _run_discussion_extend_async(
+            discussion_id, request.follow_up, request.additional_rounds
+        )
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return ExtendDiscussionResponse(
+        id=discussion_id,
+        topic=discussion.topic,
+        status=DiscussionStatus.RUNNING,
+        message=f"讨论已继续，将进行 {request.additional_rounds} 轮追加讨论。",
+    )
+
+
 @router.get("/{discussion_id}/messages", response_model=DiscussionMessagesResponse)
 async def get_discussion_messages(discussion_id: str) -> DiscussionMessagesResponse:
     """Get all messages for a discussion.
@@ -1214,6 +1484,50 @@ async def get_discussion_messages(discussion_id: str) -> DiscussionMessagesRespo
         ]
         if discussion.result
         else [],
+    )
+
+
+class RoundSummaryItem(BaseModel):
+    """A single round summary."""
+
+    round: int
+    content: str
+    key_points: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    generated_at: str
+
+
+class RoundSummariesResponse(BaseModel):
+    """Response for round summaries."""
+
+    discussion_id: str
+    summaries: list[RoundSummaryItem]
+
+
+@router.get("/{discussion_id}/round-summaries", response_model=RoundSummariesResponse)
+async def get_round_summaries(discussion_id: str) -> RoundSummariesResponse:
+    """Get all round summaries for a discussion.
+
+    Returns structured round-by-round summaries generated during the discussion.
+    """
+    stored = _discussion_memory.load(discussion_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    summaries = [
+        RoundSummaryItem(
+            round=s.get("round", 0),
+            content=s.get("content", ""),
+            key_points=s.get("key_points", []),
+            open_questions=s.get("open_questions", []),
+            generated_at=s.get("generated_at", ""),
+        )
+        for s in (stored.round_summaries or [])
+    ]
+
+    return RoundSummariesResponse(
+        discussion_id=discussion_id,
+        summaries=summaries,
     )
 
 
@@ -1529,4 +1843,49 @@ async def get_agenda_item_summary(item_id: str) -> AgendaItemSummaryResponse:
         title=item.title,
         summary=item.summary,
         summary_details=item.summary_details.model_dump() if item.summary_details else None,
+    )
+
+
+# ==============================================================================
+# Per-discussion Agenda API Endpoints
+# ==============================================================================
+
+
+@router.get("/{discussion_id}/agenda", response_model=AgendaResponse | None)
+async def get_discussion_agenda_api(discussion_id: str) -> AgendaResponse | None:
+    """获取指定讨论的议程。"""
+    discussion = get_discussion_state(discussion_id)
+    if discussion is None:
+        raise HTTPException(status_code=404, detail="讨论未找到")
+
+    agenda = get_discussion_agenda(discussion_id)
+    if agenda is None:
+        return AgendaResponse(items=[], current_index=0)
+
+    return AgendaResponse(
+        items=[_agenda_item_to_response(item) for item in agenda.items],
+        current_index=agenda.current_index,
+    )
+
+
+@router.post("/{discussion_id}/agenda/items", response_model=AddAgendaItemResponse)
+async def add_discussion_agenda_item(
+    discussion_id: str, request: AddAgendaItemRequest
+) -> AddAgendaItemResponse:
+    """为指定讨论添加新议题。"""
+    discussion = get_discussion_state(discussion_id)
+    if discussion is None:
+        raise HTTPException(status_code=404, detail="讨论未找到")
+
+    agenda = get_discussion_agenda(discussion_id)
+    if agenda is None:
+        agenda = Agenda()
+        set_discussion_agenda(discussion_id, agenda)
+
+    item = agenda.add_item(title=request.title, description=request.description)
+    set_discussion_agenda(discussion_id, agenda)
+
+    return AddAgendaItemResponse(
+        item=_agenda_item_to_response(item),
+        message=f"已添加议题: {item.title}",
     )

@@ -32,6 +32,8 @@ class Discussion:
     topic: str
     messages: list[Message] = field(default_factory=list)
     summary: str | None = None
+    round_summaries: list[dict] = field(default_factory=list)
+    doc_plan: dict | None = None
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 

@@ -1,11 +1,15 @@
 """Base Agent class for the AI Game Design Team."""
 
+import logging
+import re
 from abc import ABC, abstractmethod
 from typing import Any
 
 from crewai import Agent, Crew, Process, Task
 
 from src.config.settings import load_role_config, settings
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent(ABC):
@@ -19,17 +23,20 @@ class BaseAgent(ABC):
     # Subclasses must define their role name
     role_name: str = ""
 
-    def __init__(self, llm: Any | None = None) -> None:
+    def __init__(self, llm: Any | None = None, config_overrides: dict | None = None) -> None:
         """Initialize the agent with its role configuration.
 
         Args:
             llm: Optional LLM instance to use. If not provided,
                  will use the default from CrewAI.
+            config_overrides: Optional dict to override role config values.
         """
         if not self.role_name:
             raise ValueError("Subclass must define role_name")
 
         self._config = load_role_config(self.role_name)
+        if config_overrides:
+            self._config.update(config_overrides)
         self._llm = llm
         self._agent: Agent | None = None
 
@@ -116,10 +123,37 @@ class BaseAgent(ABC):
 3. 指出你认为需要关注的风险或挑战
 """
 
-    def respond_sync(self, context: str) -> str:
+    # Patterns indicating a malformed tool-call response from the LLM
+    _TOOL_CALL_PATTERNS = re.compile(
+        r"ChatCompletionMessageFunctionToolCall|"
+        r"no_tool_available|"
+        r"Function\(arguments=|"
+        r"\bToolCall\(",
+        re.IGNORECASE,
+    )
+
+    def _sanitize_response(self, raw: str) -> str | None:
+        """Check if the response is a valid text response.
+
+        Returns the response as-is if valid, or None if it looks like
+        a raw tool-call object that leaked through CrewAI.
+        """
+        if not raw or not raw.strip():
+            return None
+        if self._TOOL_CALL_PATTERNS.search(raw):
+            logger.warning(
+                "%s returned a tool-call object instead of text: %.120s",
+                self.role,
+                raw,
+            )
+            return None
+        return raw.strip()
+
+    def respond_sync(self, context: str, *, _retried: bool = False) -> str:
         """Synchronously generate a response to the given context.
 
         Creates a temporary Crew with a single task and runs it synchronously.
+        If the LLM returns a malformed tool-call response, retries once.
 
         Args:
             context: The discussion context to respond to.
@@ -129,7 +163,7 @@ class BaseAgent(ABC):
         """
         task = Task(
             description=self._build_response_prompt(context),
-            expected_output=f"{self.role}对讨论内容的专业分析和建议",
+            expected_output=f"{self.role}对讨论内容的专业分析和建议，纯文本回复",
             agent=self.build_agent(),
         )
 
@@ -140,9 +174,15 @@ class BaseAgent(ABC):
         )
 
         result = crew.kickoff()
-        return str(result)
+        text = self._sanitize_response(str(result))
 
-    async def respond_async(self, context: str) -> str:
+        if text is None and not _retried:
+            logger.info("Retrying %s response due to malformed output", self.role)
+            return self.respond_sync(context, _retried=True)
+
+        return text or f"（{self.role}暂时无法给出回复）"
+
+    async def respond_async(self, context: str, *, _retried: bool = False) -> str:
         """Asynchronously generate a response to the given context.
 
         This method creates a temporary Crew with a single task to generate
@@ -156,7 +196,7 @@ class BaseAgent(ABC):
         """
         task = Task(
             description=self._build_response_prompt(context),
-            expected_output=f"{self.role}对讨论内容的专业分析和建议",
+            expected_output=f"{self.role}对讨论内容的专业分析和建议，纯文本回复",
             agent=self.build_agent(),
         )
 
@@ -167,7 +207,13 @@ class BaseAgent(ABC):
         )
 
         result = await crew.kickoff_async()
-        return str(result)
+        text = self._sanitize_response(str(result))
+
+        if text is None and not _retried:
+            logger.info("Retrying %s async response due to malformed output", self.role)
+            return await self.respond_async(context, _retried=True)
+
+        return text or f"（{self.role}暂时无法给出回复）"
 
     def __repr__(self) -> str:
         """Return string representation of the agent."""

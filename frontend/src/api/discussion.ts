@@ -1,9 +1,14 @@
 import type {
   CreateDiscussionRequest,
   CreateDiscussionResponse,
+  CreateCurrentDiscussionRequest,
+  CreateCurrentDiscussionResponse,
   DiscussionStatusResponse,
   DiscussionListResponse,
   DiscussionMessagesResponse,
+  RoundSummariesResponse,
+  LobbyDiscussion,
+  AvailableAgentsResponse,
 } from '@/types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
@@ -83,6 +88,68 @@ export async function getDiscussionMessages(
 
   if (!response.ok) {
     throw new Error(`Failed to get discussion messages: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get round summaries for a discussion
+ */
+export async function getRoundSummaries(
+  id: string
+): Promise<RoundSummariesResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/discussions/${id}/round-summaries`);
+
+  if (!response.ok) {
+    throw new Error(`Failed to get round summaries: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get active discussions (running/paused)
+ */
+export async function getActiveDiscussions(): Promise<{ discussions: LobbyDiscussion[] }> {
+  const response = await fetch(`${API_BASE_URL}/api/discussions/active`);
+
+  if (!response.ok) {
+    throw new Error(`Failed to get active discussions: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get available agents and their default configs
+ */
+export async function getAvailableAgents(): Promise<AvailableAgentsResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/discussions/available-agents`);
+
+  if (!response.ok) {
+    throw new Error(`Failed to get available agents: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Create a new discussion via /current endpoint (starts immediately)
+ */
+export async function createCurrentDiscussion(
+  request: CreateCurrentDiscussionRequest
+): Promise<CreateCurrentDiscussionResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/discussions/current`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to create discussion: ${response.statusText}`);
   }
 
   return response.json();

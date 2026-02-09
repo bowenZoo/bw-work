@@ -86,7 +86,15 @@
       "Bash(grep:*)",
       "Skill(restart)",
       "Skill(restart:*)",
-      "Bash(brew install:*)"
+      "Bash(brew install:*)",
+      "Bash(du:*)",
+      "Bash(done)",
+      "Bash(ssh:*)",
+      "Bash(chmod:*)",
+      "Bash(bash:*)",
+      "Bash(scp:*)",
+      "Bash(rsync:*)",
+      "Bash(/Users/bowen/workspace/claude/bw-work/backend/.venv/bin/pip show:*)"
     ]
   }
 }

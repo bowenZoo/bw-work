@@ -32,6 +32,8 @@ function getStatusLabel(status: AgentStatus): string {
       return '思考中'
     case 'speaking':
       return '发言中'
+    case 'writing':
+      return '更新文档中'
     default:
       return '空闲'
   }
@@ -195,6 +197,11 @@ function handleAgentClick(agentId: string) {
   transform: scale(1.1);
 }
 
+.status-writing .agent-avatar {
+  border-color: #6366f1;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
@@ -225,6 +232,11 @@ function handleAgentClick(agentId: string) {
 
 .dot-speaking {
   background: var(--success-color);
+}
+
+.dot-writing {
+  background: #6366f1;
+  animation: blink 1s ease-in-out infinite;
 }
 
 @keyframes blink {
@@ -261,6 +273,10 @@ function handleAgentClick(agentId: string) {
 
 .text-speaking {
   color: var(--success-color);
+}
+
+.text-writing {
+  color: #6366f1;
 }
 
 /* Connection lines (decorative) */

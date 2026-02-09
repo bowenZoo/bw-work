@@ -1,11 +1,8 @@
 /**
- * Global discussion composable for single shared discussion.
+ * @deprecated Use `useLobby` (for home page) and `useDiscussion` (for per-discussion page) instead.
  *
- * All users share the same discussion. This composable handles:
- * - WebSocket connection to /ws/discussion
- * - Automatic sync of discussion state and messages
- * - Creating and joining discussions
- * - Real-time viewer count updates
+ * Global discussion composable for single shared discussion.
+ * This file is kept for reference only and is no longer imported by any component.
  */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import api from '@/api';
@@ -22,6 +19,13 @@ import type {
   Agenda,
   AgendaItem,
   AgendaEvent,
+  RoundSummary,
+  DocUpdateEvent,
+  DocPlan,
+  SectionPlan,
+  DocPlanWsEvent,
+  SectionFocusWsEvent,
+  SectionUpdateWsEvent,
 } from '@/types';
 
 // WebSocket configuration
@@ -55,6 +59,11 @@ export interface SyncMessage {
   data: {
     discussion: GlobalDiscussion | null;
     messages: Message[];
+    round_summaries?: RoundSummary[];
+    agent_statuses?: Record<string, string>;
+    doc_plan?: DocPlan | null;
+    doc_contents?: Record<string, string> | null;
+    is_paused?: boolean;
   };
 }
 
@@ -77,7 +86,17 @@ export interface AgendaMessage {
   };
 }
 
-export type GlobalServerMessage = SyncMessage | ViewersMessage | AgendaMessage | ServerMessage;
+export interface RoundSummaryMessage {
+  type: 'round_summary';
+  data: RoundSummary & { discussion_id: string };
+}
+
+export interface DocUpdateMessage {
+  type: 'doc_update';
+  data: DocUpdateEvent;
+}
+
+export type GlobalServerMessage = SyncMessage | ViewersMessage | AgendaMessage | RoundSummaryMessage | DocUpdateMessage | DocPlanWsEvent | SectionFocusWsEvent | SectionUpdateWsEvent | ServerMessage;
 
 export interface CreateCurrentDiscussionRequest {
   topic: string;
@@ -121,6 +140,17 @@ export function useGlobalDiscussion() {
 
   // Agenda state
   const agenda = ref<Agenda | null>(null);
+
+  // Round summaries state
+  const roundSummaries = ref<RoundSummary[]>([]);
+
+  // Doc update state
+  const latestDocUpdate = ref<DocUpdateEvent | null>(null);
+
+  // Document-centric state
+  const docPlan = ref<DocPlan | null>(null);
+  const docContents = ref<Map<string, string>>(new Map());
+  const currentSectionId = ref<string | null>(null);
 
   // Timers
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -197,6 +227,38 @@ export function useGlobalDiscussion() {
         if (message.data.messages) {
           messages.value = message.data.messages.map(normalizeMessage);
         }
+        // Restore pause state from sync
+        if (message.data.is_paused) {
+          isPaused.value = true;
+          autoPauseMessage.value = '讨论已暂停';
+        } else {
+          isPaused.value = false;
+          autoPauseMessage.value = '';
+        }
+        // Restore round summaries from sync
+        if (message.data.round_summaries) {
+          roundSummaries.value = message.data.round_summaries;
+        }
+        // Restore agent statuses from sync (so reconnecting clients see current state)
+        if (message.data.agent_statuses) {
+          agentsStore.resetAllAgentsStatus();
+          for (const [agentId, status] of Object.entries(message.data.agent_statuses)) {
+            agentsStore.setAgentStatus(agentId, status as any);
+          }
+        }
+        // Restore doc_plan from sync
+        if (message.data.doc_plan) {
+          docPlan.value = message.data.doc_plan;
+          currentSectionId.value = message.data.doc_plan.current_section_id;
+        }
+        // Restore doc_contents from sync
+        if (message.data.doc_contents) {
+          const newMap = new Map<string, string>();
+          for (const [filename, content] of Object.entries(message.data.doc_contents)) {
+            newMap.set(filename, content);
+          }
+          docContents.value = newMap;
+        }
         // Fallback: if sync returns no discussion, double-check via REST API.
         // This handles edge cases like server restart where WebSocket state
         // may not be populated yet but the API can still return the discussion.
@@ -249,6 +311,9 @@ export function useGlobalDiscussion() {
           } else if (content === 'discussion_resumed') {
             isPaused.value = false;
             autoPauseMessage.value = '';
+            if (discussion.value) {
+              discussion.value = { ...discussion.value, status: 'running' as any };
+            }
           }
           break;
         }
@@ -272,6 +337,67 @@ export function useGlobalDiscussion() {
       case 'agenda':
         // Agenda update
         handleAgendaEvent(message as AgendaMessage);
+        break;
+
+      case 'round_summary':
+        // Round summary generated
+        {
+          const summaryMsg = message as RoundSummaryMessage;
+          const summary: RoundSummary = {
+            round: summaryMsg.data.round,
+            content: summaryMsg.data.content,
+            key_points: summaryMsg.data.key_points || [],
+            open_questions: summaryMsg.data.open_questions || [],
+            generated_at: summaryMsg.data.generated_at,
+          };
+          // Deduplicate by round number
+          const existingIdx = roundSummaries.value.findIndex(s => s.round === summary.round);
+          if (existingIdx >= 0) {
+            roundSummaries.value[existingIdx] = summary;
+          } else {
+            roundSummaries.value.push(summary);
+          }
+        }
+        break;
+
+      case 'doc_update':
+        // Document update notification
+        latestDocUpdate.value = (message as DocUpdateMessage).data;
+        break;
+
+      case 'doc_plan':
+        {
+          const evt = message as DocPlanWsEvent;
+          docPlan.value = evt.data.doc_plan;
+          currentSectionId.value = evt.data.doc_plan.current_section_id;
+        }
+        break;
+
+      case 'section_focus':
+        {
+          const evt = message as SectionFocusWsEvent;
+          currentSectionId.value = evt.data.section_id;
+          // Update docPlan section status
+          if (docPlan.value) {
+            for (const file of docPlan.value.files) {
+              for (const section of file.sections) {
+                if (section.id === evt.data.section_id) {
+                  section.status = 'in_progress';
+                }
+              }
+            }
+            docPlan.value = { ...docPlan.value, current_section_id: evt.data.section_id };
+          }
+        }
+        break;
+
+      case 'section_update':
+        {
+          const evt = message as SectionUpdateWsEvent;
+          const newMap = new Map(docContents.value);
+          newMap.set(evt.data.filename, evt.data.content);
+          docContents.value = newMap;
+        }
         break;
 
       default:
@@ -451,6 +577,16 @@ export function useGlobalDiscussion() {
     }
   }
 
+  // Focus on a specific section
+  async function focusSection(sectionId: string): Promise<void> {
+    if (!discussion.value?.id) return;
+    try {
+      await api.post(`/api/discussions/${discussion.value.id}/focus-section`, { section_id: sectionId });
+    } catch (error) {
+      console.error('Failed to focus section:', error);
+    }
+  }
+
   // Disconnect
   function disconnect() {
     shouldReconnect.value = false;
@@ -550,9 +686,14 @@ export function useGlobalDiscussion() {
       created_at: response.data.created_at,
     };
 
-    // Clear messages for new discussion
+    // Clear messages and round summaries for new discussion
     if (!response.data.message) {
       messages.value = [];
+      roundSummaries.value = [];
+      latestDocUpdate.value = null;
+      docPlan.value = null;
+      docContents.value = new Map();
+      currentSectionId.value = null;
     }
 
     return response.data;
@@ -626,6 +767,15 @@ export function useGlobalDiscussion() {
     // Agenda state
     agenda,
 
+    // Round summaries state
+    roundSummaries,
+    latestDocUpdate,
+
+    // Document-centric state
+    docPlan,
+    docContents,
+    currentSectionId,
+
     // Methods
     connect,
     disconnect,
@@ -635,6 +785,7 @@ export function useGlobalDiscussion() {
     joinDiscussion,
     getCurrentDiscussion,
     resumeDiscussion,
+    focusSection,
 
     // Agenda methods
     fetchAgenda,

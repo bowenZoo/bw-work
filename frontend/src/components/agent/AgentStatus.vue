@@ -12,6 +12,8 @@ function getStatusText(status: string): string {
       return '发言中';
     case 'thinking':
       return '思考中...';
+    case 'writing':
+      return '更新文档中';
     default:
       return '空闲';
   }
@@ -24,6 +26,8 @@ function getStatusTextClass(status: string): string {
       return 'text-green-600';
     case 'thinking':
       return 'text-yellow-600';
+    case 'writing':
+      return 'text-indigo-600';
     default:
       return 'text-gray-500';
   }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from 'vue';
+import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue';
 import type { Message } from '@/types';
 import MessageBubble from './MessageBubble.vue';
 
@@ -14,6 +14,20 @@ const containerRef = ref<HTMLElement | null>(null);
 const showAll = ref(false);
 const maxMessages = computed(() => props.maxMessages ?? 300);
 const isTruncated = computed(() => props.messages.length > maxMessages.value && !showAll.value);
+
+// Smart scroll: track whether user is near bottom
+const isNearBottom = ref(true);
+const NEAR_BOTTOM_THRESHOLD = 80; // px
+
+function checkNearBottom() {
+  if (!containerRef.value) return;
+  const { scrollTop, scrollHeight, clientHeight } = containerRef.value;
+  isNearBottom.value = scrollHeight - scrollTop - clientHeight < NEAR_BOTTOM_THRESHOLD;
+}
+
+function handleScroll() {
+  checkNearBottom();
+}
 
 // Sort messages by sequence (if available) or timestamp
 const sortedMessages = computed(() => {
@@ -36,12 +50,12 @@ const hiddenCount = computed(() =>
   isTruncated.value ? props.messages.length - renderedMessages.value.length : 0
 );
 
-// Auto-scroll to bottom when new messages arrive
+// Auto-scroll only when user is near bottom
 watch(
   () => props.messages.length,
   async () => {
     await nextTick();
-    if (!showAll.value) {
+    if (!showAll.value && isNearBottom.value) {
       scrollToBottom();
     }
   }
@@ -50,16 +64,21 @@ watch(
 function scrollToBottom() {
   if (containerRef.value) {
     containerRef.value.scrollTop = containerRef.value.scrollHeight;
+    isNearBottom.value = true;
   }
 }
 
 const isEmpty = computed(() => renderedMessages.value.length === 0 && !props.isLoading);
+
+// Show "scroll to bottom" button when not near bottom and has messages
+const showScrollBtn = computed(() => !isNearBottom.value && renderedMessages.value.length > 0);
 </script>
 
 <template>
   <div
     ref="containerRef"
-    class="flex-1 overflow-y-auto bg-white"
+    class="flex-1 overflow-y-auto bg-white chat-container-wrapper"
+    @scroll="handleScroll"
   >
     <!-- Loading state -->
     <div v-if="isLoading && messages.length === 0" class="flex items-center justify-center h-full">
@@ -118,5 +137,48 @@ const isEmpty = computed(() => renderedMessages.value.length === 0 && !props.isL
         <span>智能体思考中...</span>
       </div>
     </div>
+
+    <!-- Scroll to bottom button -->
+    <button
+      v-if="showScrollBtn"
+      class="scroll-bottom-btn"
+      @click="scrollToBottom"
+      title="滚动到底部"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="6 9 12 15 18 9" />
+      </svg>
+    </button>
   </div>
 </template>
+
+<style scoped>
+.chat-container-wrapper {
+  position: relative;
+}
+
+.scroll-bottom-btn {
+  position: sticky;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-secondary, #f3f4f6);
+  border: 1px solid var(--border-color, #e5e7eb);
+  color: var(--text-secondary, #6b7280);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s;
+  z-index: 5;
+}
+
+.scroll-bottom-btn:hover {
+  background: var(--bg-tertiary, #e5e7eb);
+  color: var(--text-primary, #111827);
+}
+</style>

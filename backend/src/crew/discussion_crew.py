@@ -3,10 +3,12 @@
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections.abc import Callable
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -200,6 +202,19 @@ class DiscussionCrew:
     contributes their expertise to analyze and design game features.
     """
 
+    _TOOL_CALL_RE = re.compile(
+        r"ChatCompletionMessageFunctionToolCall|no_tool_available|Function\(arguments=",
+        re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _sanitize_crew_output(raw: str, label: str = "agent") -> str:
+        """Sanitize CrewAI output, filtering out malformed tool-call responses."""
+        if DiscussionCrew._TOOL_CALL_RE.search(raw):
+            logger.warning("Malformed tool-call in %s output: %.120s", label, raw)
+            return ""
+        return raw
+
     def __init__(
         self,
         llm: Any | None = None,
@@ -208,6 +223,8 @@ class DiscussionCrew:
         project_id: str | None = None,
         data_dir: str = "data/projects",
         enable_visual_concept: bool = False,
+        agent_roles: list[str] | None = None,
+        agent_configs: dict | None = None,
     ) -> None:
         """Initialize the discussion crew.
 
@@ -219,6 +236,9 @@ class DiscussionCrew:
             project_id: Optional project ID for memory storage.
             data_dir: Data directory for memory storage.
             enable_visual_concept: Whether to include the Visual Concept Agent.
+            agent_roles: Optional list of agent role names to participate.
+                        If None, all agents participate (backward compatible).
+            agent_configs: Optional dict of role_name -> config overrides.
         """
         self._llm = llm
         self._callback = callback
@@ -227,36 +247,50 @@ class DiscussionCrew:
         self._data_dir = data_dir
         self._enable_visual_concept = enable_visual_concept
 
-        # Initialize agents - Lead Planner is the moderator
-        self._lead_planner = LeadPlanner(llm=llm)
-        self._system_designer = SystemDesigner(llm=llm)
-        self._number_designer = NumberDesigner(llm=llm)
-        self._player_advocate = PlayerAdvocate(llm=llm)
+        # Lead Planner always participates as moderator
+        lead_overrides = (agent_configs or {}).get("lead_planner")
+        self._lead_planner = LeadPlanner(llm=llm, config_overrides=lead_overrides)
 
-        # Discussion agents (excluding lead planner who moderates)
-        self._discussion_agents = [
-            self._system_designer,
-            self._number_designer,
-            self._player_advocate,
-        ]
+        # Available discussion agents (excluding lead planner)
+        AVAILABLE: dict[str, type] = {
+            "system_designer": SystemDesigner,
+            "number_designer": NumberDesigner,
+            "player_advocate": PlayerAdvocate,
+        }
+
+        # Build discussion agents based on agent_roles selection
+        self._discussion_agents = []
+        for role, cls in AVAILABLE.items():
+            if agent_roles is None or role in agent_roles:
+                overrides = (agent_configs or {}).get(role)
+                agent = cls(llm=llm, config_overrides=overrides)
+                self._discussion_agents.append(agent)
 
         # All agents including lead planner
-        self._agents = [
-            self._lead_planner,
-            self._system_designer,
-            self._number_designer,
-            self._player_advocate,
-        ]
+        self._agents = [self._lead_planner] + self._discussion_agents
 
         # Optionally add Visual Concept Agent
-        if enable_visual_concept:
+        if enable_visual_concept and (agent_roles is None or "visual_concept" in agent_roles):
+            vc_overrides = (agent_configs or {}).get("visual_concept")
             self._visual_concept = VisualConceptAgent(
                 llm=llm,
+                config_overrides=vc_overrides,
                 project_id=self._project_id,
             )
             self._agents.append(self._visual_concept)
         else:
             self._visual_concept = None
+
+        # Keep backward-compat references if agents were created
+        self._system_designer = next(
+            (a for a in self._discussion_agents if a.role_name == "system_designer"), None
+        )
+        self._number_designer = next(
+            (a for a in self._discussion_agents if a.role_name == "number_designer"), None
+        )
+        self._player_advocate = next(
+            (a for a in self._discussion_agents if a.role_name == "player_advocate"), None
+        )
 
         # Initialize memory systems
         self._discussion_memory = DiscussionMemory(data_dir=data_dir)
@@ -289,6 +323,11 @@ class DiscussionCrew:
 
         # Agenda management
         self._agenda: Agenda | None = None
+
+        # Document-centric mode
+        self._doc_plan = None  # DocPlan instance
+        self._doc_writer = None  # DocWriter instance
+        self._section_summaries: list[str] = []  # sliding window of recent summaries
 
     @property
     def agents(self) -> list[Any]:
@@ -773,6 +812,179 @@ class DiscussionCrew:
         except Exception as e:
             logger.warning("Incremental save failed: %s", e)
 
+    def _generate_round_summary(self, round_num: int, raw_summary: str) -> dict:
+        """Parse Lead Planner's round summary into structured data.
+
+        Reuses _parse_agenda_summary logic without extra LLM calls.
+
+        Args:
+            round_num: The round number.
+            raw_summary: The raw summary text from Lead Planner.
+
+        Returns:
+            A dict with round, content, key_points, open_questions, generated_at.
+        """
+        import re
+
+        key_points: list[str] = []
+        open_questions: list[str] = []
+
+        # Extract key points / conclusions
+        for pattern in [
+            r"##\s*(?:讨论结论|关键共识|本轮共识|共识)\s*\n(.*?)(?=\n##|\Z)",
+            r"##\s*(?:Key Points|Conclusions)\s*\n(.*?)(?=\n##|\Z)",
+        ]:
+            match = re.search(pattern, raw_summary, re.DOTALL)
+            if match:
+                for line in match.group(1).strip().split("\n"):
+                    stripped = line.strip()
+                    if stripped.startswith("-") or stripped.startswith("*"):
+                        key_points.append(stripped.lstrip("-*").strip())
+                break
+
+        # If no structured section found, extract bullet points from full text
+        if not key_points:
+            for line in raw_summary.split("\n"):
+                stripped = line.strip()
+                if stripped.startswith("- ") and len(stripped) > 10:
+                    key_points.append(stripped.lstrip("- ").strip())
+                    if len(key_points) >= 5:
+                        break
+
+        # Extract open questions
+        for pattern in [
+            r"##\s*(?:遗留问题|待解决|Open Questions)\s*\n(.*?)(?=\n##|\Z)",
+        ]:
+            match = re.search(pattern, raw_summary, re.DOTALL)
+            if match:
+                for line in match.group(1).strip().split("\n"):
+                    stripped = line.strip()
+                    if stripped.startswith("-") or stripped.startswith("*"):
+                        open_questions.append(stripped.lstrip("-*").strip())
+                break
+
+        summary_data = {
+            "round": round_num,
+            "content": raw_summary,
+            "key_points": key_points,
+            "open_questions": open_questions,
+            "generated_at": datetime.now(timezone.utc).isoformat()
+            if hasattr(datetime.now(), "tzinfo")
+            else datetime.utcnow().isoformat(),
+        }
+        return summary_data
+
+    def _broadcast_round_summary(self, summary_data: dict) -> None:
+        """Broadcast a round summary via WebSocket.
+
+        Args:
+            summary_data: The structured round summary dict.
+        """
+        if self._discussion_id is None:
+            return
+
+        try:
+            from src.api.websocket.events import create_round_summary_event
+
+            event = create_round_summary_event(
+                discussion_id=self._discussion_id,
+                round_num=summary_data["round"],
+                content=summary_data["content"],
+                key_points=summary_data.get("key_points"),
+                open_questions=summary_data.get("open_questions"),
+            )
+            broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
+        except Exception as exc:
+            logger.debug("Failed to broadcast round summary: %s", exc)
+
+    def _save_round_summary(self, summary_data: dict) -> None:
+        """Save round summary to the discussion record.
+
+        Args:
+            summary_data: The structured round summary dict.
+        """
+        if self._current_discussion is None:
+            return
+        self._current_discussion.round_summaries.append(summary_data)
+        self._incremental_save()
+
+    def _trigger_round_organize(self, round_num: int) -> None:
+        """Trigger document organization in a background daemon thread.
+
+        Args:
+            round_num: The round number that triggered the organize.
+        """
+        if self._current_discussion is None:
+            return
+
+        discussion_id = self._discussion_id
+
+        def _organize_in_background() -> None:
+            try:
+                from src.agents.doc_organizer import DocOrganizer
+                from src.api.routes.discussion import _get_llm_from_config
+
+                llm = _get_llm_from_config()
+                if llm is None:
+                    logger.debug("Skipping round organize: LLM not configured")
+                    return
+
+                stored = self._discussion_memory.load(discussion_id)
+                if stored is None or not stored.messages:
+                    return
+
+                organizer = DocOrganizer(llm=llm)
+                result = organizer.run_organize(stored)
+
+                logger.info(
+                    "Round %d organize for %s: %d documents",
+                    round_num,
+                    discussion_id,
+                    len(result.files),
+                )
+
+                # Broadcast doc update event
+                self._broadcast_doc_update(
+                    round_num=round_num,
+                    files=result.files,
+                )
+            except Exception as exc:
+                logger.warning("Round organize failed for %s round %d: %s", discussion_id, round_num, exc)
+
+        thread = threading.Thread(
+            target=_organize_in_background,
+            name=f"round-organize-{discussion_id}-r{round_num}",
+            daemon=True,
+        )
+        thread.start()
+
+    def _broadcast_doc_update(self, round_num: int, files: list) -> None:
+        """Broadcast a document update event via WebSocket.
+
+        Args:
+            round_num: The round that triggered the update.
+            files: List of OrganizeFile results.
+        """
+        if self._discussion_id is None:
+            return
+
+        try:
+            from src.api.websocket.events import create_doc_update_event
+
+            file_infos = [
+                {"filename": f.filename, "title": f.title}
+                for f in files
+            ]
+            event = create_doc_update_event(
+                discussion_id=self._discussion_id,
+                round_num=round_num,
+                file_count=len(files),
+                files=file_infos,
+            )
+            broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
+        except Exception as exc:
+            logger.debug("Failed to broadcast doc update: %s", exc)
+
     def _save_discussion(self, summary: str | None = None) -> None:
         """Save the current discussion to memory.
 
@@ -949,11 +1161,7 @@ class DiscussionCrew:
 
         # Build CrewAI agents
         lead_agent = self._lead_planner.build_agent()
-        system_agent = self._system_designer.build_agent()
-        number_agent = self._number_designer.build_agent()
-        player_agent = self._player_advocate.build_agent()
-
-        discussion_agents = [system_agent, number_agent, player_agent]
+        discussion_agents = [a.build_agent() for a in self._discussion_agents]
 
         # Phase 0: Lead Planner Opening
         opening_description = self._lead_planner.create_opening_prompt(topic, attachment)
@@ -1059,6 +1267,9 @@ class DiscussionCrew:
     ) -> None:
         """Broadcast agent status change via WebSocket.
 
+        Also updates the global agent status registry so that
+        newly-connected clients receive the current state on sync.
+
         Args:
             agent_role: The agent's role name.
             status: The new agent status.
@@ -1069,6 +1280,11 @@ class DiscussionCrew:
 
         try:
             agent_id = self._role_to_agent_id(agent_role)
+
+            # Update per-discussion agent status registry
+            from src.api.routes.discussion import set_agent_status
+            set_agent_status(self._discussion_id, agent_id, status.value)
+
             event = create_status_event(
                 discussion_id=self._discussion_id,
                 agent_id=agent_id,
@@ -1118,6 +1334,11 @@ class DiscussionCrew:
             return
 
         try:
+            # Reset per-discussion agent statuses when discussion ends
+            if content in ("discussion_completed", "discussion_failed"):
+                from src.api.routes.discussion import reset_agent_statuses
+                reset_agent_statuses(self._discussion_id)
+
             event = create_status_event(
                 discussion_id=self._discussion_id,
                 agent_id="discussion",
@@ -1125,7 +1346,16 @@ class DiscussionCrew:
                 status=AgentStatus.IDLE,
                 content=content,
             )
-            broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
+            # Lifecycle events (completed/failed) are also sent to lobby
+            is_lifecycle = content in (
+                "discussion_completed", "discussion_failed",
+                "discussion_started", "discussion_created",
+            )
+            broadcast_sync(
+                event.to_dict(),
+                discussion_id=self._discussion_id,
+                lobby_event=is_lifecycle,
+            )
         except Exception as exc:
             logger.debug("Failed to broadcast discussion event: %s", exc)
 
@@ -1171,6 +1401,67 @@ class DiscussionCrew:
         ])
 
         return list(results)
+
+    def _run_agents_parallel_sync(
+        self,
+        agents_to_call: list[Any],
+        context: str,
+    ) -> list[tuple[str, str]]:
+        """Run multiple agents in parallel, broadcasting as each completes.
+
+        All agents start thinking simultaneously. As each finishes, its
+        response is broadcast (speaking → message → idle) immediately.
+
+        Args:
+            agents_to_call: List of agent instances to call.
+            context: The discussion context to respond to.
+
+        Returns:
+            List of (role, response) tuples in completion order.
+        """
+        if not agents_to_call:
+            return []
+
+        # Single agent — no need for thread pool
+        if len(agents_to_call) == 1:
+            agent = agents_to_call[0]
+            self._broadcast_status(agent.role, AgentStatus.THINKING)
+            response = agent.respond_sync(context)
+            self._broadcast_status(agent.role, AgentStatus.SPEAKING)
+            self._broadcast_message(agent.role, response)
+            self._record_message(agent.role, response)
+            self._broadcast_status(agent.role, AgentStatus.IDLE)
+            return [(agent.role, response)]
+
+        # Broadcast THINKING for all agents at once
+        for agent in agents_to_call:
+            self._broadcast_status(agent.role, AgentStatus.THINKING)
+
+        results: list[tuple[str, str]] = []
+
+        with ThreadPoolExecutor(max_workers=len(agents_to_call)) as pool:
+            future_to_agent = {
+                pool.submit(agent.respond_sync, context): agent
+                for agent in agents_to_call
+            }
+
+            for future in as_completed(future_to_agent):
+                agent = future_to_agent[future]
+                try:
+                    response = future.result()
+                except Exception as exc:
+                    logger.warning("Agent %s failed: %s", agent.role, exc)
+                    response = f"（{agent.role}暂时无法给出回复）"
+
+                # Broadcast immediately as this agent finishes
+                self._broadcast_status(agent.role, AgentStatus.SPEAKING)
+                self._broadcast_message(agent.role, response)
+                self._record_message(agent.role, response)
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+
+                results.append((agent.role, response))
+
+        return results
 
     def _process_round_summary(self, summary: str, task_name: str) -> None:
         """Process a round summary from the Lead Planner.
@@ -1507,7 +1798,8 @@ class DiscussionCrew:
             process=Process.sequential,
         )
         result = crew.kickoff()
-        return str(result)
+        output = self._sanitize_crew_output(str(result), "lead_planner_summary")
+        return output or f"第{round_num}轮讨论已完成，暂无法生成总结。"
 
     def _lead_planner_final_decision_sync(
         self,
@@ -1529,7 +1821,8 @@ class DiscussionCrew:
             process=Process.sequential,
         )
         result = crew.kickoff()
-        return str(result)
+        output = self._sanitize_crew_output(str(result), "lead_planner_final")
+        return output or "讨论已完成，暂无法生成决策文档。"
 
     def run_orchestrated(
         self,
@@ -1624,15 +1917,12 @@ class DiscussionCrew:
                         participating_names,
                     )
 
-                    # Each selected agent responds sequentially
-                    for agent in agents_to_call:
-                        self._broadcast_status(agent.role, AgentStatus.THINKING)
-                        response = agent.respond_sync(context)
-                        self._broadcast_status(agent.role, AgentStatus.SPEAKING)
-                        self._broadcast_message(agent.role, response)
-                        self._record_message(agent.role, response)
-                        self._broadcast_status(agent.role, AgentStatus.IDLE)
-                        context += f"\n\n{agent.role}：\n{response}"
+                    # All agents think in parallel, broadcast as each finishes
+                    round_responses = self._run_agents_parallel_sync(
+                        agents_to_call, context,
+                    )
+                    for role, response in round_responses:
+                        context += f"\n\n{role}：\n{response}"
 
                     # Check for pause/intervention
                     injected_messages = self._check_pause_and_wait()
@@ -1652,6 +1942,14 @@ class DiscussionCrew:
                     self._record_message(self._lead_planner.role, latest_summary)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
                     context += f"\n\n主策划总结（第{round_num}轮）：\n{latest_summary}"
+
+                    # Generate and broadcast round summary
+                    round_summary = self._generate_round_summary(round_num, latest_summary)
+                    self._save_round_summary(round_summary)
+                    self._broadcast_round_summary(round_summary)
+
+                    # Trigger background document organization
+                    self._trigger_round_organize(round_num)
 
                     # Parse discussion status
                     status, questions = parse_discussion_status(latest_summary)
@@ -1729,6 +2027,189 @@ class DiscussionCrew:
                     logger.warning("Failed to generate visual concepts: %s", e)
 
             # Cleanup
+            set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
+            cleanup_discussion_state(self._discussion_id)
+
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+            self._broadcast_discussion_event("discussion_completed")
+
+            return final_decision
+
+        except Exception as exc:
+            self._finalize_trace(trace_span, error=exc)
+            self._broadcast_error(str(exc))
+            self._broadcast_discussion_event("discussion_failed")
+            self._save_discussion()
+            cleanup_discussion_state(self._discussion_id)
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+            raise
+
+    def extend_orchestrated(
+        self,
+        topic: str,
+        follow_up: str = "",
+        additional_rounds: int = 10,
+    ) -> str:
+        """Extend a completed discussion with additional rounds.
+
+        Loads existing discussion from memory, optionally adds a follow-up
+        message, then continues with more rounds of discussion.
+
+        Args:
+            topic: The original discussion topic.
+            follow_up: Optional user follow-up question.
+            additional_rounds: Number of additional rounds.
+
+        Returns:
+            The final decision document.
+        """
+        from src.crew.mention_parser import parse_next_speakers
+
+        # Load existing discussion from memory
+        stored = self._discussion_memory.load(self._discussion_id)
+        if stored is None:
+            raise ValueError(f"Discussion {self._discussion_id} not found in memory")
+
+        # Restore state
+        self._current_discussion = stored
+        self._messages = list(stored.messages)
+        self._message_sequence = len(self._messages)
+        self._unsaved_message_count = 0
+
+        # Determine starting round from existing summaries
+        start_round = (
+            len(stored.round_summaries) + 1 if stored.round_summaries else 1
+        )
+
+        # Reconstruct context from existing messages (last 50 to keep manageable)
+        context = f"议题：{topic}\n"
+        recent_msgs = stored.messages[-50:] if len(stored.messages) > 50 else stored.messages
+        for msg in recent_msgs:
+            context += f"\n{msg.agent_role}：\n{msg.content}\n"
+
+        # Inject follow-up as user message
+        if follow_up:
+            self._record_message("User", follow_up)
+            self._broadcast_message("User", follow_up)
+            context += f"\n用户追问：\n{follow_up}\n"
+
+        # Set up state
+        self._auto_pause_interval = 0
+        self._total_rounds = start_round + additional_rounds
+        set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
+        self._abort_reason = None
+
+        trace_metadata = self._prepare_trace_metadata(topic, additional_rounds)
+        trace_span: Any | None = None
+        end_round = start_round + additional_rounds - 1
+
+        try:
+            with start_trace_context(
+                name="discussion_extend",
+                session_id=self._discussion_id,
+                metadata=trace_metadata,
+            ) as span:
+                trace_span = span
+                round_num = start_round - 1
+                latest_summary = ""
+
+                while round_num < end_round:
+                    round_num += 1
+                    self._current_round = round_num
+
+                    # Determine speakers
+                    if round_num == start_round and follow_up:
+                        source_text = follow_up
+                    elif latest_summary:
+                        source_text = latest_summary
+                    else:
+                        source_text = context[-2000:]
+
+                    next_speakers = parse_next_speakers(source_text)
+                    agents_to_call = (
+                        [a for a in self._discussion_agents if a.role in next_speakers]
+                        if next_speakers
+                        else list(self._discussion_agents)
+                    )
+                    if not agents_to_call:
+                        agents_to_call = list(self._discussion_agents)
+
+                    participating = [a.role for a in agents_to_call]
+                    self._broadcast_discussion_event(
+                        f"第{round_num}轮：{', '.join(participating)} 参与讨论"
+                    )
+                    logger.info(
+                        "Extend %s round %d: speakers=%s",
+                        self._discussion_id, round_num, participating,
+                    )
+
+                    # All agents think in parallel, broadcast as each finishes
+                    round_responses = self._run_agents_parallel_sync(
+                        agents_to_call, context,
+                    )
+                    for role, response in round_responses:
+                        context += f"\n\n{role}：\n{response}"
+
+                    # Pause/intervention check
+                    injected = self._check_pause_and_wait()
+                    if self._abort_reason:
+                        raise DiscussionTimeoutError(self._abort_reason)
+                    if injected:
+                        self._inject_user_messages(injected)
+                        for msg in injected:
+                            context += f"\n\n用户介入：\n{msg.get('content', '')}"
+
+                    # Lead Planner summary
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                    latest_summary = self._lead_planner_summary_sync(
+                        round_num, topic, context
+                    )
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                    self._broadcast_message(self._lead_planner.role, latest_summary)
+                    self._record_message(self._lead_planner.role, latest_summary)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+                    context += f"\n\n主策划总结（第{round_num}轮）：\n{latest_summary}"
+
+                    # Round summary + doc organize
+                    round_summary = self._generate_round_summary(round_num, latest_summary)
+                    self._save_round_summary(round_summary)
+                    self._broadcast_round_summary(round_summary)
+                    self._trigger_round_organize(round_num)
+
+                    # Check status
+                    status, questions = parse_discussion_status(latest_summary)
+                    self._discussion_status = status
+                    self._pending_questions = questions
+
+                    if status == DiscussionStatus.SUFFICIENT:
+                        logger.info(
+                            "Extend %s: sufficient after round %d",
+                            self._discussion_id, round_num,
+                        )
+                        break
+
+                    self._broadcast_discussion_event(f"第{round_num}轮讨论完成")
+
+                # Final decision
+                self._broadcast_discussion_event("正在生成最终决策文档...")
+                self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                final_decision = self._lead_planner_final_decision_sync(topic, context)
+                self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                self._broadcast_message(self._lead_planner.role, final_decision)
+                self._record_message(self._lead_planner.role, final_decision)
+                self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                self._finalize_trace(trace_span, result=final_decision)
+
+            self._save_discussion(summary=final_decision)
+
+            try:
+                self._save_decisions(final_decision, topic)
+            except Exception as e:
+                logger.warning("Failed to save decisions: %s", e)
+
             set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
             cleanup_discussion_state(self._discussion_id)
 
@@ -2079,6 +2560,413 @@ class DiscussionCrew:
             return final_decision
 
         except Exception as exc:
+            self._broadcast_error(str(exc))
+            self._broadcast_discussion_event("discussion_failed")
+            self._save_discussion()
+            cleanup_discussion_state(self._discussion_id)
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+            raise
+
+    # ------------------------------------------------------------------
+    # Document-centric mode
+    # ------------------------------------------------------------------
+
+    def _generate_doc_plan(self, topic: str, attachment: str | None = None):
+        """Generate a DocPlan via LLM."""
+        from src.models.doc_plan import DocPlan, FilePlan, SectionPlan
+
+        prompt = self._lead_planner.create_doc_plan_prompt(topic, attachment)
+
+        task = Task(
+            description=prompt,
+            expected_output="JSON 格式的文档规划",
+            agent=self._lead_planner.build_agent(),
+        )
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+        result = crew.kickoff()
+        raw = str(result)
+
+        # Extract JSON from response
+        json_match = re.search(r"```json\s*\n(.*?)\n```", raw, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            # Try to find bare JSON object
+            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+            json_str = json_match.group(0) if json_match else raw
+
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse doc plan JSON, creating fallback plan")
+            data = {
+                "files": [{
+                    "filename": f"{topic[:20]}.md",
+                    "title": topic,
+                    "sections": [
+                        {"id": "s1", "title": "概述", "description": "系统总体概述"},
+                        {"id": "s2", "title": "核心设计", "description": "核心设计方案"},
+                        {"id": "s3", "title": "实现细节", "description": "具体实现细节"},
+                    ],
+                }],
+            }
+
+        # Build DocPlan from parsed data
+        files = []
+        section_counter = 0
+        for f_data in data.get("files", []):
+            sections = []
+            for s_data in f_data.get("sections", []):
+                section_counter += 1
+                sid = s_data.get("id", f"s{section_counter}")
+                sections.append(SectionPlan(
+                    id=sid,
+                    title=s_data.get("title", f"章节{section_counter}"),
+                    description=s_data.get("description", ""),
+                ))
+            files.append(FilePlan(
+                filename=f_data.get("filename", f"文档{section_counter}.md"),
+                title=f_data.get("title", "未命名文档"),
+                sections=sections,
+            ))
+
+        doc_plan = DocPlan(
+            discussion_id=self._discussion_id,
+            topic=topic,
+            files=files,
+        )
+        logger.info("Generated doc plan: %d files, %d sections",
+                     len(files), sum(len(f.sections) for f in files))
+        return doc_plan
+
+    def _broadcast_doc_plan_event(self, doc_plan) -> None:
+        """Broadcast doc_plan via WebSocket."""
+        if self._discussion_id is None:
+            return
+        try:
+            from src.api.websocket.events import create_doc_plan_event
+            event = create_doc_plan_event(self._discussion_id, doc_plan.to_dict())
+            broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
+        except Exception as exc:
+            logger.debug("Failed to broadcast doc plan: %s", exc)
+
+    def _broadcast_section_focus(self, section_id: str, section_title: str, filename: str) -> None:
+        """Broadcast section focus event."""
+        if self._discussion_id is None:
+            return
+        try:
+            from src.api.websocket.events import create_section_focus_event
+            event = create_section_focus_event(self._discussion_id, section_id, section_title, filename)
+            broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
+        except Exception as exc:
+            logger.debug("Failed to broadcast section focus: %s", exc)
+
+    def _broadcast_section_update(self, filename: str, section_id: str, content: str) -> None:
+        """Broadcast section update event."""
+        if self._discussion_id is None:
+            return
+        try:
+            from src.api.websocket.events import create_section_update_event
+            event = create_section_update_event(self._discussion_id, filename, section_id, content)
+            broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
+        except Exception as exc:
+            logger.debug("Failed to broadcast section update: %s", exc)
+
+    def _pick_next_section(self, doc_plan):
+        """Pick the next section to discuss."""
+        # If current_section_id is set (user override), use it
+        if doc_plan.current_section_id:
+            f, s = doc_plan.get_section(doc_plan.current_section_id)
+            if f and s and s.status != "completed":
+                return f, s
+            # Clear override if invalid or completed
+            doc_plan.current_section_id = None
+
+        return doc_plan.get_next_pending_section()
+
+    def _lead_planner_section_opening(self, section, section_content: str, round_num: int) -> str:
+        """Generate Lead Planner's opening for a section discussion."""
+        prompt = self._lead_planner.create_section_discussion_prompt(
+            section.title, section.description, section_content, round_num,
+        )
+
+        # Add recent summaries context
+        if self._section_summaries:
+            prompt += "\n\n---\n最近讨论摘要：\n" + "\n".join(self._section_summaries) + "\n---"
+
+        task = Task(
+            description=prompt,
+            expected_output=f"引导讨论章节「{section.title}」的问题和发言人指定",
+            agent=self._lead_planner.build_agent(),
+        )
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+        result = crew.kickoff()
+        output = self._sanitize_crew_output(str(result), "lead_planner_section_opening")
+        return output or f"请大家讨论章节「{section.title}」：{section.description}"
+
+    def _lead_planner_section_summary(self, section_title: str, round_num: int, discussion_content: str) -> str:
+        """Generate section discussion summary via Lead Planner."""
+        summary_prompt = self._lead_planner.create_section_summary_prompt(section_title, round_num)
+        full_prompt = f"{summary_prompt}\n\n---\n讨论记录：\n{discussion_content}"
+
+        task = Task(
+            description=full_prompt,
+            expected_output=f"章节「{section_title}」第{round_num}轮总结",
+            agent=self._lead_planner.build_agent(),
+        )
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+        result = crew.kickoff()
+        output = self._sanitize_crew_output(str(result), "lead_planner_section_summary")
+        return output or f"第{round_num}轮讨论已完成，暂无法生成总结。"
+
+    def _build_section_context(self, topic: str, doc_plan, section, section_content: str, opening: str) -> str:
+        """Build context string for agent discussion of a section."""
+        parts = [
+            f"议题：{topic}",
+            f"\n当前讨论章节：{section.title}",
+            f"章节目标：{section.description}",
+        ]
+        if section_content:
+            parts.append(f"\n当前章节内容：\n{section_content}")
+        if self._section_summaries:
+            parts.append("\n最近讨论摘要：")
+            parts.extend(self._section_summaries)
+        parts.append(f"\n主策划引导：\n{opening}")
+        return "\n".join(parts)
+
+    def _trigger_auto_pause(self, round_num: int) -> None:
+        """Trigger auto-pause at a round boundary."""
+        logger.info(
+            "Auto-pausing discussion %s at round %d (interval=%d)",
+            self._discussion_id, round_num, self._auto_pause_interval,
+        )
+        set_discussion_state(self._discussion_id, DiscussionState.PAUSED)
+        self._broadcast_discussion_event(
+            f"discussion_auto_paused:已完成第{round_num}轮讨论，等待继续"
+        )
+
+    def run_document_centric(
+        self,
+        topic: str,
+        max_rounds: int = 10,
+        attachment: str | None = None,
+        auto_pause_interval: int = 5,
+    ) -> str:
+        """Run a document-centric discussion.
+
+        Each round focuses on a specific document section. The Lead Planner
+        decides which section to discuss, agents discuss it, then DocWriter
+        updates the section in the actual .md file.
+
+        Args:
+            topic: The discussion topic.
+            max_rounds: Maximum rounds of discussion.
+            attachment: Optional attachment content.
+            auto_pause_interval: Auto-pause every N rounds (0=disabled).
+
+        Returns:
+            Final result string.
+        """
+        from src.models.doc_plan import DocPlan
+        from src.agents.doc_writer import DocWriter
+        from src.crew.mention_parser import parse_next_speakers
+
+        self._init_discussion(topic)
+        self._auto_pause_interval = auto_pause_interval
+        self._total_rounds = max_rounds
+        set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
+        self._abort_reason = None
+
+        # Initialize DocWriter
+        docs_dir = Path(self._data_dir) / self._project_id / self._discussion_id / "docs"
+        self._doc_writer = DocWriter(llm=self._llm, docs_dir=docs_dir)
+
+        trace_metadata = self._prepare_trace_metadata(topic, max_rounds)
+        trace_span: Any | None = None
+
+        try:
+            with start_trace_context(
+                name="discussion_document_centric",
+                session_id=self._discussion_id,
+                metadata=trace_metadata,
+            ) as span:
+                trace_span = span
+
+                # Phase 0: Generate document plan
+                self._broadcast_discussion_event("正在规划文档结构...")
+                self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                doc_plan = self._generate_doc_plan(topic, attachment)
+                self._doc_plan = doc_plan
+                self._doc_writer.create_skeleton(doc_plan)
+                self._broadcast_doc_plan_event(doc_plan)
+                self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                # Save doc_plan to discussion record
+                if self._current_discussion:
+                    self._current_discussion.doc_plan = doc_plan.to_dict()
+                    self._incremental_save()
+
+                # Phase 1-N: Section-by-section discussion
+                for round_num in range(1, max_rounds + 1):
+                    self._current_round = round_num
+
+                    # Pick next section
+                    file_plan, section = self._pick_next_section(doc_plan)
+                    if file_plan is None or section is None:
+                        logger.info("All sections completed at round %d", round_num)
+                        break
+
+                    section.status = "in_progress"
+                    doc_plan.current_section_id = section.id
+                    self._broadcast_section_focus(section.id, section.title, file_plan.filename)
+                    self._broadcast_discussion_event(
+                        f"第{round_num}轮：聚焦章节「{section.title}」({file_plan.filename})"
+                    )
+
+                    # Read current section content
+                    section_content = self._doc_writer.read_section(file_plan.filename, section.id)
+
+                    # Lead Planner opens section discussion
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                    opening = self._lead_planner_section_opening(section, section_content, round_num)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                    self._broadcast_message(self._lead_planner.role, opening)
+                    self._record_message(self._lead_planner.role, opening)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                    # Determine speakers
+                    next_speakers = parse_next_speakers(opening)
+                    agents_to_call = (
+                        [a for a in self._discussion_agents if a.role in next_speakers]
+                        if next_speakers else list(self._discussion_agents)
+                    )
+                    if not agents_to_call:
+                        agents_to_call = list(self._discussion_agents)
+
+                    participating = [a.role for a in agents_to_call]
+                    logger.info("Discussion %s round %d section %s: speakers=%s",
+                                self._discussion_id, round_num, section.id, participating)
+
+                    # Agents discuss in parallel
+                    context = self._build_section_context(topic, doc_plan, section, section_content, opening)
+                    round_responses = self._run_agents_parallel_sync(agents_to_call, context)
+
+                    # Build discussion content for summary and doc update
+                    discussion_content = f"主策划：{opening}\n\n"
+                    for role, resp in round_responses:
+                        discussion_content += f"{role}：{resp}\n\n"
+
+                    # Lead Planner summarizes the section discussion
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                    summary = self._lead_planner_section_summary(section.title, round_num, discussion_content)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                    self._broadcast_message(self._lead_planner.role, summary)
+                    self._record_message(self._lead_planner.role, summary)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                    # Update sliding window of summaries (keep last 2)
+                    self._section_summaries.append(f"第{round_num}轮({section.title}): {summary[:500]}")
+                    if len(self._section_summaries) > 2:
+                        self._section_summaries.pop(0)
+
+                    # Check if section is done
+                    if "章节完成" in summary:
+                        section.status = "completed"
+
+                    # DocWriter updates the section — show writing status on lead planner
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.WRITING, f"正在更新「{section.title}」")
+                    updated = self._doc_writer.update_section(
+                        file_plan.filename, section.id, discussion_content, section.title,
+                    )
+                    self._broadcast_section_update(file_plan.filename, section.id, updated)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                    # Generate and save round summary
+                    round_summary = self._generate_round_summary(round_num, summary)
+                    self._save_round_summary(round_summary)
+                    self._broadcast_round_summary(round_summary)
+
+                    # Check for pause/intervention
+                    injected = self._check_pause_and_wait()
+                    if self._abort_reason:
+                        raise DiscussionTimeoutError(self._abort_reason)
+                    # Handle user section jump
+                    if injected:
+                        self._inject_user_messages(injected)
+                        for msg in injected:
+                            content = msg.get("content", "")
+                            if content.startswith("focus:"):
+                                sid = content.split(":", 1)[1].strip()
+                                doc_plan.current_section_id = sid
+
+                    # Auto-pause
+                    if (
+                        self._auto_pause_interval > 0
+                        and round_num % self._auto_pause_interval == 0
+                        and round_num < max_rounds
+                    ):
+                        self._trigger_auto_pause(round_num)
+                        injected = self._check_pause_and_wait()
+                        if self._abort_reason:
+                            raise DiscussionTimeoutError(self._abort_reason)
+                        if injected:
+                            self._inject_user_messages(injected)
+                            for msg in injected:
+                                content = msg.get("content", "")
+                                if content.startswith("focus:"):
+                                    sid = content.split(":", 1)[1].strip()
+                                    doc_plan.current_section_id = sid
+
+                    self._broadcast_discussion_event(f"第{round_num}轮讨论完成")
+
+                    # Save doc_plan state after each round (section statuses may have changed)
+                    if self._current_discussion:
+                        self._current_discussion.doc_plan = doc_plan.to_dict()
+                        self._incremental_save()
+                    # Broadcast updated doc_plan so frontend sees section status changes
+                    self._broadcast_doc_plan_event(doc_plan)
+
+                # Save doc_plan final state
+                if self._current_discussion:
+                    self._current_discussion.doc_plan = doc_plan.to_dict()
+
+                self._finalize_trace(trace_span, result="文档驱动讨论完成")
+
+            # Save discussion
+            self._save_discussion(summary="文档驱动讨论完成")
+
+            # Cleanup
+            set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
+            cleanup_discussion_state(self._discussion_id)
+
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+            self._broadcast_discussion_event("discussion_completed")
+
+            return "文档驱动讨论完成"
+
+        except DiscussionTimeoutError:
+            self._save_discussion()
+            cleanup_discussion_state(self._discussion_id)
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+            self._broadcast_discussion_event("discussion_completed")
+            return "讨论因暂停超时结束"
+        except Exception as exc:
+            self._finalize_trace(trace_span, error=exc)
             self._broadcast_error(str(exc))
             self._broadcast_discussion_event("discussion_failed")
             self._save_discussion()

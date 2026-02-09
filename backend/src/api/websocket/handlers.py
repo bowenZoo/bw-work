@@ -2,6 +2,7 @@
 
 import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -22,10 +23,96 @@ router = APIRouter(tags=["websocket"])
 _discussion_memory = DiscussionMemory(data_dir="data/projects")
 
 
+def _load_doc_contents(discussion_id: str, project_id: str = "default") -> dict[str, str]:
+    """Load all .md doc files for a discussion from disk."""
+    docs_dir = Path("data/projects") / project_id / discussion_id / "docs"
+    result: dict[str, str] = {}
+    if docs_dir.exists():
+        for path in sorted(docs_dir.glob("*.md")):
+            try:
+                result[path.name] = path.read_text(encoding="utf-8")
+            except Exception:
+                pass
+    return result
+
+
 def _get_current_discussion() -> "DiscussionState | None":
     """Lazy import to avoid circular dependency."""
     from src.api.routes.discussion import get_current_discussion
     return get_current_discussion()
+
+
+def _get_agent_statuses(discussion_id: str | None = None) -> dict[str, str]:
+    """Lazy import to avoid circular dependency."""
+    from src.api.routes.discussion import get_agent_statuses
+    return get_agent_statuses(discussion_id)
+
+
+async def _send_discussion_sync(websocket: WebSocket, discussion_id: str) -> None:
+    """Send initial sync message for a per-discussion WebSocket connection.
+
+    Loads the discussion state, messages, round summaries, agent statuses,
+    doc plan, and doc contents, then sends them as a single sync message.
+    """
+    from src.api.routes.discussion import get_discussion_state
+
+    discussion = get_discussion_state(discussion_id)
+    if discussion is None:
+        await websocket.send_json({
+            "type": "sync",
+            "data": {"discussion": None, "messages": []},
+        })
+        return
+
+    # Load messages
+    stored = _discussion_memory.load(discussion_id)
+    messages = []
+    if stored and stored.messages:
+        messages = [
+            {
+                "id": msg.id,
+                "agent_id": msg.agent_id,
+                "agent_role": msg.agent_role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+            }
+            for msg in stored.messages
+        ]
+
+    round_summaries = []
+    if stored and stored.round_summaries:
+        round_summaries = stored.round_summaries
+
+    doc_plan = stored.doc_plan if stored else None
+    doc_contents = _load_doc_contents(discussion_id)
+
+    # Check paused state
+    from src.crew.discussion_crew import get_discussion_state as get_disc_state, DiscussionState as DiscState
+    disc_state = get_disc_state(discussion_id)
+    is_paused = disc_state is not None and disc_state.get("state") == DiscState.PAUSED
+
+    await websocket.send_json({
+        "type": "sync",
+        "data": {
+            "discussion": {
+                "id": discussion.id,
+                "topic": discussion.topic,
+                "rounds": discussion.rounds,
+                "status": discussion.status.value,
+                "created_at": discussion.created_at,
+                "started_at": discussion.started_at,
+                "completed_at": discussion.completed_at,
+                "result": discussion.result,
+                "error": discussion.error,
+            },
+            "messages": messages,
+            "round_summaries": round_summaries,
+            "agent_statuses": _get_agent_statuses(discussion_id),
+            "doc_plan": doc_plan,
+            "doc_contents": doc_contents,
+            "is_paused": is_paused,
+        },
+    })
 
 
 def _validate_origin(websocket: WebSocket) -> bool:
@@ -119,14 +206,21 @@ async def global_websocket_endpoint(websocket: WebSocket) -> None:
     await global_connection_manager.connect(websocket)
 
     try:
-        # Send current discussion state and historical messages
+        # Build lobby sync: list all active discussions
+        from src.api.routes.discussion import list_active_discussions as _list_active
+        active_result = await _list_active()
+        discussions_list = active_result.get("discussions", []) if isinstance(active_result, dict) else []
+
+        # Also include the current discussion pointer for backward compatibility
         current = _get_current_discussion()
         logger.info(
-            "WebSocket sync: current_discussion=%s",
+            "WebSocket lobby_sync: active=%d, current=%s",
+            len(discussions_list),
             f"id={current.id}, status={current.status}" if current else "None",
         )
+
+        # If there is a current discussion, send full sync for it (backward compat)
         if current:
-            # Load historical messages
             stored = _discussion_memory.load(current.id)
             messages = []
             if stored and stored.messages:
@@ -140,6 +234,17 @@ async def global_websocket_endpoint(websocket: WebSocket) -> None:
                     }
                     for msg in stored.messages
                 ]
+
+            round_summaries = []
+            if stored and stored.round_summaries:
+                round_summaries = stored.round_summaries
+
+            doc_plan = stored.doc_plan if stored else None
+            doc_contents = _load_doc_contents(current.id)
+
+            from src.crew.discussion_crew import get_discussion_state as get_disc_state, DiscussionState as DiscState
+            disc_state = get_disc_state(current.id)
+            is_paused = disc_state is not None and disc_state.get("state") == DiscState.PAUSED
 
             await websocket.send_json({
                 "type": "sync",
@@ -156,10 +261,14 @@ async def global_websocket_endpoint(websocket: WebSocket) -> None:
                         "error": current.error,
                     },
                     "messages": messages,
+                    "round_summaries": round_summaries,
+                    "agent_statuses": _get_agent_statuses(current.id),
+                    "doc_plan": doc_plan,
+                    "doc_contents": doc_contents,
+                    "is_paused": is_paused,
                 },
             })
         else:
-            # No current discussion - send empty sync so frontend resets state
             await websocket.send_json({
                 "type": "sync",
                 "data": {
@@ -168,7 +277,15 @@ async def global_websocket_endpoint(websocket: WebSocket) -> None:
                 },
             })
 
-        # Send current viewer count directly to this client
+        # Send lobby_sync with active discussions list
+        await websocket.send_json({
+            "type": "lobby_sync",
+            "data": {
+                "discussions": discussions_list,
+            },
+        })
+
+        # Send current viewer count
         await websocket.send_json({
             "type": "viewers",
             "data": {
@@ -215,6 +332,9 @@ async def websocket_endpoint(websocket: WebSocket, discussion_id: str) -> None:
     await connection_manager.connect(websocket, discussion_id)
 
     try:
+        # Send initial sync with current discussion state
+        await _send_discussion_sync(websocket, discussion_id)
+
         while True:
             data = await websocket.receive_text()
 

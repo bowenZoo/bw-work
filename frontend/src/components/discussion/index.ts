@@ -13,3 +13,7 @@ export { default as DiscussionChain } from './DiscussionChain.vue';
 export { default as DesignDocsPanel } from './DesignDocsPanel.vue';
 export { default as CompactAgentBar } from './CompactAgentBar.vue';
 export { default as StageSummaryPanel } from './StageSummaryPanel.vue';
+export { default as RightPanel } from './RightPanel.vue';
+export { default as InlineDesignDocs } from './InlineDesignDocs.vue';
+export { default as DocOutline } from './DocOutline.vue';
+export { default as AgentConfigEditor } from './AgentConfigEditor.vue';

@@ -52,6 +52,8 @@ const statusColorClass = computed(() => {
       return 'bg-green-400';
     case 'thinking':
       return 'bg-yellow-400 animate-pulse';
+    case 'writing':
+      return 'bg-indigo-400 animate-pulse';
     default:
       return 'bg-gray-400';
   }

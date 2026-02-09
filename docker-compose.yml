@@ -1,0 +1,29 @@
+services:
+  backend:
+    build: ./backend
+    container_name: bw-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      - CREWAI_DISABLE_TELEMETRY=true
+      - OTEL_SDK_DISABLED=true
+      - CREWAI_TESTING=true
+      - CORS_ALLOWED_ORIGINS=["http://localhost:18001","http://127.0.0.1:18001","http://118.89.16.95:18001"]
+      - WEBSOCKET_ALLOWED_ORIGIN_PREFIXES=["http://localhost:","http://127.0.0.1:","http://118.89.16.95:"]
+      - WEBSOCKET_ALLOWED_ORIGINS=["http://localhost","http://127.0.0.1","http://118.89.16.95"]
+    volumes:
+      - ./backend/data:/app/data
+      - ./data/admin:/data/admin
+      - ./backend/src/config/roles:/app/src/config/roles
+    ports:
+      - "18000:18000"
+
+  frontend:
+    build: ./frontend
+    container_name: bw-frontend
+    restart: unless-stopped
+    ports:
+      - "18001:80"
+    depends_on:
+      - backend

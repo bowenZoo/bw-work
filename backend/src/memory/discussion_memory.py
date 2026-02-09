@@ -139,6 +139,8 @@ class DiscussionMemory(MemoryStore[Discussion]):
                 for msg in discussion.messages
             ],
             "summary": discussion.summary,
+            "round_summaries": discussion.round_summaries,
+            "doc_plan": discussion.doc_plan,
             "created_at": discussion.created_at.isoformat(),
             "updated_at": discussion.updated_at.isoformat(),
         }
@@ -160,6 +162,8 @@ class DiscussionMemory(MemoryStore[Discussion]):
                 for msg in data.get("messages", [])
             ],
             summary=data.get("summary"),
+            round_summaries=data.get("round_summaries", []),
+            doc_plan=data.get("doc_plan"),
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
         )

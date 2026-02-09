@@ -5,22 +5,18 @@ import { ChatContainer, InputBox } from '@/components/chat';
 import { Header } from '@/components/layout';
 import { PlaybackControl } from '@/components/history';
 import {
-  TopicCard,
   AttachmentPreview,
   UserInputBox,
   AgendaPanel,
   CompactAgentBar,
-  StageSummaryPanel,
   AgendaSummaryModal,
-  DiscussionChain,
-  DesignDocsPanel,
+  RightPanel,
 } from '@/components/discussion';
 import { usePlayback } from '@/composables/usePlayback';
 import { useDiscussion } from '@/composables/useDiscussion';
-import { useGlobalDiscussion } from '@/composables/useGlobalDiscussion';
 import { useAgentsStore } from '@/stores/agents';
 import api from '@/api';
-import type { AgendaItem, AgentStatus, DiscussionChainItem } from '@/types';
+import type { AgendaItem, AgentStatus } from '@/types';
 
 // Props for playback mode
 const props = defineProps<{
@@ -34,21 +30,13 @@ const agentsStore = useAgentsStore();
 // Playback mode is no longer used — completed discussions show all messages directly
 const isPlaybackMode = computed(() => false);
 
-// Determine if we're using global discussion mode (no :id in route)
-const isGlobalMode = computed(() => {
-  return route.name === 'discussion' && !route.params.id;
-});
-
-// Get discussion ID from route (for non-global mode)
+// Get discussion ID from route
 const discussionId = computed(() => route.params.id as string | undefined);
 
-// Get topic from query (for auto-start from home page)
-const topicFromQuery = computed(() => route.query.topic as string | undefined);
-const hasAutoStarted = ref(false);
-
-// Continue discussion modal state
-const showContinueModal = ref(false);
+// Continue discussion state
 const continueFollowUp = ref('');
+const continueRounds = ref(5);
+const showContinuePopup = ref(false);
 const isContinuing = ref(false);
 
 // Attachment preview modal state
@@ -58,110 +46,47 @@ const showAttachmentPreview = ref(false);
 const showSummaryModal = ref(false);
 const selectedAgendaItem = ref<AgendaItem | null>(null);
 
-// Design docs panel state
-const showDesignDocs = ref(false);
-
 // Agent filter (for CompactAgentBar click)
 const agentFilter = ref<string | null>(null);
 
-// Discussion chain state
-const discussionChain = ref<DiscussionChainItem[]>([]);
-const chainCurrentIndex = ref(0);
-const isContinuation = ref(false);
-const continuedFrom = ref<string | null>(null);
-
-// Global discussion composable (for global mode)
+// Per-discussion composable (unified)
 const {
-  discussion: globalDiscussion,
-  messages: globalMessages,
-  viewerCount,
-  connectionStatus: globalConnectionStatus,
-  isDiscussionActive: globalIsActive,
-  isPaused: globalIsPaused,
-  autoPauseMessage: globalAutoPauseMessage,
-  createDiscussion: createGlobalDiscussion,
-  disconnect: disconnectGlobal,
-  resumeDiscussion: resumeGlobalDiscussion,
+  discussion,
+  messages,
+  isLoading: liveLoading,
+  error: liveError,
+  isInProgress,
+  isPaused,
+  autoPauseMessage,
+  connectionStatus,
+  setError,
+  startDiscussion,
+  loadDiscussion: loadLiveDiscussion,
+  reset: resetLiveDiscussion,
+  setPaused,
+  resumeDiscussion,
+  pauseDiscussion,
+  focusSection,
   agenda,
   fetchAgenda,
   addAgendaItem,
   skipAgendaItem,
   getAgendaItemSummary,
-} = useGlobalDiscussion();
-
-// Per-discussion composable (for non-global mode)
-const {
-  discussion: perDiscussion,
-  messages: perMessages,
-  isLoading: liveLoading,
-  error: liveError,
-  isInProgress,
-  isPaused: perIsPaused,
-  connectionStatus: perConnectionStatus,
-  setError,
-  createDiscussion: createPerDiscussion,
-  startDiscussion,
-  loadDiscussion: loadLiveDiscussion,
-  reset: resetLiveDiscussion,
-  setPaused,
+  roundSummaries,
+  latestDocUpdate,
+  docPlan,
+  docContents,
+  currentSectionId,
 } = useDiscussion();
 
-// Unified accessors based on mode
-const discussion = computed(() => {
-  if (isGlobalMode.value) {
-    return globalDiscussion.value ? {
-      id: globalDiscussion.value.id,
-      topic: globalDiscussion.value.topic,
-      messages: [],
-      status: globalDiscussion.value.status,
-      attachment: undefined,
-    } : null;
-  }
-  return perDiscussion.value;
-});
-
-const messages = computed(() => {
-  if (isGlobalMode.value) {
-    return globalMessages.value;
-  }
-  return perMessages.value;
-});
-
-const connectionStatus = computed(() => {
-  if (isGlobalMode.value) {
-    return globalConnectionStatus.value;
-  }
-  return perConnectionStatus.value;
-});
-
-async function createDiscussion(topic: string) {
-  if (isGlobalMode.value) {
-    const autoPauseStr = sessionStorage.getItem('discussion_auto_pause_interval');
-    const autoPauseInterval = autoPauseStr ? parseInt(autoPauseStr, 10) : 5;
-    sessionStorage.removeItem('discussion_auto_pause_interval');
-    const result = await createGlobalDiscussion(topic, 10, undefined, autoPauseInterval);
-    return result.id;
-  }
-  return createPerDiscussion(topic);
-}
-
 const isRunning = computed(() => discussion.value?.status === 'running');
+const isFinished = computed(() => discussion.value?.status === 'completed' || discussion.value?.status === 'failed');
 
 // Show round table layout when discussion has messages (running, completed, or failed)
 const showRoundTableLayout = computed(() => {
   if (!discussion.value) return false;
   if (isRunning.value) return true;
   return displayMessages.value.length > 0;
-});
-
-// Unified pause state (both global and per-discussion)
-const isPaused = computed(() => {
-  if (isGlobalMode.value) return globalIsPaused.value;
-  return perIsPaused.value;
-});
-const autoPauseMessage = computed(() => {
-  if (isGlobalMode.value) return globalAutoPauseMessage.value;
-  return '';
 });
 
 // Playback composable (only used in playback mode)
@@ -231,6 +156,15 @@ const discussionStatus = computed<'pending' | 'running' | 'completed' | 'failed'
   return 'pending';
 });
 
+const statusLabel = computed(() => {
+  switch (discussionStatus.value) {
+    case 'running': return '进行中';
+    case 'completed': return '已完成';
+    case 'failed': return '已中断';
+    default: return '待开始';
+  }
+});
+
 // Agent statuses map for RoundTable
 const agentStatuses = computed(() => {
   const statusMap = new Map<string, AgentStatus>();
@@ -246,73 +180,40 @@ const speakingAgentId = computed(() => {
 });
 
 
-// Load playback data when entering playback mode
+// Load discussion when route changes
 watch(
   [discussionId, isPlaybackMode],
   async ([newId, isPlayback]) => {
     if (isPlayback && newId) {
       loadPlaybackDiscussion(newId);
-      // Fetch discussion chain for playback mode
-      await fetchDiscussionChain(newId);
     }
     if (!isPlayback && newId) {
       loadLiveDiscussion(newId);
-      // Fetch discussion chain for live mode with ID
-      await fetchDiscussionChain(newId);
     }
   },
   { immediate: true }
 );
 
-// Update continuation info when discussion changes
-watch(
-  discussion,
-  (disc) => {
-    if (disc) {
-      isContinuation.value = Boolean((disc as any).is_continuation);
-      continuedFrom.value = (disc as any).continued_from || null;
-    } else {
-      isContinuation.value = false;
-      continuedFrom.value = null;
-    }
-  },
-  { immediate: true }
-);
-
-// Auto-start discussion if topic is provided via query parameter (from home page)
 onMounted(async () => {
-  if (!isPlaybackMode.value && topicFromQuery.value && !hasAutoStarted.value) {
-    hasAutoStarted.value = true;
-    const newId = await createDiscussion(topicFromQuery.value);
-    if (newId) {
-      if (!isGlobalMode.value) {
-        setPaused(false);
-        await startDiscussion();
-        // Clear query parameter from URL
-        router.replace({ name: 'discussion-by-id', params: { id: newId } });
-      } else {
-        // In global mode, the discussion auto-starts, just clear the query
-        router.replace({ name: 'discussion' });
-      }
-    }
-  }
-
-  // Fetch agenda if in global mode
-  if (isGlobalMode.value) {
+  // Fetch agenda if discussion is loaded
+  if (discussionId.value) {
     await fetchAgenda();
   }
 });
 
-// Handle topic submission (live mode only)
+// Handle topic submission (live mode only — creates a new discussion)
 async function handleSubmit(topic: string) {
   if (isPlaybackMode.value) return;
-  const newId = await createDiscussion(topic);
-  if (newId) {
-    if (!isGlobalMode.value) {
-      setPaused(false);
-      await startDiscussion();
-    }
-    // In global mode, discussion auto-starts via API
+  // This path is for the footer input box when no discussion exists yet
+  // In the new flow, discussions are created from HomeView and we navigate here
+  // But keep this for backward compat
+  const { createCurrentDiscussion } = await import('@/api/discussion');
+  try {
+    const response = await createCurrentDiscussion({ topic });
+    router.push({ name: 'discussion-by-id', params: { id: response.id } });
+  } catch (e) {
+    console.error('Failed to create discussion:', e);
+    setError(e instanceof Error ? e.message : '创建讨论失败');
   }
 }
 
@@ -324,9 +225,20 @@ function handleResumed() {
   setPaused(false);
 }
 
-async function handleGlobalResume() {
+async function handleManualPause() {
+  if (discussion.value?.id) {
+    try {
+      await pauseDiscussion();
+    } catch (e) {
+      console.error('Failed to pause discussion:', e);
+      setError(e instanceof Error ? e.message : '暂停讨论失败');
+    }
+  }
+}
+
+async function handleResume() {
   try {
-    await resumeGlobalDiscussion();
+    await resumeDiscussion();
   } catch (e) {
     console.error('Failed to resume discussion:', e);
     setError(e instanceof Error ? e.message : '恢复讨论失败');
@@ -335,7 +247,6 @@ async function handleGlobalResume() {
 
 function handleUserMessageSent(content: string) {
   console.log('User message sent:', content);
-  // The message will be included in the next agent's context after resume
 }
 
 function handleUserInputError(message: string) {
@@ -343,7 +254,6 @@ function handleUserInputError(message: string) {
 }
 
 function handleInterventionError(message: string) {
-  // Surface intervention errors in the same toast channel
   console.error('Intervention error:', message);
   setError(message);
 }
@@ -353,83 +263,35 @@ function clearError() {
 }
 
 // Handle playback controls
-function handlePlay() {
-  play();
-}
-
-function handlePause() {
-  pause();
-}
-
-function handleSeek(index: number) {
-  seek(index);
-}
-
-function handleSpeedChange(newSpeed: number) {
-  setSpeed(newSpeed);
-}
+function handlePlay() { play(); }
+function handlePause() { pause(); }
+function handleSeek(index: number) { seek(index); }
+function handleSpeedChange(newSpeed: number) { setSpeed(newSpeed); }
 
 // Navigate back to home
 function goBackToHome() {
   router.push({ name: 'home' });
 }
 
-// Fetch discussion chain
-async function fetchDiscussionChain(discId: string) {
-  try {
-    const response = await api.get(`/api/discussions/${discId}/chain`);
-    discussionChain.value = response.data.chain;
-    chainCurrentIndex.value = response.data.current_index;
-  } catch (error) {
-    console.error('Failed to fetch discussion chain:', error);
-    discussionChain.value = [];
-    chainCurrentIndex.value = 0;
-  }
-}
-
-// Handle chain item click
-function handleChainSelect(targetId: string) {
-  router.push({
-    name: 'discussion-by-id',
-    params: { id: targetId },
-  });
-}
-
-// Handle continue discussion
-function handleContinueClick() {
-  showContinueModal.value = true;
-  continueFollowUp.value = '';
-}
-
 async function submitContinue() {
-  if (!discussionId.value) return;
+  const discId = discussionId.value || discussion.value?.id;
+  if (!discId) return;
+  const followUp = continueFollowUp.value.trim();
 
   isContinuing.value = true;
   try {
-    const response = await api.post(`/api/discussions/${discussionId.value}/continue`, {
-      follow_up: continueFollowUp.value.trim() || '',
-      rounds: 2,
+    await api.post(`/api/discussions/${discId}/extend`, {
+      follow_up: followUp,
+      additional_rounds: continueRounds.value,
     });
-
-    if (response.data.new_discussion_id) {
-      showContinueModal.value = false;
-      // Navigate to the new discussion
-      router.push({
-        name: 'discussion-by-id',
-        params: { id: response.data.new_discussion_id },
-      });
-    }
+    continueFollowUp.value = '';
+    showContinuePopup.value = false;
   } catch (error: any) {
-    console.error('Failed to continue discussion:', error);
+    console.error('Failed to extend discussion:', error);
     setError(error.response?.data?.detail || '继续讨论失败');
   } finally {
     isContinuing.value = false;
   }
-}
-
-function cancelContinue() {
-  showContinueModal.value = false;
-  continueFollowUp.value = '';
 }
 
 // Attachment preview handlers
@@ -446,7 +308,6 @@ async function handleViewSummary(item: AgendaItem) {
   selectedAgendaItem.value = item;
   showSummaryModal.value = true;
 
-  // Fetch latest summary if needed
   if (!item.summary) {
     const result = await getAgendaItemSummary(item.id);
     if (result && selectedAgendaItem.value) {
@@ -473,6 +334,11 @@ async function handleAddAgendaItem() {
 
 async function handleSkipAgendaItem(itemId: string) {
   await skipAgendaItem(itemId);
+}
+
+// Handle focus section request
+async function handleFocusSection(sectionId: string) {
+  await focusSection(sectionId);
 }
 
 // CompactAgentBar agent click handler — toggle filter
@@ -507,91 +373,46 @@ onUnmounted(() => {
           <span v-if="discussion?.status === 'completed'" class="px-2 py-1 bg-green-50 text-green-700 text-sm rounded">
             已完成
           </span>
-          <!-- Global mode viewer count -->
-          <span v-if="isGlobalMode" class="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 text-sm rounded">
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-            </svg>
-            <span>{{ viewerCount }} 人观看</span>
-          </span>
         </div>
       </template>
     </Header>
 
-    <!-- Topic Card Header -->
-    <div v-if="topicDisplay" class="discussion-header">
-      <div class="header-content">
-        <TopicCard
-          :topic="topicDisplay"
-          :status="discussionStatus"
-          :attachment="currentAttachment"
-          @preview-attachment="handlePreviewAttachment"
-        />
-        <!-- Continuation indicator -->
-        <div v-if="isContinuation" class="continuation-indicator">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-          </svg>
-          <span>续前讨论</span>
-          <button
-            v-if="continuedFrom"
-            class="view-original-btn"
-            @click="router.push({ name: 'discussion-by-id', params: { id: continuedFrom } })"
-          >
-            查看原讨论
-          </button>
-        </div>
-        <!-- Discussion chain -->
-        <DiscussionChain
-          v-if="discussionChain.length > 1"
-          :chain="discussionChain"
-          :current-index="chainCurrentIndex"
-          @select="handleChainSelect"
-        />
+    <!-- Compact Topic Bar -->
+    <div v-if="topicDisplay" class="topic-bar">
+      <div class="topic-bar-left">
+        <span class="topic-text" :title="topicDisplay">{{ topicDisplay }}</span>
+        <span class="status-badge" :class="`status-${discussionStatus}`">{{ statusLabel }}</span>
       </div>
-      <div class="header-actions">
-        <!-- Design docs button (visible when discussion has an ID) -->
-        <button
-          v-if="discussion?.id"
-          class="action-btn"
-          :class="{ 'is-active': showDesignDocs }"
-          @click="showDesignDocs = true"
-          title="策划文档"
-        >
-          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-        </button>
+      <div class="topic-bar-right">
         <button
           v-if="currentAttachment"
-          class="action-btn"
+          class="action-btn-sm"
           @click="handlePreviewAttachment"
           title="查看附件"
         >
-          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
           </svg>
         </button>
         <button
-          v-if="isRunning && !isGlobalMode"
-          class="action-btn"
+          v-if="isRunning"
+          class="action-btn-sm"
           :class="{ 'is-paused': isPaused }"
-          @click="isPaused ? handleResumed() : handlePaused()"
+          @click="isPaused ? handleResume() : handleManualPause()"
           :title="isPaused ? '继续讨论' : '暂停讨论'"
         >
-          <svg v-if="isPaused" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg v-if="isPaused" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <svg v-else class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg v-else class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         </button>
       </div>
     </div>
 
-    <!-- Auto-pause banner (global mode) -->
+    <!-- Auto-pause banner -->
     <div v-if="isPaused && isRunning" class="auto-pause-banner">
       <div class="auto-pause-content">
         <svg class="w-5 h-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -600,9 +421,8 @@ onUnmounted(() => {
         <span class="auto-pause-text">{{ autoPauseMessage || '讨论已暂停' }}</span>
       </div>
       <button
-        v-if="isGlobalMode"
         class="auto-pause-resume-btn"
-        @click="handleGlobalResume"
+        @click="handleResume"
       >
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
@@ -639,17 +459,96 @@ onUnmounted(() => {
           @add-item="handleAddAgendaItem"
         />
 
+        <!-- Waiting hint when discussion just started, no messages yet -->
+        <div v-if="isRunning && displayMessages.length === 0" class="waiting-placeholder">
+          <div class="thinking-dots">
+            <span class="dot" />
+            <span class="dot" />
+            <span class="dot" />
+          </div>
+          <p class="waiting-text">主策划正在思考中...</p>
+          <p class="waiting-subtext">讨论即将开始</p>
+        </div>
+
         <!-- Message Feed -->
         <ChatContainer
+          v-else
           :messages="filteredMessages"
           :is-loading="isLoading"
           class="message-feed"
         />
       </div>
 
-      <!-- Right Panel: Stage Summary -->
+      <!-- Right Panel: Tabs (Round Summaries / Design Docs) + Input -->
       <section class="right-panel">
-        <StageSummaryPanel :messages="displayMessages" />
+        <RightPanel
+          :round-summaries="roundSummaries"
+          :discussion-id="discussion?.id ?? ''"
+          :latest-doc-update="latestDocUpdate"
+          :doc-plan="docPlan"
+          :doc-contents="docContents"
+          :current-section-id="currentSectionId"
+          @focus-section="handleFocusSection"
+        />
+        <!-- User input box embedded in right panel (running) -->
+        <UserInputBox
+          v-if="isRunning && discussion?.id"
+          :discussion-id="discussion.id"
+          :disabled="!isRunning"
+          placeholder="发表你的观点（会自动暂停、注入、恢复）..."
+          @send="handleUserMessageSent"
+          @error="handleUserInputError"
+        />
+        <!-- Continue trigger for completed/failed discussions -->
+        <div v-if="isFinished && (discussionId || discussion?.id)" class="continue-area">
+          <button
+            v-if="!showContinuePopup"
+            class="continue-trigger-btn"
+            @click="showContinuePopup = true"
+          >
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+            </svg>
+            <span>继续讨论</span>
+          </button>
+          <!-- Expanded popup -->
+          <div v-else class="continue-popup">
+            <div class="continue-popup-row">
+              <label class="continue-label">追加轮次</label>
+              <div class="rounds-stepper">
+                <button class="stepper-btn" @click="continueRounds = Math.max(1, continueRounds - 1)">-</button>
+                <input
+                  v-model.number="continueRounds"
+                  type="number"
+                  class="rounds-input"
+                  min="1"
+                  max="50"
+                />
+                <button class="stepper-btn" @click="continueRounds = Math.min(50, continueRounds + 1)">+</button>
+              </div>
+            </div>
+            <div class="continue-popup-row">
+              <input
+                v-model="continueFollowUp"
+                type="text"
+                class="continue-text-input"
+                placeholder="可选：输入追加方向..."
+                :disabled="isContinuing"
+                @keydown.enter="submitContinue"
+              />
+            </div>
+            <div class="continue-popup-actions">
+              <button class="continue-cancel-btn" @click="showContinuePopup = false" :disabled="isContinuing">取消</button>
+              <button class="continue-confirm-btn" :disabled="isContinuing" @click="submitContinue">
+                <svg v-if="isContinuing" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span>{{ isContinuing ? '创建中...' : `继续 ${continueRounds} 轮` }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -688,11 +587,9 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Footer -->
-    <footer class="discussion-footer">
-      <!-- Input box for starting new discussions (no discussion yet) -->
+    <!-- Footer (only when no discussion yet) -->
+    <footer v-if="!discussion && !isRunning" class="discussion-footer">
       <InputBox
-        v-if="!discussion && !isRunning"
         :disabled="isInProgress"
         :discussion-id="undefined"
         :is-running="false"
@@ -703,69 +600,7 @@ onUnmounted(() => {
         @resumed="handleResumed"
         @error="handleInterventionError"
       />
-
-      <!-- User input box when discussion is running -->
-      <UserInputBox
-        v-if="isRunning && discussion?.id"
-        :discussion-id="discussion.id"
-        :disabled="!isRunning"
-        placeholder="发表你的观点（会自动暂停、注入、恢复）..."
-        @send="handleUserMessageSent"
-        @error="handleUserInputError"
-      />
-
-      <!-- Continue button for completed discussions -->
-      <div v-if="discussion?.status === 'completed' && discussionId" class="completed-footer">
-        <button class="continue-discussion-btn" @click="handleContinueClick">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
-          </svg>
-          <span>继续讨论</span>
-        </button>
-      </div>
     </footer>
-
-    <!-- Continue Discussion Modal -->
-    <Teleport to="body">
-      <div
-        v-if="showContinueModal"
-        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-        @click.self="cancelContinue"
-      >
-        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-lg mx-4">
-          <h3 class="text-lg font-semibold text-gray-900 mb-4">继续讨论</h3>
-          <p class="text-gray-600 text-sm mb-4">
-            基于当前讨论的上下文，输入您想要继续探讨的问题或方向：
-          </p>
-          <textarea
-            v-model="continueFollowUp"
-            class="w-full h-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-            placeholder="例如：关于战斗系统的数值平衡，需要进一步讨论伤害计算公式..."
-            :disabled="isContinuing"
-          />
-          <div class="flex justify-end gap-3 mt-4">
-            <button
-              class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
-              :disabled="isContinuing"
-              @click="cancelContinue"
-            >
-              取消
-            </button>
-            <button
-              class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 flex items-center gap-2"
-              :disabled="isContinuing"
-              @click="submitContinue"
-            >
-              <svg v-if="isContinuing" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              <span>{{ isContinuing ? '正在创建...' : '开始讨论' }}</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
 
     <!-- Attachment Preview Modal -->
     <AttachmentPreview
@@ -783,13 +618,6 @@ onUnmounted(() => {
       @close="handleCloseSummary"
     />
 
-    <!-- Design Docs Panel -->
-    <DesignDocsPanel
-      :visible="showDesignDocs"
-      :discussion-id="discussion?.id ?? ''"
-      :discussion-topic="topicDisplay"
-      @close="showDesignDocs = false"
-    />
   </div>
 </template>
 
@@ -801,13 +629,94 @@ onUnmounted(() => {
   background: var(--bg-primary);
 }
 
-.discussion-header {
+/* Compact topic bar */
+.topic-bar {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 8px 16px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
+  gap: 12px;
+}
+
+.topic-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.topic-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 400px;
+}
+
+.status-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.status-running {
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+}
+
+.status-completed {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+}
+
+.status-failed {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+.status-pending {
+  background: rgba(156, 163, 175, 0.1);
+  color: #6b7280;
+}
+
+.topic-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.action-btn-sm {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.action-btn-sm:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.action-btn-sm.is-paused {
+  background: var(--warning-color);
+  border-color: var(--warning-color);
+  color: white;
 }
 
 .auto-pause-banner {
@@ -848,82 +757,12 @@ onUnmounted(() => {
   background: #171717;
 }
 
-.header-content {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex: 1;
-}
-
-.continuation-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  background-color: rgba(5, 150, 105, 0.08);
-  border: 1px solid rgba(5, 150, 105, 0.2);
-  border-radius: 6px;
-  color: var(--success-color);
-  font-size: 12px;
-  font-weight: 500;
-  width: fit-content;
-}
-
-.view-original-btn {
-  padding: 2px 8px;
-  background-color: rgba(5, 150, 105, 0.1);
-  border-radius: 4px;
-  color: var(--success-color);
-  font-size: 11px;
-  transition: background-color 0.2s;
-}
-
-.view-original-btn:hover {
-  background-color: rgba(5, 150, 105, 0.2);
-}
-
-.header-actions {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.action-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 6px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.action-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.action-btn.is-paused {
-  background: var(--warning-color);
-  border-color: var(--warning-color);
-  color: white;
-}
-
-.action-btn.is-active {
-  background: var(--primary-color);
-  border-color: var(--primary-color);
-  color: white;
-}
 
 /* Main content - Two Column Layout */
 .discussion-main {
   flex: 1;
   display: grid;
-  grid-template-columns: 60% 40%;
+  grid-template-columns: 55% 45%;
   gap: 12px;
   padding: 12px;
   overflow: hidden;
@@ -1011,27 +850,228 @@ onUnmounted(() => {
   border-top: 1px solid var(--border-color);
 }
 
-.completed-footer {
-  display: flex;
-  justify-content: center;
-  padding: 4px 0;
+/* Continue discussion area (in right panel) */
+.continue-area {
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
 }
 
-.continue-discussion-btn {
+.continue-trigger-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--primary-color, #0A0A0A);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.continue-trigger-btn:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04));
+}
+
+.continue-popup {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.continue-popup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.continue-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.rounds-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.stepper-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.stepper-btn:hover {
+  background: var(--bg-tertiary, #e5e7eb);
+  color: var(--text-primary);
+}
+
+.rounds-input {
+  width: 40px;
+  height: 28px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: none;
+  border-left: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
+  -moz-appearance: textfield;
+}
+
+.rounds-input::-webkit-inner-spin-button,
+.rounds-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.continue-text-input {
+  flex: 1;
+  padding: 7px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  transition: border-color 0.2s;
+}
+
+.continue-text-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.continue-text-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.continue-text-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.continue-popup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.continue-cancel-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.continue-cancel-btn:hover:not(:disabled) {
+  background: var(--bg-tertiary, #e5e7eb);
+}
+
+.continue-confirm-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 24px;
-  background: var(--primary-color);
-  color: white;
-  border-radius: 6px;
-  font-size: 14px;
+  padding: 6px 16px;
+  font-size: 13px;
   font-weight: 500;
-  transition: opacity 0.2s;
+  color: white;
+  background: var(--primary-color, #0A0A0A);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
 }
 
-.continue-discussion-btn:hover {
-  opacity: 0.85;
+.continue-confirm-btn:hover:not(:disabled) {
+  background: #171717;
+}
+
+.continue-confirm-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Waiting placeholder */
+.waiting-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.thinking-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.thinking-dots .dot {
+  width: 8px;
+  height: 8px;
+  background: var(--primary-color, #3b82f6);
+  border-radius: 50%;
+  animation: thinking-bounce 1.4s infinite ease-in-out both;
+}
+
+.thinking-dots .dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.thinking-dots .dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes thinking-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.waiting-text {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.waiting-subtext {
+  font-size: 13px;
+  color: var(--text-weak);
 }
 
 /* Responsive layout */

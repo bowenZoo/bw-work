@@ -1,5 +1,6 @@
 """Intervention API routes for human-in-the-loop functionality."""
 
+import logging
 from datetime import datetime
 from enum import Enum
 
@@ -7,12 +8,16 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from src.api.routes.discussion import DiscussionStatus, get_discussion_state
+from src.api.websocket.events import create_message_event
+from src.api.websocket.manager import global_connection_manager
 from src.crew.discussion_crew import (
     DiscussionState,
     add_injected_message,
     get_discussion_state as get_crew_state,
     set_discussion_state as set_crew_state,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/discussions", tags=["intervention"])
 
@@ -129,6 +134,21 @@ async def inject_message(
     }
 
     add_injected_message(discussion_id, injected_message)
+
+    # Broadcast user message to WebSocket so it appears in chat
+    try:
+        event = create_message_event(
+            discussion_id=discussion_id,
+            agent_id="user",
+            agent_role="用户",
+            content=request.content,
+        )
+        import asyncio
+        asyncio.ensure_future(
+            global_connection_manager.broadcast(event.to_dict())
+        )
+    except Exception as exc:
+        logger.debug("Failed to broadcast user message: %s", exc)
 
     # Get updated count
     state_info = get_crew_state(discussion_id)

@@ -37,8 +37,7 @@ const router = createRouter({
     },
     {
       path: '/discussion',
-      name: 'discussion',
-      component: DiscussionView,
+      redirect: '/',
     },
     {
       path: '/discussion/:id',

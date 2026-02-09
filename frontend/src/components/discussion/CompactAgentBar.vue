@@ -24,6 +24,7 @@ function getStatusLabel(status: AgentStatus): string {
   switch (status) {
     case 'thinking': return '思考中'
     case 'speaking': return '发言中'
+    case 'writing': return '更新文档中'
     default: return '空闲'
   }
 }
@@ -38,6 +39,7 @@ function getStatusLabel(status: AgentStatus): string {
       :class="{
         'is-speaking': isSpeaking(agent.id),
         'is-thinking': getStatus(agent.id) === 'thinking',
+        'is-writing': getStatus(agent.id) === 'writing',
       }"
       @click="emit('selectAgent', agent.id)"
     >
@@ -100,6 +102,10 @@ function getStatusLabel(status: AgentStatus): string {
   background: rgba(217, 119, 6, 0.06);
 }
 
+.agent-item.is-writing {
+  background: rgba(99, 102, 241, 0.08);
+}
+
 .agent-avatar {
   position: relative;
   width: 28px;
@@ -150,6 +156,11 @@ function getStatusLabel(status: AgentStatus): string {
   background: var(--success-color);
 }
 
+.dot-writing {
+  background: #6366f1;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
@@ -180,5 +191,9 @@ function getStatusLabel(status: AgentStatus): string {
 
 .label-speaking {
   color: var(--success-color);
+}
+
+.label-writing {
+  color: #6366f1;
 }
 </style>

@@ -32,8 +32,15 @@ class ServerMessageType(str, Enum):
     MODULE_DISCUSSION_COMPLETE = "module_discussion_complete"
     PROJECT_DISCUSSION_COMPLETE = "project_discussion_complete"
     DISCUSSION_PAUSED = "discussion_paused"
+    # Round summary and doc update events
+    ROUND_SUMMARY = "round_summary"
+    DOC_UPDATE = "doc_update"
     # Agenda events
     AGENDA = "agenda"
+    # Document-centric events
+    DOC_PLAN = "doc_plan"
+    SECTION_FOCUS = "section_focus"
+    SECTION_UPDATE = "section_update"
 
 
 class AgentStatus(str, Enum):
@@ -42,6 +49,7 @@ class AgentStatus(str, Enum):
     THINKING = "thinking"
     SPEAKING = "speaking"
     IDLE = "idle"
+    WRITING = "writing"
 
 
 class ClientMessage(BaseModel):
@@ -734,3 +742,171 @@ def create_agenda_item_add_event(
             title=title,
         )
     )
+
+
+# Round summary and doc update event models
+
+
+class RoundSummaryEventData(BaseModel):
+    """Data payload for round summary events."""
+
+    discussion_id: str
+    round: int
+    content: str
+    key_points: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    generated_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+class RoundSummaryEvent(BaseModel):
+    """Event when a round summary is generated."""
+
+    type: ServerMessageType = ServerMessageType.ROUND_SUMMARY
+    data: RoundSummaryEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return self.model_dump(mode="json")
+
+
+class DocUpdateEventData(BaseModel):
+    """Data payload for doc update events."""
+
+    discussion_id: str
+    round: int
+    file_count: int
+    files: list[dict[str, str]] = Field(default_factory=list)
+    generated_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+class DocUpdateEvent(BaseModel):
+    """Event when design documents are updated."""
+
+    type: ServerMessageType = ServerMessageType.DOC_UPDATE
+    data: DocUpdateEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return self.model_dump(mode="json")
+
+
+def create_round_summary_event(
+    discussion_id: str,
+    round_num: int,
+    content: str,
+    key_points: list[str] | None = None,
+    open_questions: list[str] | None = None,
+) -> RoundSummaryEvent:
+    """Create a round summary event.
+
+    Args:
+        discussion_id: The discussion ID.
+        round_num: The round number.
+        content: The summary content.
+        key_points: Key points from the round.
+        open_questions: Open questions remaining.
+
+    Returns:
+        A RoundSummaryEvent instance.
+    """
+    return RoundSummaryEvent(
+        data=RoundSummaryEventData(
+            discussion_id=discussion_id,
+            round=round_num,
+            content=content,
+            key_points=key_points or [],
+            open_questions=open_questions or [],
+        )
+    )
+
+
+def create_doc_update_event(
+    discussion_id: str,
+    round_num: int,
+    file_count: int,
+    files: list[dict[str, str]] | None = None,
+) -> DocUpdateEvent:
+    """Create a doc update event.
+
+    Args:
+        discussion_id: The discussion ID.
+        round_num: The round that triggered the update.
+        file_count: Number of document files.
+        files: List of file info dicts with 'filename' and 'title'.
+
+    Returns:
+        A DocUpdateEvent instance.
+    """
+    return DocUpdateEvent(
+        data=DocUpdateEventData(
+            discussion_id=discussion_id,
+            round=round_num,
+            file_count=file_count,
+            files=files or [],
+        )
+    )
+
+
+# Document-centric event models
+
+
+class DocPlanEventData(BaseModel):
+    discussion_id: str
+    doc_plan: dict
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class DocPlanEvent(BaseModel):
+    type: ServerMessageType = ServerMessageType.DOC_PLAN
+    data: DocPlanEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
+
+
+class SectionFocusEventData(BaseModel):
+    discussion_id: str
+    section_id: str
+    section_title: str
+    filename: str
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class SectionFocusEvent(BaseModel):
+    type: ServerMessageType = ServerMessageType.SECTION_FOCUS
+    data: SectionFocusEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
+
+
+class SectionUpdateEventData(BaseModel):
+    discussion_id: str
+    filename: str
+    section_id: str
+    content: str  # 更新后的完整 .md 文件内容
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class SectionUpdateEvent(BaseModel):
+    type: ServerMessageType = ServerMessageType.SECTION_UPDATE
+    data: SectionUpdateEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
+
+
+def create_doc_plan_event(discussion_id: str, doc_plan: dict) -> DocPlanEvent:
+    return DocPlanEvent(data=DocPlanEventData(discussion_id=discussion_id, doc_plan=doc_plan))
+
+
+def create_section_focus_event(discussion_id: str, section_id: str, section_title: str, filename: str) -> SectionFocusEvent:
+    return SectionFocusEvent(data=SectionFocusEventData(discussion_id=discussion_id, section_id=section_id, section_title=section_title, filename=filename))
+
+
+def create_section_update_event(discussion_id: str, filename: str, section_id: str, content: str) -> SectionUpdateEvent:
+    return SectionUpdateEvent(data=SectionUpdateEventData(discussion_id=discussion_id, filename=filename, section_id=section_id, content=content))

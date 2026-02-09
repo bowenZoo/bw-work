@@ -475,6 +475,77 @@ class LeadPlanner(BaseAgent):
 - 需要什么类型的图（UI 概念图、场景概念、角色设计等）
 - 简要描述图的内容要求"""
 
+    def create_doc_plan_prompt(self, topic: str, attachment: str | None = None) -> str:
+        attachment_section = ""
+        if attachment:
+            truncated = attachment[:3000] if len(attachment) > 3000 else attachment
+            attachment_section = f"\n\n参考资料:\n{truncated}"
+
+        return f"""作为主策划，请为以下话题规划策划文档结构：
+
+话题：{topic}
+{attachment_section}
+
+请输出一个 JSON 格式的文档规划。规划要求：
+1. 根据话题复杂度创建 1-3 个 .md 文件
+2. 每个文件包含 3-6 个章节
+3. 章节顺序要合理，前置知识在前
+4. 文件名使用中文，后缀 .md
+
+严格按以下 JSON 格式输出（不要输出其他任何内容）：
+```json
+{{{{
+  "files": [
+    {{{{
+      "filename": "核心玩法设计.md",
+      "title": "核心玩法设计方案",
+      "sections": [
+        {{{{"id": "s1", "title": "系统概述", "description": "定义核心玩法的目标和基本框架"}}}},
+        {{{{"id": "s2", "title": "核心循环", "description": "玩家的主要游戏循环和反馈机制"}}}}
+      ]
+    }}}}
+  ]
+}}}}
+```"""
+
+    def create_section_discussion_prompt(self, section_title: str, section_description: str,
+                                          current_content: str, round_num: int) -> str:
+        content_section = ""
+        if current_content and current_content.strip():
+            content_section = f"\n\n当前章节已有内容：\n{current_content}"
+
+        return f"""作为主策划，本轮（第{round_num}轮）聚焦讨论以下章节：
+
+**章节**: {section_title}
+**章节目标**: {section_description}
+{content_section}
+
+请引导团队讨论这个章节的内容，提出 2-3 个具体问题。
+指定谁来回答（只能指定：系统策划、数值策划、玩家代言人）。
+
+用以下格式指定发言人：
+```speakers
+角色名1, 角色名2
+```"""
+
+    def create_section_summary_prompt(self, section_title: str, round_num: int) -> str:
+        return f"""作为主策划，请对第{round_num}轮关于"{section_title}"章节的讨论进行总结：
+
+请按以下格式输出：
+### 本轮讨论要点
+- 列出讨论达成的结论
+- 列出需要记入文档的关键设计决策
+
+### 章节状态评估
+选择以下之一：
+- **章节完成**：该章节讨论已充分，可以写入文档
+- **需要继续**：该章节还需要更多讨论
+
+### 下一轮发言人
+```speakers
+角色名1, 角色名2
+```"""
+
     def create_agenda_prompt(self, topic: str, attachment: str | None = None) -> str:
         """Create prompt for agenda planning.
 

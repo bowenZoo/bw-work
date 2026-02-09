@@ -1,70 +1,45 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { Message } from '@/types'
+import type { RoundSummary } from '@/types'
 import { toSanitizedMarkdownHtml } from '@/utils/markdown'
 
 const props = defineProps<{
-  messages: Message[]
+  roundSummaries: RoundSummary[]
 }>()
 
-// Extract round summary messages from lead_planner
-const summaryMessages = computed(() =>
-  props.messages.filter(m =>
-    m.agentId === 'lead_planner' && m.content.includes('本轮总结')
-  )
-)
-
-// Extract final decision document
-const decisionMessage = computed(() =>
-  [...props.messages].reverse().find(m =>
-    m.agentId === 'lead_planner' && m.content.includes('策划决策文档')
-  )
-)
-
-const isCompleted = computed(() => !!decisionMessage.value)
-
-// Selected round index (null = show latest or decision)
+// Selected round index (null = show latest)
 const selectedRound = ref<number | null>(null)
 
 // Auto-select latest when new summaries arrive
 watch(
-  () => summaryMessages.value.length,
+  () => props.roundSummaries.length,
   () => {
     selectedRound.value = null
   }
 )
 
-const displayContent = computed(() => {
-  // If completed and no specific round selected, show decision document
-  if (isCompleted.value && selectedRound.value === null) {
-    return decisionMessage.value!.content
-  }
-  // If a specific round is selected, show that round's summary
+const currentSummary = computed<RoundSummary | null>(() => {
+  if (props.roundSummaries.length === 0) return null
   if (selectedRound.value !== null) {
-    return summaryMessages.value[selectedRound.value]?.content ?? ''
+    return props.roundSummaries[selectedRound.value] ?? null
   }
-  // Otherwise show the latest summary
-  const latest = summaryMessages.value[summaryMessages.value.length - 1]
-  return latest?.content ?? ''
+  return props.roundSummaries[props.roundSummaries.length - 1]
 })
 
 const renderedHtml = computed(() => {
-  if (!displayContent.value) return ''
-  return toSanitizedMarkdownHtml(displayContent.value)
+  if (!currentSummary.value) return ''
+  return toSanitizedMarkdownHtml(currentSummary.value.content)
 })
 
-const hasContent = computed(() => summaryMessages.value.length > 0 || isCompleted.value)
+const hasContent = computed(() => props.roundSummaries.length > 0)
 
 // Display title
 const panelTitle = computed(() => {
-  if (isCompleted.value && selectedRound.value === null) {
-    return '策划决策文档'
+  if (selectedRound.value !== null && currentSummary.value) {
+    return `第 ${currentSummary.value.round} 轮总结`
   }
-  if (selectedRound.value !== null) {
-    return `第 ${selectedRound.value + 1} 轮总结`
-  }
-  if (summaryMessages.value.length > 0) {
-    return `第 ${summaryMessages.value.length} 轮总结`
+  if (currentSummary.value) {
+    return `第 ${currentSummary.value.round} 轮总结`
   }
   return '阶段总结'
 })
@@ -88,13 +63,29 @@ function showLatest() {
         </svg>
         <span class="header-title">{{ panelTitle }}</span>
       </div>
-      <span v-if="isCompleted" class="completed-badge">已完成</span>
     </div>
 
     <!-- Content -->
     <div class="panel-content">
       <template v-if="hasContent">
+        <!-- Key points -->
+        <div v-if="currentSummary?.key_points?.length" class="section">
+          <h4 class="section-title">要点</h4>
+          <ul class="point-list">
+            <li v-for="(point, idx) in currentSummary.key_points" :key="idx">{{ point }}</li>
+          </ul>
+        </div>
+
+        <!-- Markdown content -->
         <div class="markdown-body" v-html="renderedHtml"></div>
+
+        <!-- Open questions -->
+        <div v-if="currentSummary?.open_questions?.length" class="section open-questions">
+          <h4 class="section-title">待讨论问题</h4>
+          <ul class="point-list">
+            <li v-for="(q, idx) in currentSummary.open_questions" :key="idx">{{ q }}</li>
+          </ul>
+        </div>
       </template>
       <template v-else>
         <div class="empty-state">
@@ -107,23 +98,22 @@ function showLatest() {
     </div>
 
     <!-- Round navigation -->
-    <div v-if="summaryMessages.length > 0" class="round-nav">
+    <div v-if="roundSummaries.length > 1" class="round-nav">
       <button
-        v-for="(_, idx) in summaryMessages"
+        v-for="(s, idx) in roundSummaries"
         :key="idx"
         class="round-btn"
         :class="{ active: selectedRound === idx }"
         @click="selectRound(idx)"
       >
-        第{{ idx + 1 }}轮
+        第{{ s.round }}轮
       </button>
       <button
-        v-if="isCompleted"
-        class="round-btn round-btn-decision"
+        class="round-btn"
         :class="{ active: selectedRound === null }"
         @click="showLatest"
       >
-        决策文档
+        最新
       </button>
     </div>
   </div>
@@ -135,8 +125,6 @@ function showLatest() {
   flex-direction: column;
   height: 100%;
   background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
   overflow: hidden;
 }
 
@@ -162,19 +150,45 @@ function showLatest() {
   color: var(--text-primary);
 }
 
-.completed-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  background: rgba(5, 150, 105, 0.1);
-  color: var(--success-color);
-  border-radius: 10px;
-  font-weight: 500;
-}
-
 .panel-content {
   flex: 1;
   overflow-y: auto;
   padding: 14px;
+}
+
+.section {
+  margin-bottom: 12px;
+}
+
+.section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary-color);
+  margin: 0 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.point-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.point-list li {
+  margin: 3px 0;
+}
+
+.open-questions {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.open-questions .section-title {
+  color: var(--warning-color, #d97706);
 }
 
 .markdown-body {
@@ -291,14 +305,5 @@ function showLatest() {
   background: var(--primary-color);
   color: white;
   border-color: var(--primary-color);
-}
-
-.round-btn-decision {
-  margin-left: auto;
-}
-
-.round-btn-decision.active {
-  background: var(--success-color);
-  border-color: var(--success-color);
 }
 </style>
