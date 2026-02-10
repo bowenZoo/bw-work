@@ -105,6 +105,31 @@ function toggleCollapse() {
           <span class="item-index">{{ index + 1 }}.</span>
           <span class="item-title">{{ item.title }}</span>
 
+          <!-- Priority indicator -->
+          <span v-if="item.priority === 1" class="priority-badge priority-high" title="高优先级">高</span>
+          <span v-if="item.priority === -1" class="priority-badge priority-low" title="低优先级">低</span>
+
+          <!-- Source tag -->
+          <span
+            v-if="item.source && item.source !== 'initial'"
+            class="source-tag"
+            :class="'source-' + item.source"
+          >
+            {{ item.source === 'discovered' ? '发现' : item.source === 'intervention' ? '干预' : item.source }}
+          </span>
+
+          <!-- Related sections -->
+          <div v-if="item.related_sections && item.related_sections.length > 0" class="related-sections">
+            <span
+              v-for="sid in item.related_sections"
+              :key="sid"
+              class="section-chip"
+              :class="'chip-' + (item.source || 'initial')"
+            >
+              {{ sid }}
+            </span>
+          </div>
+
           <template v-if="item.status === 'completed'">
             <button
               class="btn-view-summary"
@@ -347,5 +372,75 @@ function toggleCollapse() {
   color: var(--text-secondary);
   min-width: 40px;
   text-align: right;
+}
+
+/* Priority badges */
+.priority-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.priority-high {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+.priority-low {
+  background: rgba(156, 163, 175, 0.1);
+  color: #9ca3af;
+}
+
+/* Source tags */
+.source-tag {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.source-discovered {
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+}
+
+.source-intervention {
+  background: rgba(168, 85, 247, 0.1);
+  color: #7c3aed;
+}
+
+/* Related section chips */
+.related-sections {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.section-chip {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.chip-initial {
+  background: rgba(107, 114, 128, 0.1);
+  color: #6b7280;
+}
+
+.chip-discovered {
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+}
+
+.chip-intervention {
+  background: rgba(168, 85, 247, 0.1);
+  color: #7c3aed;
 }
 </style>

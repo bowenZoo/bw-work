@@ -105,11 +105,16 @@ const LogIcon = () => h('svg', { class: 'w-5 h-5', fill: 'none', stroke: 'curren
   h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '2', d: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' })
 ])
 
+const DiscussionIcon = () => h('svg', { class: 'w-5 h-5', fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' }, [
+  h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '2', d: 'M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a2 2 0 01-2-2v-6a2 2 0 012-2h8zM7 4h8a2 2 0 012 2v.5' })
+])
+
 const navItems = [
   { name: '仪表盘', path: '/admin', icon: DashboardIcon },
   { name: 'LLM 配置', path: '/admin/llm', icon: LlmIcon },
   { name: 'Langfuse', path: '/admin/langfuse', icon: LangfuseIcon },
   { name: '图像生成', path: '/admin/image', icon: ImageIcon },
+  { name: '讨论设置', path: '/admin/discussion', icon: DiscussionIcon },
   { name: '操作日志', path: '/admin/logs', icon: LogIcon },
 ]
 

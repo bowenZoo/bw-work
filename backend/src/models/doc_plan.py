@@ -7,6 +7,9 @@ class SectionPlan:
     title: str        # "战斗系统概述"
     description: str   # 简要说明该章节要讨论什么
     status: str = "pending"  # "pending" | "in_progress" | "completed"
+    related_agenda_items: list[str] = field(default_factory=list)  # 关联的 agenda item IDs
+    revision_count: int = 0  # 被回溯修订的次数
+    reopened_reason: str | None = None  # 重开原因
 
 
 @dataclass
@@ -32,7 +35,15 @@ class DocPlan:
                     "filename": f.filename,
                     "title": f.title,
                     "sections": [
-                        {"id": s.id, "title": s.title, "description": s.description, "status": s.status}
+                        {
+                            "id": s.id,
+                            "title": s.title,
+                            "description": s.description,
+                            "status": s.status,
+                            "related_agenda_items": s.related_agenda_items,
+                            "revision_count": s.revision_count,
+                            "reopened_reason": s.reopened_reason,
+                        }
                         for s in f.sections
                     ],
                 }
@@ -45,7 +56,17 @@ class DocPlan:
     def from_dict(cls, data: dict) -> "DocPlan":
         files = []
         for f in data.get("files", []):
-            sections = [SectionPlan(**s) for s in f.get("sections", [])]
+            sections = []
+            for s in f.get("sections", []):
+                sections.append(SectionPlan(
+                    id=s["id"],
+                    title=s["title"],
+                    description=s["description"],
+                    status=s.get("status", "pending"),
+                    related_agenda_items=s.get("related_agenda_items", []),
+                    revision_count=s.get("revision_count", 0),
+                    reopened_reason=s.get("reopened_reason"),
+                ))
             files.append(FilePlan(filename=f["filename"], title=f["title"], sections=sections))
         return cls(
             discussion_id=data["discussion_id"],
@@ -70,3 +91,99 @@ class DocPlan:
 
     def all_sections_completed(self) -> bool:
         return all(s.status == "completed" for f in self.files for s in f.sections)
+
+    def split_section(self, section_id: str, new_sections: list["SectionPlan"]) -> bool:
+        """将一个未完成的章节拆分为多个子章节。"""
+        for f in self.files:
+            for i, s in enumerate(f.sections):
+                if s.id == section_id:
+                    if s.status == "completed":
+                        return False
+                    f.sections[i:i + 1] = new_sections
+                    return True
+        return False
+
+    def merge_sections(self, section_ids: list[str], merged: "SectionPlan") -> bool:
+        """将同一文件内的多个未完成章节合并为一个。"""
+        # 找到所有 section 所在的文件，确保在同一个文件内
+        target_file: FilePlan | None = None
+        indices: list[int] = []
+        for f in self.files:
+            found_indices = []
+            for i, s in enumerate(f.sections):
+                if s.id in section_ids:
+                    if s.status == "completed":
+                        return False
+                    found_indices.append(i)
+            if found_indices:
+                if target_file is not None:
+                    return False  # section 分布在不同文件中
+                target_file = f
+                indices = found_indices
+        if target_file is None or len(indices) != len(section_ids):
+            return False
+        # 在最小索引位置插入合并后的 section，删除原有的
+        indices.sort()
+        insert_pos = indices[0]
+        for offset, idx in enumerate(indices):
+            del target_file.sections[idx - offset]
+        target_file.sections.insert(insert_pos, merged)
+        return True
+
+    def add_section(self, file_index: int, section: "SectionPlan", after_section_id: str | None = None) -> bool:
+        """在指定文件的指定位置插入新章节。"""
+        if file_index < 0 or file_index >= len(self.files):
+            return False
+        # ID conflict check
+        for f in self.files:
+            for s in f.sections:
+                if s.id == section.id:
+                    return False
+        f = self.files[file_index]
+        if after_section_id is None:
+            f.sections.insert(0, section)
+            return True
+        for i, s in enumerate(f.sections):
+            if s.id == after_section_id:
+                f.sections.insert(i + 1, section)
+                return True
+        return False
+
+    def add_file(self, file_plan: "FilePlan") -> bool:
+        """追加新文件到计划中。返回 False 如果文件名冲突。"""
+        for f in self.files:
+            if f.filename == file_plan.filename:
+                return False
+        self.files.append(file_plan)
+        return True
+
+    def reopen_section(self, section_id: str, reason: str) -> bool:
+        """将已完成的章节重新打开。"""
+        for f in self.files:
+            for s in f.sections:
+                if s.id == section_id:
+                    if s.status != "completed":
+                        return False
+                    s.status = "pending"
+                    s.reopened_reason = reason
+                    s.revision_count += 1
+                    return True
+        return False
+
+    def get_completed_sections(self) -> list[tuple["FilePlan", "SectionPlan"]]:
+        """获取所有已完成的章节。"""
+        result = []
+        for f in self.files:
+            for s in f.sections:
+                if s.status == "completed":
+                    result.append((f, s))
+        return result
+
+    def get_reopened_sections(self) -> list[tuple["FilePlan", "SectionPlan"]]:
+        """获取所有被重新打开过的章节。"""
+        result = []
+        for f in self.files:
+            for s in f.sections:
+                if s.reopened_reason is not None:
+                    result.append((f, s))
+        return result

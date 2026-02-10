@@ -11,6 +11,8 @@ import {
   CompactAgentBar,
   AgendaSummaryModal,
   RightPanel,
+  InterventionDigestCard,
+  HolisticReviewCard,
 } from '@/components/discussion';
 import { usePlayback } from '@/composables/usePlayback';
 import { useDiscussion } from '@/composables/useDiscussion';
@@ -77,6 +79,9 @@ const {
   docPlan,
   docContents,
   currentSectionId,
+  leadPlannerDigests,
+  interventionAssessments,
+  holisticReviews,
 } = useDiscussion();
 
 const isRunning = computed(() => discussion.value?.status === 'running');
@@ -459,6 +464,19 @@ onUnmounted(() => {
           @add-item="handleAddAgendaItem"
         />
 
+        <!-- Lead Planner Digest Card -->
+        <InterventionDigestCard
+          v-if="leadPlannerDigests.length > 0 || interventionAssessments.length > 0"
+          :digests="leadPlannerDigests"
+          :assessments="interventionAssessments"
+        />
+
+        <!-- Holistic Review Card -->
+        <HolisticReviewCard
+          v-if="holisticReviews.length > 0"
+          :reviews="holisticReviews"
+        />
+
         <!-- Waiting hint when discussion just started, no messages yet -->
         <div v-if="isRunning && displayMessages.length === 0" class="waiting-placeholder">
           <div class="thinking-dots">
@@ -522,9 +540,9 @@ onUnmounted(() => {
                   type="number"
                   class="rounds-input"
                   min="1"
-                  max="50"
+                  max="100"
                 />
-                <button class="stepper-btn" @click="continueRounds = Math.min(50, continueRounds + 1)">+</button>
+                <button class="stepper-btn" @click="continueRounds = Math.min(100, continueRounds + 1)">+</button>
               </div>
             </div>
             <div class="continue-popup-row">

@@ -35,6 +35,7 @@ class DiscussionStatus(str, Enum):
     """Status of a discussion."""
 
     PENDING = "pending"
+    QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -137,7 +138,7 @@ class ExtendDiscussionRequest(BaseModel):
     """Request body for extending a completed discussion with more rounds."""
 
     follow_up: str = Field(default="", description="Follow-up topic or question")
-    additional_rounds: int = Field(default=10, ge=1, le=50, description="Additional rounds to discuss")
+    additional_rounds: int = Field(default=10, ge=1, le=100, description="Additional rounds to discuss")
 
 
 class ExtendDiscussionResponse(BaseModel):
@@ -246,12 +247,47 @@ _background_tasks: set[asyncio.Task] = set()
 # Store generated summaries
 _summaries: dict[str, SummaryResponse] = {}
 
+# Running crew instances (for API access to agenda/doc_plan)
+_running_crews: dict[str, "DiscussionCrew"] = {}
+
 # Global discussion state (single active discussion for all users)
 _current_discussion: DiscussionState | None = None
 _current_discussion_lock = threading.RLock()
 
 # Per-discussion agent statuses: discussion_id -> {agent_id -> status}
 _per_discussion_agent_statuses: dict[str, dict[str, str]] = {}
+
+# Discussion concurrency control
+_discussion_semaphore: threading.Semaphore | None = None
+_semaphore_lock = threading.Lock()
+
+
+def _get_discussion_semaphore() -> threading.Semaphore:
+    """Get or create the discussion concurrency semaphore.
+
+    Reads max_concurrent from admin config (discussion category).
+    Default is 2 if not configured.
+    """
+    global _discussion_semaphore
+    with _semaphore_lock:
+        if _discussion_semaphore is None:
+            try:
+                from src.admin.config_store import ConfigStore
+                store = ConfigStore()
+                max_concurrent = int(store.get_raw("discussion", "max_concurrent") or "2")
+            except Exception:
+                max_concurrent = 2
+            _discussion_semaphore = threading.Semaphore(max_concurrent)
+            logger.info("Discussion semaphore initialized: max_concurrent=%d", max_concurrent)
+    return _discussion_semaphore
+
+
+def reset_discussion_semaphore() -> None:
+    """Reset the semaphore so it re-reads config on next access."""
+    global _discussion_semaphore
+    with _semaphore_lock:
+        _discussion_semaphore = None
+    logger.info("Discussion semaphore reset")
 
 
 def get_current_discussion() -> DiscussionState | None:
@@ -302,7 +338,7 @@ def cleanup_stale_discussions() -> int:
     for path in _STATE_DIR.glob("*.json"):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            if data.get("status") == DiscussionStatus.RUNNING:
+            if data.get("status") in (DiscussionStatus.RUNNING, DiscussionStatus.QUEUED, "queued"):
                 data["status"] = DiscussionStatus.FAILED
                 data["error"] = "服务器重启，讨论中断"
                 data["completed_at"] = datetime.utcnow().isoformat()
@@ -343,7 +379,7 @@ def cleanup_stale_discussions() -> int:
     # Also clear the in-memory current discussion
     global _current_discussion
     with _current_discussion_lock:
-        if _current_discussion and _current_discussion.status == DiscussionStatus.RUNNING:
+        if _current_discussion and _current_discussion.status in (DiscussionStatus.RUNNING, DiscussionStatus.QUEUED):
             _current_discussion = None
 
     return cleaned
@@ -460,7 +496,7 @@ def save_discussion_state(discussion: DiscussionState) -> None:
 
 
 def _get_llm_from_config() -> Any | None:
-    """Get LLM instance from admin config store.
+    """Get LLM instance from admin config store (active profile).
 
     Also sets OPENAI_API_KEY environment variable for CrewAI compatibility.
 
@@ -471,14 +507,15 @@ def _get_llm_from_config() -> Any | None:
         from src.admin.config_store import ConfigStore
 
         store = ConfigStore()
-        api_key = store.get_raw("llm", "openai_api_key")
+        config = store.get_active_llm_config()
 
-        if not api_key:
-            logger.warning("No OpenAI API key configured in admin store")
+        if not config or not config.get("api_key"):
+            logger.warning("No active LLM profile configured in admin store")
             return None
 
-        base_url = store.get_raw("llm", "openai_base_url")
-        model = store.get_raw("llm", "openai_model") or "gpt-4"
+        api_key = config["api_key"]
+        base_url = config.get("base_url") or ""
+        model = config.get("model") or "gpt-4"
 
         # Set environment variables for CrewAI/LiteLLM compatibility
         # CrewAI internally checks for these even when LLM is provided
@@ -497,13 +534,13 @@ def _get_llm_from_config() -> Any | None:
         llm_kwargs: dict[str, Any] = {
             "model": model,
             "api_key": api_key,
-            "timeout": 120,
-            "max_retries": 2,
+            "timeout": 180,
+            "max_retries": 5,
         }
         if base_url:
             llm_kwargs["base_url"] = base_url
 
-        logger.info("Creating ChatOpenAI: model=%s, base_url=%s, timeout=120s", model, base_url)
+        logger.info("Creating ChatOpenAI: model=%s, base_url=%s, profile=%s", model, base_url, config.get("name", ""))
         return ChatOpenAI(**llm_kwargs)
     except ImportError as e:
         logger.error("Error importing ChatOpenAI: %s", e)
@@ -541,83 +578,143 @@ def _auto_organize_docs(discussion_id: str) -> None:
 
 
 def _run_discussion_sync(discussion_id: str) -> None:
-    """Run a discussion synchronously (for background task)."""
+    """Run a discussion synchronously (for background task).
+
+    Acquires the concurrency semaphore before running.  While waiting,
+    the discussion is in QUEUED state.
+    """
     logger.info("Starting discussion %s in background thread", discussion_id)
     discussion = get_discussion_state(discussion_id)
     if discussion is None:
         logger.error("Discussion %s not found, aborting", discussion_id)
         return
 
+    semaphore = _get_discussion_semaphore()
+
+    # Mark as queued while waiting for a slot
+    discussion.status = DiscussionStatus.QUEUED
+    save_discussion_state(discussion)
+    # Update global discussion state if this is the current discussion
+    current = get_current_discussion()
+    if current and current.id == discussion_id:
+        set_current_discussion(discussion)
+    broadcast_sync(
+        {
+            "type": "status",
+            "data": {
+                "discussion_id": discussion_id,
+                "agent_id": "discussion",
+                "agent_role": "discussion",
+                "content": "discussion_queued",
+                "status": "queued",
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+        },
+        lobby_event=True,
+    )
+
+    # Block until a concurrency slot is available
+    semaphore.acquire()
     try:
-        if discussion.started_at is None:
+        # Re-read state in case it was cancelled while queued
+        discussion = get_discussion_state(discussion_id)
+        if discussion is None:
+            return
+
+        try:
+            # Transition from queued to running
             discussion.status = DiscussionStatus.RUNNING
-            discussion.started_at = datetime.utcnow().isoformat()
+            if discussion.started_at is None:
+                discussion.started_at = datetime.utcnow().isoformat()
             save_discussion_state(discussion)
 
-        # Get LLM from admin config store
-        llm = _get_llm_from_config()
-        if llm is None:
-            raise RuntimeError("LLM not configured. Please configure OpenAI API key in admin panel.")
-
-        crew = DiscussionCrew(
-            discussion_id=discussion_id,
-            llm=llm,
-            enable_visual_concept=True,
-            agent_roles=discussion.agents or None,
-            agent_configs=discussion.agent_configs or None,
-        )
-        result = crew.run_document_centric(
-            topic=discussion.topic,
-            max_rounds=discussion.rounds,
-            attachment=discussion.attachment.content if discussion.attachment else None,
-            auto_pause_interval=discussion.auto_pause_interval,
-        )
-
-        discussion.result = result
-        discussion.status = DiscussionStatus.COMPLETED
-        discussion.completed_at = datetime.utcnow().isoformat()
-        save_discussion_state(discussion)
-
-        # Update global discussion state if this is the current discussion
-        current = get_current_discussion()
-        if current and current.id == discussion_id:
-            set_current_discussion(discussion)
-
-        # Auto-organize discussion into design documents
-        try:
-            _auto_organize_docs(discussion_id)
-        except Exception as org_err:
-            logger.warning("Auto-organize failed for %s: %s", discussion_id, org_err)
-
-    except Exception as e:
-        logger.error("Discussion %s failed: %s", discussion_id, e)
-        discussion.status = DiscussionStatus.FAILED
-        discussion.error = str(e)
-        discussion.completed_at = datetime.utcnow().isoformat()
-        save_discussion_state(discussion)
-
-        # Broadcast failure to WebSocket clients
-        try:
-            error_event = create_error_event(
-                discussion_id=discussion_id,
-                content=str(e),
+            # Update global + broadcast running status
+            current = get_current_discussion()
+            if current and current.id == discussion_id:
+                set_current_discussion(discussion)
+            broadcast_sync(
+                {
+                    "type": "status",
+                    "data": {
+                        "discussion_id": discussion_id,
+                        "agent_id": "discussion",
+                        "agent_role": "discussion",
+                        "content": "discussion_running",
+                        "status": "running",
+                        "timestamp": datetime.utcnow().isoformat(),
+                    },
+                },
+                lobby_event=True,
             )
-            broadcast_sync(error_event.to_dict(), discussion_id=discussion_id)
-            status_event = create_status_event(
-                discussion_id=discussion_id,
-                agent_id="discussion",
-                agent_role="discussion",
-                status=AgentStatus.IDLE,
-                content="discussion_failed",
-            )
-            broadcast_sync(status_event.to_dict(), discussion_id=discussion_id)
-        except Exception:
-            logger.debug("Failed to broadcast discussion failure event")
 
-        # Update global discussion state if this is the current discussion
-        current = get_current_discussion()
-        if current and current.id == discussion_id:
-            set_current_discussion(discussion)
+            # Get LLM from admin config store
+            llm = _get_llm_from_config()
+            if llm is None:
+                raise RuntimeError("LLM not configured. Please configure OpenAI API key in admin panel.")
+
+            crew = DiscussionCrew(
+                discussion_id=discussion_id,
+                llm=llm,
+                enable_visual_concept=True,
+                agent_roles=discussion.agents or None,
+                agent_configs=discussion.agent_configs or None,
+            )
+            _running_crews[discussion_id] = crew
+            result = crew.run_document_centric(
+                topic=discussion.topic,
+                max_rounds=discussion.rounds,
+                attachment=discussion.attachment.content if discussion.attachment else None,
+                auto_pause_interval=discussion.auto_pause_interval,
+            )
+
+            discussion.result = result
+            discussion.status = DiscussionStatus.COMPLETED
+            discussion.completed_at = datetime.utcnow().isoformat()
+            save_discussion_state(discussion)
+
+            # Update global discussion state if this is the current discussion
+            current = get_current_discussion()
+            if current and current.id == discussion_id:
+                set_current_discussion(discussion)
+
+            # Auto-organize discussion into design documents
+            try:
+                _auto_organize_docs(discussion_id)
+            except Exception as org_err:
+                logger.warning("Auto-organize failed for %s: %s", discussion_id, org_err)
+
+        except Exception as e:
+            logger.error("Discussion %s failed: %s", discussion_id, e)
+            discussion.status = DiscussionStatus.FAILED
+            discussion.error = str(e)
+            discussion.completed_at = datetime.utcnow().isoformat()
+            save_discussion_state(discussion)
+
+            # Broadcast failure to WebSocket clients
+            try:
+                error_event = create_error_event(
+                    discussion_id=discussion_id,
+                    content=str(e),
+                )
+                broadcast_sync(error_event.to_dict(), discussion_id=discussion_id)
+                status_event = create_status_event(
+                    discussion_id=discussion_id,
+                    agent_id="discussion",
+                    agent_role="discussion",
+                    status=AgentStatus.IDLE,
+                    content="discussion_failed",
+                )
+                broadcast_sync(status_event.to_dict(), discussion_id=discussion_id)
+            except Exception:
+                logger.debug("Failed to broadcast discussion failure event")
+
+            # Update global discussion state if this is the current discussion
+            current = get_current_discussion()
+            if current and current.id == discussion_id:
+                set_current_discussion(discussion)
+    finally:
+        _running_crews.pop(discussion_id, None)
+        semaphore.release()
 
 
 async def _run_discussion_async(discussion_id: str) -> None:
@@ -641,64 +738,71 @@ def _run_discussion_extend_sync(
         logger.error("Discussion %s not found for extend", discussion_id)
         return
 
+    semaphore = _get_discussion_semaphore()
+    semaphore.acquire()
     try:
-        llm = _get_llm_from_config()
-        if llm is None:
-            raise RuntimeError("LLM not configured.")
-
-        crew = DiscussionCrew(
-            discussion_id=discussion_id,
-            llm=llm,
-            enable_visual_concept=True,
-            agent_roles=discussion.agents or None,
-            agent_configs=discussion.agent_configs or None,
-        )
-        result = crew.extend_orchestrated(
-            topic=discussion.topic,
-            follow_up=follow_up,
-            additional_rounds=additional_rounds,
-        )
-
-        discussion.result = result
-        discussion.status = DiscussionStatus.COMPLETED
-        discussion.completed_at = datetime.utcnow().isoformat()
-        save_discussion_state(discussion)
-
-        current = get_current_discussion()
-        if current and current.id == discussion_id:
-            set_current_discussion(discussion)
-
         try:
-            _auto_organize_docs(discussion_id)
-        except Exception as org_err:
-            logger.warning("Auto-organize failed for extend %s: %s", discussion_id, org_err)
+            llm = _get_llm_from_config()
+            if llm is None:
+                raise RuntimeError("LLM not configured.")
 
-    except Exception as e:
-        logger.error("Discussion extend %s failed: %s", discussion_id, e)
-        discussion.status = DiscussionStatus.FAILED
-        discussion.error = str(e)
-        discussion.completed_at = datetime.utcnow().isoformat()
-        save_discussion_state(discussion)
-
-        try:
-            error_event = create_error_event(
-                discussion_id=discussion_id, content=str(e)
-            )
-            broadcast_sync(error_event.to_dict(), discussion_id=discussion_id)
-            status_event = create_status_event(
+            crew = DiscussionCrew(
                 discussion_id=discussion_id,
-                agent_id="discussion",
-                agent_role="discussion",
-                status=AgentStatus.IDLE,
-                content="discussion_failed",
+                llm=llm,
+                enable_visual_concept=True,
+                agent_roles=discussion.agents or None,
+                agent_configs=discussion.agent_configs or None,
             )
-            broadcast_sync(status_event.to_dict(), discussion_id=discussion_id)
-        except Exception:
-            logger.debug("Failed to broadcast extend failure event")
+            _running_crews[discussion_id] = crew
+            result = crew.extend_orchestrated(
+                topic=discussion.topic,
+                follow_up=follow_up,
+                additional_rounds=additional_rounds,
+            )
 
-        current = get_current_discussion()
-        if current and current.id == discussion_id:
-            set_current_discussion(discussion)
+            discussion.result = result
+            discussion.status = DiscussionStatus.COMPLETED
+            discussion.completed_at = datetime.utcnow().isoformat()
+            save_discussion_state(discussion)
+
+            current = get_current_discussion()
+            if current and current.id == discussion_id:
+                set_current_discussion(discussion)
+
+            try:
+                _auto_organize_docs(discussion_id)
+            except Exception as org_err:
+                logger.warning("Auto-organize failed for extend %s: %s", discussion_id, org_err)
+
+        except Exception as e:
+            logger.error("Discussion extend %s failed: %s", discussion_id, e)
+            discussion.status = DiscussionStatus.FAILED
+            discussion.error = str(e)
+            discussion.completed_at = datetime.utcnow().isoformat()
+            save_discussion_state(discussion)
+
+            try:
+                error_event = create_error_event(
+                    discussion_id=discussion_id, content=str(e)
+                )
+                broadcast_sync(error_event.to_dict(), discussion_id=discussion_id)
+                status_event = create_status_event(
+                    discussion_id=discussion_id,
+                    agent_id="discussion",
+                    agent_role="discussion",
+                    status=AgentStatus.IDLE,
+                    content="discussion_failed",
+                )
+                broadcast_sync(status_event.to_dict(), discussion_id=discussion_id)
+            except Exception:
+                logger.debug("Failed to broadcast extend failure event")
+
+            current = get_current_discussion()
+            if current and current.id == discussion_id:
+                set_current_discussion(discussion)
+    finally:
+        _running_crews.pop(discussion_id, None)
+        semaphore.release()
 
 
 async def _run_discussion_extend_async(
@@ -721,7 +825,22 @@ async def _run_discussion_extend_async(
 
 
 def _get_doc_count(discussion_id: str, project_id: str = "default") -> int:
-    """Get the number of design documents for a discussion."""
+    """Get the number of design documents for a discussion.
+
+    Checks real-time docs directory first (DocWriter output during discussion),
+    then falls back to DocOrganizer index.
+    """
+    # Check real-time docs directory first
+    try:
+        rt_dir = Path("data/projects") / project_id / discussion_id / "docs"
+        if rt_dir.exists():
+            count = len(list(rt_dir.glob("*.md")))
+            if count > 0:
+                return count
+    except Exception:
+        pass
+
+    # Fallback to DocOrganizer index
     try:
         from src.agents.doc_organizer import DocOrganizer
         organizer = DocOrganizer()
@@ -977,7 +1096,7 @@ async def list_active_discussions():
     # Check in-memory cache
     with _state_lock:
         for did, state in _discussions.items():
-            if state.status in (DiscussionStatus.RUNNING, DiscussionStatus.PENDING):
+            if state.status in (DiscussionStatus.RUNNING, DiscussionStatus.PENDING, DiscussionStatus.QUEUED):
                 seen_ids.add(did)
                 active.append({
                     "id": state.id,
@@ -996,7 +1115,7 @@ async def list_active_discussions():
                 did = data.get("id", "")
                 if did in seen_ids:
                     continue
-                if data.get("status") in ("running", "pending"):
+                if data.get("status") in ("running", "pending", "queued"):
                     seen_ids.add(did)
                     active.append({
                         "id": did,

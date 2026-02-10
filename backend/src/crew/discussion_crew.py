@@ -46,6 +46,12 @@ from src.monitoring.langfuse_client import get_langfuse_client, start_trace_cont
 
 logger = logging.getLogger(__name__)
 
+# Regex patterns for parsing LLM directive blocks
+AGENDA_DIRECTIVE_PATTERN = re.compile(r"```agenda_update\s*\n(.*?)```", re.DOTALL)
+DOC_RESTRUCTURE_PATTERN = re.compile(r"```doc_restructure\s*\n(.*?)```", re.DOTALL)
+INTERVENTION_ASSESSMENT_PATTERN = re.compile(r"```intervention_assessment\s*\n(.*?)```", re.DOTALL)
+HOLISTIC_REVIEW_PATTERN = re.compile(r"```holistic_review\s*\n(.*?)```", re.DOTALL)
+
 
 class DiscussionState(str, Enum):
     """State of a discussion for pause/resume functionality."""
@@ -920,36 +926,46 @@ class DiscussionCrew:
         discussion_id = self._discussion_id
 
         def _organize_in_background() -> None:
-            try:
-                from src.agents.doc_organizer import DocOrganizer
-                from src.api.routes.discussion import _get_llm_from_config
+            max_attempts = 2
+            for attempt in range(max_attempts):
+                try:
+                    from src.agents.doc_organizer import DocOrganizer
+                    from src.api.routes.discussion import _get_llm_from_config
 
-                llm = _get_llm_from_config()
-                if llm is None:
-                    logger.debug("Skipping round organize: LLM not configured")
-                    return
+                    llm = _get_llm_from_config()
+                    if llm is None:
+                        logger.debug("Skipping round organize: LLM not configured")
+                        return
 
-                stored = self._discussion_memory.load(discussion_id)
-                if stored is None or not stored.messages:
-                    return
+                    stored = self._discussion_memory.load(discussion_id)
+                    if stored is None or not stored.messages:
+                        return
 
-                organizer = DocOrganizer(llm=llm)
-                result = organizer.run_organize(stored)
+                    organizer = DocOrganizer(llm=llm)
+                    result = organizer.run_organize(stored)
 
-                logger.info(
-                    "Round %d organize for %s: %d documents",
-                    round_num,
-                    discussion_id,
-                    len(result.files),
-                )
+                    logger.info(
+                        "Round %d organize for %s: %d documents",
+                        round_num,
+                        discussion_id,
+                        len(result.files),
+                    )
 
-                # Broadcast doc update event
-                self._broadcast_doc_update(
-                    round_num=round_num,
-                    files=result.files,
-                )
-            except Exception as exc:
-                logger.warning("Round organize failed for %s round %d: %s", discussion_id, round_num, exc)
+                    # Broadcast doc update event
+                    self._broadcast_doc_update(
+                        round_num=round_num,
+                        files=result.files,
+                    )
+                    return  # success
+                except Exception as exc:
+                    if attempt < max_attempts - 1:
+                        logger.warning(
+                            "Round organize attempt %d failed for %s round %d: %s, retrying in 10s",
+                            attempt + 1, discussion_id, round_num, exc,
+                        )
+                        time.sleep(10)
+                    else:
+                        logger.warning("Round organize failed for %s round %d: %s", discussion_id, round_num, exc)
 
         thread = threading.Thread(
             target=_organize_in_background,
@@ -2758,6 +2774,699 @@ class DiscussionCrew:
             f"discussion_auto_paused:已完成第{round_num}轮讨论，等待继续"
         )
 
+    # ------------------------------------------------------------------
+    # DYN-1.2: 议题初始生成与章节映射
+    # ------------------------------------------------------------------
+
+    def _generate_initial_agenda(self, topic: str, attachment: str | None = None) -> list[AgendaItem]:
+        """Generate initial agenda items via LLM and initialize the agenda.
+
+        Args:
+            topic: The discussion topic.
+            attachment: Optional attachment content.
+
+        Returns:
+            List of created AgendaItem objects.
+        """
+        prompt = self._lead_planner.create_agenda_prompt(topic, attachment)
+
+        task = Task(
+            description=prompt,
+            expected_output="3-5 个讨论议题",
+            agent=self._lead_planner.build_agent(),
+        )
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+        result = crew.kickoff()
+        raw = str(result)
+
+        # Parse agenda items
+        items_data = parse_agenda_output(raw)
+        if not items_data:
+            logger.warning("Failed to parse agenda output, creating fallback agenda")
+            items_data = [{"title": topic, "description": "主议题"}]
+
+        self._init_agenda(items_data)
+        assert self._agenda is not None
+
+        # Broadcast agenda initialization
+        self._broadcast_agenda_event("agenda_init", {
+            "items": [item.to_dict() for item in self._agenda.items],
+        })
+
+        logger.info("Generated initial agenda: %d items", len(self._agenda.items))
+        return list(self._agenda.items)
+
+    def _establish_agenda_section_mapping(
+        self,
+        agenda_items: list[AgendaItem],
+        doc_plan,
+    ) -> None:
+        """Establish initial mapping between agenda items and doc sections via keyword matching.
+
+        Sets bidirectional associations: AgendaItem.related_sections and SectionPlan.related_agenda_items.
+
+        Args:
+            agenda_items: The agenda items to map.
+            doc_plan: The DocPlan to map sections from.
+        """
+        for item in agenda_items:
+            # Build keywords from title and description
+            keywords = set(item.title)
+            if item.description:
+                keywords.update(item.description)
+
+            for f in doc_plan.files:
+                for section in f.sections:
+                    section_text = section.title + " " + section.description
+                    # Simple keyword overlap check
+                    overlap = sum(1 for kw in item.title.split() if kw in section_text)
+                    if item.description:
+                        overlap += sum(1 for kw in item.description.split() if kw in section_text)
+                    if overlap > 0:
+                        if section.id not in item.related_sections:
+                            item.related_sections.append(section.id)
+                        if item.id not in section.related_agenda_items:
+                            section.related_agenda_items.append(item.id)
+
+        # Broadcast mapping update
+        mapping = {
+            item.id: item.related_sections for item in agenda_items
+        }
+        self._broadcast_agenda_event("mapping_update", {"mapping": mapping})
+        logger.info("Established agenda-section mapping for %d items", len(agenda_items))
+
+    # ------------------------------------------------------------------
+    # DYN-1.3: 议题管理指令解析
+    # ------------------------------------------------------------------
+
+    def _process_agenda_directives(self, summary: str, section) -> None:
+        """Parse and execute ```agenda_update``` directives from a summary.
+
+        Supports: complete, add, priority directives.
+
+        Args:
+            summary: The Lead Planner's section summary text.
+            section: The current SectionPlan being discussed.
+        """
+        if self._agenda is None:
+            return
+
+        match = AGENDA_DIRECTIVE_PATTERN.search(summary)
+        if not match:
+            return
+
+        block = match.group(1)
+        for line in block.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith("complete:"):
+                item_id = line.split(":", 1)[1].strip()
+                item = self._agenda.get_item_by_id(item_id)
+                if item and item.status != AgendaItemStatus.COMPLETED:
+                    item.complete(f"由主策划在讨论章节「{section.title}」时标记完结")
+                    self._broadcast_agenda_event("item_complete", {
+                        "item_id": item.id,
+                        "title": item.title,
+                    })
+                    logger.info("Agenda directive: completed item %s", item_id)
+
+            elif line.startswith("add:"):
+                rest = line.split(":", 1)[1].strip()
+                # Format: [标题] - 描述
+                title_match = re.match(r"\[(.+?)\]\s*-\s*(.+)", rest)
+                if title_match:
+                    title = title_match.group(1).strip()
+                    description = title_match.group(2).strip()
+                else:
+                    title = rest
+                    description = ""
+                new_item = self._agenda.add_item(title, description)
+                new_item.source = "discovered"
+                # Link to current section
+                if section and section.id not in new_item.related_sections:
+                    new_item.related_sections.append(section.id)
+                self._broadcast_agenda_event("item_added", {
+                    "item": new_item.to_dict(),
+                })
+                logger.info("Agenda directive: added new item '%s'", title)
+
+            elif line.startswith("priority:"):
+                rest = line.split(":", 1)[1].strip()
+                parts = rest.rsplit(None, 1)
+                if len(parts) == 2:
+                    item_id, level = parts
+                    item = self._agenda.get_item_by_id(item_id.strip())
+                    if item:
+                        item.priority = 1 if level.strip().lower() == "high" else -1
+                        self._broadcast_agenda_event("item_priority", {
+                            "item_id": item.id,
+                            "priority": item.priority,
+                        })
+                        logger.info("Agenda directive: set item %s priority to %s", item_id, level)
+
+    # ------------------------------------------------------------------
+    # DYN-2.3: 文档结构变更指令解析
+    # ------------------------------------------------------------------
+
+    def _process_doc_restructure(self, summary: str, doc_plan, section) -> None:
+        """Parse and execute ```doc_restructure``` directives from a summary.
+
+        Supports: split, merge, add_section, add_file directives.
+
+        Args:
+            summary: The Lead Planner's section summary text.
+            doc_plan: The current DocPlan.
+            section: The current SectionPlan being discussed.
+        """
+        from src.models.doc_plan import SectionPlan, FilePlan
+
+        match = DOC_RESTRUCTURE_PATTERN.search(summary)
+        if not match:
+            return
+
+        block = match.group(1)
+        section_counter = max(
+            (int(s.id.lstrip("s")) for f in doc_plan.files for s in f.sections if s.id.startswith("s") and s.id[1:].isdigit()),
+            default=0,
+        )
+
+        for line in block.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                if line.startswith("split:"):
+                    # split: <section_id> -> [新标题1](新描述1), [新标题2](新描述2)
+                    rest = line.split(":", 1)[1].strip()
+                    parts = rest.split("->", 1)
+                    if len(parts) != 2:
+                        continue
+                    old_sid = parts[0].strip()
+                    new_specs = re.findall(r"\[(.+?)\]\((.+?)\)", parts[1])
+                    if not new_specs:
+                        continue
+
+                    new_sections = []
+                    new_section_dicts = []
+                    for title, desc in new_specs:
+                        section_counter += 1
+                        new_sid = f"s{section_counter}"
+                        new_sections.append(SectionPlan(id=new_sid, title=title, description=desc))
+                        new_section_dicts.append({"id": new_sid, "title": title, "description": desc})
+
+                    # Update DocPlan
+                    if doc_plan.split_section(old_sid, new_sections):
+                        # Update file via DocWriter
+                        f, _ = doc_plan.get_section(new_sections[0].id)
+                        if f and self._doc_writer:
+                            self._doc_writer.split_section_content(f.filename, old_sid, new_section_dicts)
+                        # Update agenda mapping
+                        if self._agenda:
+                            for item in self._agenda.items:
+                                if old_sid in item.related_sections:
+                                    item.related_sections.remove(old_sid)
+                                    item.related_sections.extend(s.id for s in new_sections)
+                        self._broadcast_discussion_event(f"文档结构调整：拆分章节 {old_sid} 为 {len(new_sections)} 个新章节")
+                        logger.info("Doc restructure: split %s into %d sections", old_sid, len(new_sections))
+
+                elif line.startswith("merge:"):
+                    # merge: <sid1>, <sid2> -> [合并后标题]
+                    rest = line.split(":", 1)[1].strip()
+                    parts = rest.split("->", 1)
+                    if len(parts) != 2:
+                        continue
+                    sids = [s.strip() for s in parts[0].split(",")]
+                    title_match = re.search(r"\[(.+?)\]", parts[1])
+                    merged_title = title_match.group(1) if title_match else "合并章节"
+
+                    section_counter += 1
+                    merged_sid = f"s{section_counter}"
+                    merged_section = SectionPlan(id=merged_sid, title=merged_title, description="合并章节")
+
+                    if doc_plan.merge_sections(sids, merged_section):
+                        # Update file
+                        f, _ = doc_plan.get_section(merged_sid)
+                        if f and self._doc_writer:
+                            self._doc_writer.merge_section_content(f.filename, sids, merged_sid, merged_title)
+                        # Update agenda mapping
+                        if self._agenda:
+                            for item in self._agenda.items:
+                                changed = False
+                                for old_sid in sids:
+                                    if old_sid in item.related_sections:
+                                        item.related_sections.remove(old_sid)
+                                        changed = True
+                                if changed and merged_sid not in item.related_sections:
+                                    item.related_sections.append(merged_sid)
+                        self._broadcast_discussion_event(f"文档结构调整：合并章节 {', '.join(sids)} 为「{merged_title}」")
+                        logger.info("Doc restructure: merged %s into %s", sids, merged_sid)
+
+                elif line.startswith("add_section:"):
+                    # add_section: <file_index>:<after_section_id> [新章节标题](新章节描述)
+                    rest = line.split(":", 2)[2].strip() if line.count(":") >= 2 else line.split(":", 1)[1].strip()
+                    # Parse file_index:after_sid
+                    loc_match = re.match(r"(\d+):(\S+)\s+\[(.+?)\]\((.+?)\)", rest)
+                    if not loc_match:
+                        continue
+                    file_idx = int(loc_match.group(1))
+                    after_sid = loc_match.group(2)
+                    new_title = loc_match.group(3)
+                    new_desc = loc_match.group(4)
+
+                    section_counter += 1
+                    new_sid = f"s{section_counter}"
+                    new_section = SectionPlan(id=new_sid, title=new_title, description=new_desc)
+
+                    after_sid_val = after_sid if after_sid != "start" else None
+                    if doc_plan.add_section(file_idx, new_section, after_sid_val):
+                        # Add marker in file
+                        if self._doc_writer and file_idx < len(doc_plan.files):
+                            self._doc_writer.add_section_marker(
+                                doc_plan.files[file_idx].filename,
+                                new_sid, new_title, new_desc,
+                                after_section_id=after_sid_val,
+                            )
+                        self._broadcast_discussion_event(f"文档结构调整：新增章节「{new_title}」")
+                        logger.info("Doc restructure: added section %s '%s'", new_sid, new_title)
+
+                elif line.startswith("add_file:"):
+                    # add_file: [文件名.md](文件标题) sections: [标题1](描述1), [标题2](描述2)
+                    rest = line.split(":", 1)[1].strip()
+                    file_match = re.match(r"\[(.+?)\]\((.+?)\)\s*sections:\s*(.+)", rest)
+                    if not file_match:
+                        continue
+                    new_filename = file_match.group(1)
+                    new_file_title = file_match.group(2)
+                    sections_str = file_match.group(3)
+                    sec_specs = re.findall(r"\[(.+?)\]\((.+?)\)", sections_str)
+
+                    new_file_sections = []
+                    for title, desc in sec_specs:
+                        section_counter += 1
+                        new_file_sections.append(SectionPlan(
+                            id=f"s{section_counter}", title=title, description=desc,
+                        ))
+
+                    new_fp = FilePlan(filename=new_filename, title=new_file_title, sections=new_file_sections)
+                    if not doc_plan.add_file(new_fp):
+                        logger.warning("Doc restructure: filename conflict '%s'", new_filename)
+                        continue
+                    if self._doc_writer:
+                        self._doc_writer.create_new_file(new_fp)
+                    self._broadcast_discussion_event(f"文档结构调整：新增文件「{new_filename}」")
+                    logger.info("Doc restructure: added file %s with %d sections", new_filename, len(new_file_sections))
+
+            except Exception as exc:
+                logger.warning("Failed to process doc_restructure directive '%s': %s", line, exc)
+
+    # ------------------------------------------------------------------
+    # DYN-3.2: 干预消化与影响评估
+    # ------------------------------------------------------------------
+
+    def _lead_planner_digest_intervention(
+        self,
+        injected: list[dict],
+        section,
+    ) -> dict:
+        """Digest user intervention messages via Lead Planner LLM call.
+
+        Args:
+            injected: List of injected message dicts.
+            section: The current SectionPlan being discussed.
+
+        Returns:
+            Dict with "raw" (full LLM output) and "user_messages" (original messages).
+        """
+        user_messages = [msg.get("content", "") for msg in injected]
+        discussion_context = "\n".join(
+            f"- {s}" for s in self._section_summaries
+        ) if self._section_summaries else "(暂无上下文)"
+
+        section_title = section.title if section else "未知章节"
+        prompt = self._lead_planner.create_intervention_digest_prompt(
+            user_messages, section_title, discussion_context,
+        )
+
+        task = Task(
+            description=prompt,
+            expected_output="观众干预消化分析",
+            agent=self._lead_planner.build_agent(),
+        )
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+        result = crew.kickoff()
+        digest_raw = str(result)
+
+        # Broadcast digest event
+        self._broadcast_discussion_event("主策划正在消化观众反馈...")
+        self._broadcast_message(self._lead_planner.role, digest_raw)
+        self._record_message(self._lead_planner.role, digest_raw)
+
+        # Write to memory
+        self._record_message("System", f"[干预消化] {digest_raw[:500]}")
+
+        logger.info("Intervention digest completed for %d messages", len(user_messages))
+        return {"raw": digest_raw, "user_messages": user_messages}
+
+    def _assess_intervention_impact(
+        self,
+        digest: dict,
+        doc_plan,
+        section,
+    ) -> dict:
+        """Assess the impact of user intervention via Lead Planner LLM call.
+
+        Args:
+            digest: The digest dict from _lead_planner_digest_intervention.
+            doc_plan: The current DocPlan.
+            section: The current SectionPlan.
+
+        Returns:
+            Dict with parsed assessment including impact_level, reopen_sections, new_topics.
+        """
+        # Build completed sections info
+        completed_sections = []
+        for f, s in doc_plan.get_completed_sections():
+            completed_sections.append({
+                "id": s.id,
+                "title": s.title,
+                "summary": f"(来自 {f.filename})",
+            })
+
+        # Build doc plan summary
+        doc_plan_summary = ", ".join(
+            f"{f.filename}: [{', '.join(s.title for s in f.sections)}]"
+            for f in doc_plan.files
+        )
+
+        section_title = section.title if section else "未知章节"
+        prompt = self._lead_planner.create_intervention_assessment_prompt(
+            digest["raw"], section_title, completed_sections, doc_plan_summary,
+        )
+
+        task = Task(
+            description=prompt,
+            expected_output="干预影响评估",
+            agent=self._lead_planner.build_agent(),
+        )
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+        result = crew.kickoff()
+        raw = str(result)
+
+        # Parse assessment block
+        assessment = {
+            "raw": raw,
+            "impact_level": "CURRENT_ONLY",
+            "summary": "",
+            "reopen_sections": [],
+            "new_topics": [],
+        }
+
+        match = INTERVENTION_ASSESSMENT_PATTERN.search(raw)
+        if match:
+            block = match.group(1)
+            # Parse impact_level
+            level_match = re.search(r"impact_level:\s*(\S+)", block)
+            if level_match:
+                assessment["impact_level"] = level_match.group(1).strip()
+            # Parse summary
+            summary_match = re.search(r"summary:\s*(.+)", block)
+            if summary_match:
+                assessment["summary"] = summary_match.group(1).strip()
+            # Parse reopen_sections
+            reopen_pattern = re.findall(r"section_id:\s*(\S+)\s*\n\s*reason:\s*(.+?)(?:\n\s*focus:\s*(.+?))?(?=\n\s*-|\Z)", block, re.DOTALL)
+            for sid, reason, focus in reopen_pattern:
+                assessment["reopen_sections"].append({
+                    "section_id": sid.strip(),
+                    "reason": reason.strip(),
+                    "focus": focus.strip() if focus else "",
+                })
+            # Parse new_topics
+            topic_pattern = re.findall(r"title:\s*(.+?)\n\s*description:\s*(.+?)(?:\n\s*priority:\s*(\S+))?(?=\n\s*-|\Z)", block, re.DOTALL)
+            for title, desc, priority in topic_pattern:
+                assessment["new_topics"].append({
+                    "title": title.strip(),
+                    "description": desc.strip(),
+                    "priority": priority.strip() if priority else "medium",
+                })
+
+        # Broadcast assessment
+        self._broadcast_discussion_event(
+            f"干预影响评估：{assessment['impact_level']} - {assessment['summary']}"
+        )
+        self._broadcast_message(self._lead_planner.role, raw)
+        self._record_message(self._lead_planner.role, raw)
+
+        logger.info("Intervention assessment: %s", assessment["impact_level"])
+        return assessment
+
+    def _execute_assessment_actions(self, assessment: dict, doc_plan) -> None:
+        """Execute actions from an intervention assessment.
+
+        Handles REOPEN (reopen completed sections) and NEW_TOPIC (add agenda items).
+
+        Args:
+            assessment: The assessment dict from _assess_intervention_impact.
+            doc_plan: The current DocPlan.
+        """
+        impact = assessment.get("impact_level", "CURRENT_ONLY")
+
+        if impact == "REOPEN" or impact == "NEW_TOPIC":
+            # Reopen sections
+            for reopen in assessment.get("reopen_sections", []):
+                sid = reopen["section_id"]
+                reason = reopen["reason"]
+                if doc_plan.reopen_section(sid, reason):
+                    self._broadcast_discussion_event(f"回溯重开章节 {sid}：{reason}")
+                    logger.info("Reopened section %s: %s", sid, reason)
+
+        if impact == "NEW_TOPIC":
+            # Add new agenda topics
+            if self._agenda:
+                for topic_info in assessment.get("new_topics", []):
+                    new_item = self._agenda.add_item(
+                        topic_info["title"],
+                        topic_info.get("description"),
+                    )
+                    new_item.source = "intervention"
+                    new_item.priority = 1 if topic_info.get("priority") == "high" else 0
+                    self._broadcast_agenda_event("item_added", {
+                        "item": new_item.to_dict(),
+                    })
+                    logger.info("Added intervention topic: %s", topic_info["title"])
+
+    def _lead_planner_post_intervention_guidance(self, digest: dict, assessment: dict) -> None:
+        """Output discussion guidance after processing an intervention.
+
+        Args:
+            digest: The digest dict.
+            assessment: The assessment dict.
+        """
+        impact = assessment.get("impact_level", "CURRENT_ONLY")
+        summary = assessment.get("summary", "")
+
+        if impact == "CURRENT_ONLY":
+            guidance = f"观众反馈已纳入考虑。{summary}。请大家在当前章节讨论中融入这些意见。"
+        elif impact == "REOPEN":
+            reopened = [r["section_id"] for r in assessment.get("reopen_sections", [])]
+            guidance = f"观众反馈影响较大：{summary}。已重开章节 {', '.join(reopened)}，稍后会回溯讨论。"
+        else:
+            new_titles = [t["title"] for t in assessment.get("new_topics", [])]
+            guidance = f"观众反馈引入新议题：{summary}。新增议题：{', '.join(new_titles)}。"
+
+        self._broadcast_message(self._lead_planner.role, guidance)
+        self._record_message(self._lead_planner.role, guidance)
+        logger.info("Post-intervention guidance: %s", guidance[:100])
+
+    # ------------------------------------------------------------------
+    # DYN-4.2: 整体审视
+    # ------------------------------------------------------------------
+
+    def _lead_planner_holistic_review(self, doc_plan, agenda) -> dict:
+        """Perform holistic review of all documents after all sections are complete.
+
+        Args:
+            doc_plan: The DocPlan with all sections.
+            agenda: The Agenda (may be None).
+
+        Returns:
+            Dict with parsed review including conclusion, quality_score, actions.
+        """
+        # Read all file contents
+        all_file_contents = []
+        for f in doc_plan.files:
+            content = self._doc_writer.read_file(f.filename) if self._doc_writer else ""
+            all_file_contents.append({
+                "filename": f.filename,
+                "title": f.title,
+                "content": content or "(无内容)",
+            })
+
+        # Build doc plan summary
+        doc_plan_summary = ", ".join(
+            f"{f.filename}: [{', '.join(s.title for s in f.sections)}]"
+            for f in doc_plan.files
+        )
+
+        # Get pending agenda items
+        pending_items = []
+        if agenda:
+            for item in agenda.items:
+                if item.status not in (AgendaItemStatus.COMPLETED, AgendaItemStatus.SKIPPED):
+                    pending_items.append(f"{item.title} ({item.description or ''})")
+
+        # Build discussion summary from recent section summaries
+        discussion_summary = "\n".join(self._section_summaries) if self._section_summaries else "(暂无摘要)"
+
+        prompt = self._lead_planner.create_holistic_review_prompt(
+            all_file_contents, doc_plan_summary, pending_items, discussion_summary,
+        )
+
+        self._broadcast_discussion_event("主策划正在进行整体审视...")
+        self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+
+        task = Task(
+            description=prompt,
+            expected_output="文档整体审视结果",
+            agent=self._lead_planner.build_agent(),
+        )
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+        result = crew.kickoff()
+        raw = str(result)
+
+        self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+        self._broadcast_message(self._lead_planner.role, raw)
+        self._record_message(self._lead_planner.role, raw)
+        self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+        # Parse review block
+        review = {
+            "raw": raw,
+            "conclusion": "APPROVED",
+            "quality_score": 7,
+            "summary": "",
+            "revision_actions": [],
+            "new_topics": [],
+        }
+
+        match = HOLISTIC_REVIEW_PATTERN.search(raw)
+        if match:
+            block = match.group(1)
+            # Parse conclusion
+            conclusion_match = re.search(r"conclusion:\s*(\S+)", block)
+            if conclusion_match:
+                review["conclusion"] = conclusion_match.group(1).strip()
+            # Parse quality_score
+            score_match = re.search(r"quality_score:\s*(\d+)", block)
+            if score_match:
+                review["quality_score"] = int(score_match.group(1))
+            # Parse summary
+            summary_match = re.search(r"summary:\s*(.+)", block)
+            if summary_match:
+                review["summary"] = summary_match.group(1).strip()
+            # Parse revision_actions
+            revision_pattern = re.findall(
+                r"section_id:\s*(\S+)\s*\n\s*file:\s*(.+?)\n\s*action:\s*(.+?)(?=\n\s*-|\Z)",
+                block, re.DOTALL,
+            )
+            for sid, fname, action in revision_pattern:
+                review["revision_actions"].append({
+                    "section_id": sid.strip(),
+                    "file": fname.strip(),
+                    "action": action.strip(),
+                })
+            # Parse new_topics
+            topic_pattern = re.findall(r"title:\s*(.+?)\n\s*reason:\s*(.+?)(?=\n\s*-|\Z)", block, re.DOTALL)
+            for title, reason in topic_pattern:
+                review["new_topics"].append({
+                    "title": title.strip(),
+                    "reason": reason.strip(),
+                })
+
+        self._broadcast_discussion_event(
+            f"整体审视结论：{review['conclusion']}（质量分 {review['quality_score']}/10）"
+        )
+        logger.info("Holistic review: %s (score=%d)", review["conclusion"], review["quality_score"])
+        return review
+
+    def _execute_review_actions(self, review: dict, doc_plan, agenda) -> None:
+        """Execute actions from a holistic review.
+
+        NEEDS_REVISION: reopen sections. NEEDS_NEW_TOPIC: add agenda items.
+
+        Args:
+            review: The review dict from _lead_planner_holistic_review.
+            doc_plan: The current DocPlan.
+            agenda: The current Agenda (may be None).
+        """
+        conclusion = review.get("conclusion", "APPROVED")
+
+        if conclusion == "NEEDS_REVISION":
+            for action in review.get("revision_actions", []):
+                sid = action["section_id"]
+                reason = action.get("action", "整体审视要求修订")
+                if doc_plan.reopen_section(sid, reason):
+                    self._broadcast_discussion_event(f"整体审视：重开章节 {sid}")
+                    logger.info("Review: reopened section %s", sid)
+
+        elif conclusion == "NEEDS_NEW_TOPIC":
+            # Reopen sections if any
+            for action in review.get("revision_actions", []):
+                sid = action["section_id"]
+                reason = action.get("action", "整体审视要求修订")
+                if doc_plan.reopen_section(sid, reason):
+                    logger.info("Review: reopened section %s", sid)
+
+            # Add new topics
+            if agenda:
+                for topic_info in review.get("new_topics", []):
+                    new_item = agenda.add_item(
+                        topic_info["title"],
+                        topic_info.get("reason", ""),
+                    )
+                    new_item.source = "discovered"
+                    self._broadcast_agenda_event("item_added", {
+                        "item": new_item.to_dict(),
+                    })
+                    logger.info("Review: added topic '%s'", topic_info["title"])
+
+    def _force_complete_with_notes(self, review: dict) -> None:
+        """Force complete the discussion with review notes appended.
+
+        Args:
+            review: The review dict with notes to append.
+        """
+        notes = review.get("summary", "")
+        conclusion = review.get("conclusion", "APPROVED")
+        score = review.get("quality_score", 0)
+
+        msg = (
+            f"整体审视完成（{conclusion}，质量分 {score}/10）。"
+            f"{notes}"
+            f"\n\n注意：已达到最大审视轮次，以当前状态完成。"
+        )
+        self._broadcast_message(self._lead_planner.role, msg)
+        self._record_message(self._lead_planner.role, msg)
+        logger.info("Force complete with notes: %s", conclusion)
+
     def run_document_centric(
         self,
         topic: str,
@@ -2812,6 +3521,11 @@ class DiscussionCrew:
                 self._doc_plan = doc_plan
                 self._doc_writer.create_skeleton(doc_plan)
                 self._broadcast_doc_plan_event(doc_plan)
+
+                # Generate initial agenda and establish mapping
+                self._broadcast_discussion_event("正在生成讨论议题...")
+                agenda_items = self._generate_initial_agenda(topic, attachment)
+                self._establish_agenda_section_mapping(agenda_items, doc_plan)
                 self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
                 # Save doc_plan to discussion record
@@ -2882,6 +3596,12 @@ class DiscussionCrew:
                     if len(self._section_summaries) > 2:
                         self._section_summaries.pop(0)
 
+                    # Process agenda directives from summary
+                    self._process_agenda_directives(summary, section)
+
+                    # Process document restructure directives from summary
+                    self._process_doc_restructure(summary, doc_plan, section)
+
                     # Check if section is done
                     if "章节完成" in summary:
                         section.status = "completed"
@@ -2903,14 +3623,20 @@ class DiscussionCrew:
                     injected = self._check_pause_and_wait()
                     if self._abort_reason:
                         raise DiscussionTimeoutError(self._abort_reason)
-                    # Handle user section jump
+                    # Handle user intervention with digest/assessment pipeline
                     if injected:
                         self._inject_user_messages(injected)
+                        # Check for section jump commands first
                         for msg in injected:
                             content = msg.get("content", "")
                             if content.startswith("focus:"):
                                 sid = content.split(":", 1)[1].strip()
                                 doc_plan.current_section_id = sid
+                        # Run intervention digest and assessment pipeline
+                        digest = self._lead_planner_digest_intervention(injected, section)
+                        assessment = self._assess_intervention_impact(digest, doc_plan, section)
+                        self._execute_assessment_actions(assessment, doc_plan)
+                        self._lead_planner_post_intervention_guidance(digest, assessment)
 
                     # Auto-pause
                     if (
@@ -2929,6 +3655,11 @@ class DiscussionCrew:
                                 if content.startswith("focus:"):
                                     sid = content.split(":", 1)[1].strip()
                                     doc_plan.current_section_id = sid
+                            # Run intervention pipeline for auto-pause injections too
+                            digest = self._lead_planner_digest_intervention(injected, section)
+                            assessment = self._assess_intervention_impact(digest, doc_plan, section)
+                            self._execute_assessment_actions(assessment, doc_plan)
+                            self._lead_planner_post_intervention_guidance(digest, assessment)
 
                     self._broadcast_discussion_event(f"第{round_num}轮讨论完成")
 
@@ -2938,6 +3669,75 @@ class DiscussionCrew:
                         self._incremental_save()
                     # Broadcast updated doc_plan so frontend sees section status changes
                     self._broadcast_doc_plan_event(doc_plan)
+
+                # Holistic review loop (max 2 iterations)
+                for review_round in range(2):
+                    review = self._lead_planner_holistic_review(doc_plan, self._agenda)
+                    conclusion = review.get("conclusion", "APPROVED")
+
+                    if conclusion == "APPROVED":
+                        logger.info("Holistic review approved on round %d", review_round + 1)
+                        break
+
+                    if conclusion in ("NEEDS_REVISION", "NEEDS_NEW_TOPIC"):
+                        self._execute_review_actions(review, doc_plan, self._agenda)
+                        # Run additional rounds for reopened sections
+                        extra_round = 0
+                        while extra_round < 3:
+                            file_plan, sect = self._pick_next_section(doc_plan)
+                            if file_plan is None or sect is None:
+                                break
+                            extra_round += 1
+                            self._current_round += 1
+                            sect.status = "in_progress"
+                            doc_plan.current_section_id = sect.id
+                            self._broadcast_section_focus(sect.id, sect.title, file_plan.filename)
+                            self._broadcast_discussion_event(
+                                f"审视修订轮：聚焦章节「{sect.title}」({file_plan.filename})"
+                            )
+                            sect_content = self._doc_writer.read_section(file_plan.filename, sect.id)
+                            self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                            opening = self._lead_planner_section_opening(sect, sect_content, self._current_round)
+                            self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                            self._broadcast_message(self._lead_planner.role, opening)
+                            self._record_message(self._lead_planner.role, opening)
+                            self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                            next_speakers = parse_next_speakers(opening)
+                            agents_to_call = (
+                                [a for a in self._discussion_agents if a.role in next_speakers]
+                                if next_speakers else list(self._discussion_agents)
+                            )
+                            if not agents_to_call:
+                                agents_to_call = list(self._discussion_agents)
+
+                            ctx = self._build_section_context(topic, doc_plan, sect, sect_content, opening)
+                            rr = self._run_agents_parallel_sync(agents_to_call, ctx)
+                            disc_content = f"主策划：{opening}\n\n"
+                            for role, resp in rr:
+                                disc_content += f"{role}：{resp}\n\n"
+
+                            self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                            rev_summary = self._lead_planner_section_summary(sect.title, self._current_round, disc_content)
+                            self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                            self._broadcast_message(self._lead_planner.role, rev_summary)
+                            self._record_message(self._lead_planner.role, rev_summary)
+                            self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                            if "章节完成" in rev_summary:
+                                sect.status = "completed"
+
+                            self._broadcast_status(self._lead_planner.role, AgentStatus.WRITING, f"正在更新「{sect.title}」")
+                            updated = self._doc_writer.update_section(
+                                file_plan.filename, sect.id, disc_content, sect.title,
+                            )
+                            self._broadcast_section_update(file_plan.filename, sect.id, updated)
+                            self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+                    else:
+                        break
+                else:
+                    # Reached max review iterations without APPROVED
+                    self._force_complete_with_notes(review)
 
                 # Save doc_plan final state
                 if self._current_discussion:

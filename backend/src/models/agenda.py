@@ -37,6 +37,9 @@ class AgendaItem(BaseModel):
     summary_details: AgendaSummaryDetails | None = None  # 详细小结（结构化）
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    related_sections: list[str] = Field(default_factory=list)  # 关联的 section IDs
+    priority: int = Field(default=0)  # -1=low, 0=normal, 1=high
+    source: str = Field(default="initial")  # "initial" | "discovered" | "intervention"
 
     def start(self) -> None:
         """Mark this item as in progress."""
@@ -65,6 +68,9 @@ class AgendaItem(BaseModel):
             "summary_details": self.summary_details.model_dump() if self.summary_details else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "related_sections": self.related_sections,
+            "priority": self.priority,
+            "source": self.source,
         }
 
 

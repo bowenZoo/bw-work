@@ -14,6 +14,7 @@ const AdminLlmConfigView = () => import('@/views/admin/LlmConfigView.vue');
 const AdminLangfuseConfigView = () => import('@/views/admin/LangfuseConfigView.vue');
 const AdminImageConfigView = () => import('@/views/admin/ImageConfigView.vue');
 const AdminAuditLogView = () => import('@/views/admin/AuditLogView.vue');
+const AdminDiscussionConfigView = () => import('@/views/admin/DiscussionConfigView.vue');
 
 // Route guard for admin routes
 function requireAdminAuth(to: RouteLocationNormalized) {
@@ -89,6 +90,11 @@ const router = createRouter({
           path: 'image',
           name: 'admin-image',
           component: AdminImageConfigView,
+        },
+        {
+          path: 'discussion',
+          name: 'admin-discussion',
+          component: AdminDiscussionConfigView,
         },
         {
           path: 'logs',

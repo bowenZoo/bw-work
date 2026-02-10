@@ -147,6 +147,9 @@ export interface AgendaItem {
   summary_details: AgendaSummaryDetails | null;
   started_at: string | null;
   completed_at: string | null;
+  related_sections: string[];
+  priority: number;   // -1=low, 0=normal, 1=high
+  source: string;     // "initial" | "discovered" | "intervention"
 }
 
 export interface Agenda {
@@ -173,7 +176,7 @@ export interface AgendaItemSummaryResponse {
 }
 
 // Agenda WebSocket event types
-export type AgendaEventType = 'agenda_init' | 'item_start' | 'item_complete' | 'item_skip' | 'item_add';
+export type AgendaEventType = 'agenda_init' | 'item_start' | 'item_complete' | 'item_skip' | 'item_add' | 'mapping_update';
 
 export interface AgendaEvent {
   type: AgendaEventType;
@@ -182,6 +185,7 @@ export interface AgendaEvent {
     title?: string;
     summary?: string;
     agenda?: Agenda;
+    mappings?: Record<string, string[]>;  // item_id -> section_ids
   };
 }
 
@@ -274,6 +278,9 @@ export interface SectionPlan {
   title: string
   description: string
   status: SectionStatus
+  related_agenda_items: string[]
+  revision_count: number
+  reopened_reason: string | null
 }
 
 export interface FilePlan {
@@ -363,4 +370,81 @@ export interface CreateCurrentDiscussionResponse {
 // Available agents response
 export interface AvailableAgentsResponse {
   agents: Record<string, AgentConfig>
+}
+
+// Dynamic discussion event data types
+
+export interface DocRestructureEventData {
+  discussion_id: string
+  operation: string  // "split" | "merge" | "add_section" | "add_file"
+  details: Record<string, any>
+  updated_doc_plan: DocPlan
+  timestamp: string
+}
+
+export interface DocRestructureWsEvent {
+  type: 'doc_restructure'
+  data: DocRestructureEventData
+}
+
+export interface SectionReopenedEventData {
+  discussion_id: string
+  section_id: string
+  title: string
+  filename: string
+  reason: string
+  timestamp: string
+}
+
+export interface SectionReopenedWsEvent {
+  type: 'section_reopened'
+  data: SectionReopenedEventData
+}
+
+export interface LeadPlannerDigestEventData {
+  discussion_id: string
+  digest_summary: string
+  key_points: string[]
+  guidance: string
+  timestamp: string
+}
+
+export interface LeadPlannerDigestWsEvent {
+  type: 'lead_planner_digest'
+  data: LeadPlannerDigestEventData
+}
+
+export interface InterventionAssessmentEventData {
+  discussion_id: string
+  impact_level: string  // "ABSORB" | "ADJUST" | "REOPEN"
+  affected_sections: string[]
+  reason: string
+  action_plan: string
+  timestamp: string
+}
+
+export interface InterventionAssessmentWsEvent {
+  type: 'intervention_assessment'
+  data: InterventionAssessmentEventData
+}
+
+export interface ReviewDimension {
+  name: string
+  score: string  // "pass" | "warning" | "fail"
+  notes: string
+}
+
+export interface HolisticReviewEventData {
+  discussion_id: string
+  review_round: number
+  conclusion: string  // "APPROVED" | "NEEDS_REVISION" | "NEEDS_NEW_TOPIC"
+  review_dimensions: ReviewDimension[]
+  revisions_needed: Array<{ section_id: string; reason: string; [key: string]: any }>
+  new_topics: Array<{ title: string; description?: string }>
+  timestamp: string
+}
+
+export interface HolisticReviewWsEvent {
+  type: 'holistic_review'
+  data: HolisticReviewEventData
 }

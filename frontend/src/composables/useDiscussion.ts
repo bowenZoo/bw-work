@@ -23,6 +23,11 @@ import type {
   DocPlanWsEvent,
   SectionFocusWsEvent,
   SectionUpdateWsEvent,
+  DocRestructureWsEvent,
+  SectionReopenedWsEvent,
+  LeadPlannerDigestEventData,
+  InterventionAssessmentEventData,
+  HolisticReviewEventData,
 } from '@/types';
 import { normalizeAgentRole } from '@/utils/agents';
 import api from '@/api';
@@ -51,6 +56,15 @@ export function useDiscussion() {
   const docPlan = ref<DocPlan | null>(null);
   const docContents = ref<Map<string, string>>(new Map());
   const currentSectionId = ref<string | null>(null);
+
+  // Lead planner digest events
+  const leadPlannerDigests = ref<LeadPlannerDigestEventData[]>([]);
+
+  // Intervention assessment events
+  const interventionAssessments = ref<InterventionAssessmentEventData[]>([]);
+
+  // Holistic review events
+  const holisticReviews = ref<HolisticReviewEventData[]>([]);
 
   // Current discussion ID
   const discussionId = computed(() => discussionStore.discussionId);
@@ -162,6 +176,9 @@ export function useDiscussion() {
     docContents.value = new Map();
     currentSectionId.value = null;
     agenda.value = null;
+    leadPlannerDigests.value = [];
+    interventionAssessments.value = [];
+    holisticReviews.value = [];
 
     try {
       const [statusResponse, messagesResponse, interventionStatus, summariesResponse] = await Promise.all([
@@ -387,6 +404,58 @@ export function useDiscussion() {
         break;
       }
 
+      case 'doc_restructure': {
+        const evt = message as DocRestructureWsEvent;
+        if (evt.data.updated_doc_plan) {
+          docPlan.value = evt.data.updated_doc_plan as DocPlan;
+          currentSectionId.value = evt.data.updated_doc_plan.current_section_id ?? null;
+        }
+        break;
+      }
+
+      case 'section_reopened': {
+        const evt = message as SectionReopenedWsEvent;
+        if (docPlan.value) {
+          for (const file of docPlan.value.files) {
+            for (const section of file.sections) {
+              if (section.id === evt.data.section_id) {
+                section.status = 'pending';
+                section.reopened_reason = evt.data.reason;
+                section.revision_count = (section.revision_count || 0) + 1;
+              }
+            }
+          }
+          docPlan.value = { ...docPlan.value };
+        }
+        break;
+      }
+
+      case 'lead_planner_digest': {
+        leadPlannerDigests.value = [...leadPlannerDigests.value, message.data];
+        break;
+      }
+
+      case 'intervention_assessment': {
+        interventionAssessments.value = [...interventionAssessments.value, message.data];
+        // If REOPEN, highlight affected sections
+        if (message.data.impact_level === 'REOPEN' && docPlan.value) {
+          for (const file of docPlan.value.files) {
+            for (const section of file.sections) {
+              if (message.data.affected_sections?.includes(section.id)) {
+                section.status = 'pending';
+              }
+            }
+          }
+          docPlan.value = { ...docPlan.value };
+        }
+        break;
+      }
+
+      case 'holistic_review': {
+        holisticReviews.value = [...holisticReviews.value, message.data];
+        break;
+      }
+
       case 'error':
         console.error('Discussion error:', message.data?.content);
         discussionStore.setError(message.data?.content ?? 'Unknown error');
@@ -439,8 +508,22 @@ export function useDiscussion() {
               summary_details: null,
               started_at: null,
               completed_at: null,
+              related_sections: [],
+              priority: 0,
+              source: 'initial',
             });
           }
+        }
+        break;
+      case 'mapping_update':
+        if (agenda.value && message.data.mappings) {
+          const mappings = message.data.mappings as Record<string, string[]>;
+          for (const item of agenda.value.items) {
+            if (mappings[item.id]) {
+              item.related_sections = mappings[item.id];
+            }
+          }
+          agenda.value = { ...agenda.value };
         }
         break;
     }
@@ -562,6 +645,9 @@ export function useDiscussion() {
     docContents.value = new Map();
     currentSectionId.value = null;
     agenda.value = null;
+    leadPlannerDigests.value = [];
+    interventionAssessments.value = [];
+    holisticReviews.value = [];
   }
 
   function setPaused(value: boolean) {
@@ -614,6 +700,11 @@ export function useDiscussion() {
     docPlan,
     docContents,
     currentSectionId,
+
+    // Dynamic discussion events
+    leadPlannerDigests,
+    interventionAssessments,
+    holisticReviews,
 
     // Actions
     createDiscussion,

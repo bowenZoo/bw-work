@@ -544,7 +544,43 @@ class LeadPlanner(BaseAgent):
 ### 下一轮发言人
 ```speakers
 角色名1, 角色名2
-```"""
+```
+
+---
+**可选：议题管理指令**
+
+如果在讨论中发现了新的议题、某个已有议题已经讨论充分、或需要调整议题优先级，可以输出以下代码块：
+
+```agenda_update
+complete: <议题ID>
+add: [新议题标题] - 新议题描述
+priority: <议题ID> high|low
+```
+
+- complete: 标记某个议题为已完结
+- add: 新增一个讨论中发现的新议题
+- priority: 调整议题优先级为 high 或 low
+
+如果没有需要变更的议题，不要输出此代码块。
+
+---
+**可选：文档结构调整指令**
+
+如果在讨论中发现当前文档结构需要调整（如章节内容过大需要拆分、多个章节重复需要合并、需要新增章节或文件），可以输出以下代码块：
+
+```doc_restructure
+split: <section_id> -> [新标题1](新描述1), [新标题2](新描述2)
+merge: <section_id1>, <section_id2> -> [合并后标题]
+add_section: <file_index>:<after_section_id> [新章节标题](新章节描述)
+add_file: [文件名.md](文件标题) sections: [标题1](描述1), [标题2](描述2)
+```
+
+- split: 将一个章节拆分为多个
+- merge: 将多个章节合并为一个
+- add_section: 在指定文件的指定位置添加新章节
+- add_file: 新增一个文件及其章节
+
+如果不需要调整文档结构，不要输出此代码块。"""
 
     def create_agenda_prompt(self, topic: str, attachment: str | None = None) -> str:
         """Create prompt for agenda planning.
@@ -579,6 +615,211 @@ class LeadPlanner(BaseAgent):
 - 每个议题应该是独立可讨论的
 - 标题简洁明了，不超过 20 字
 - 描述说明为什么需要讨论这个点"""
+
+    # ------------------------------------------------------------------
+    # 干预消化 & 整体审视 Prompt 方法
+    # ------------------------------------------------------------------
+
+    def create_intervention_digest_prompt(
+        self,
+        user_messages: list[str],
+        current_section: str,
+        discussion_context: str,
+    ) -> str:
+        """创建观众干预消化 prompt，让主策划独立理解和分析观众意见。
+
+        Args:
+            user_messages: 观众发送的消息列表。
+            current_section: 当前正在讨论的章节标题。
+            discussion_context: 当前讨论的上下文摘要。
+
+        Returns:
+            干预消化 prompt。
+        """
+        messages_block = "\n".join(
+            f"- 观众消息 {i+1}: {msg}" for i, msg in enumerate(user_messages)
+        )
+
+        return f"""作为主策划，你收到了观众（用户）的实时反馈。请独立消化这些意见，不要直接转发给团队。
+
+**当前讨论章节**: {current_section}
+
+**讨论上下文**:
+{discussion_context}
+
+**观众消息**:
+{messages_block}
+
+请按以下格式输出你的分析：
+
+### 观点理解
+- 逐条理解观众的核心诉求，用你自己的话复述
+
+### 关键诉求
+- 提炼出观众最关心的 1-3 个核心诉求
+- 区分「具体建议」和「方向性意见」
+
+### 关联分析
+- 这些意见与当前讨论章节「{current_section}」的关联度
+- 是否涉及已讨论完成的章节
+- 是否暗示需要新增讨论议题
+
+### 后续引导方向
+- 你打算如何将这些意见融入后续讨论
+- 是直接在当前章节中吸纳，还是需要回溯或新增议题
+- 给出具体的引导策略"""
+
+    def create_intervention_assessment_prompt(
+        self,
+        digest_summary: str,
+        current_section: str,
+        completed_sections: list[dict],
+        doc_plan_summary: str,
+    ) -> str:
+        """创建干预影响评估 prompt，判断观众意见的影响范围。
+
+        Args:
+            digest_summary: 前一步消化分析的输出。
+            current_section: 当前讨论章节标题。
+            completed_sections: 已完成章节列表，每项包含 "id", "title", "summary"。
+            doc_plan_summary: 文档规划摘要。
+
+        Returns:
+            影响评估 prompt。
+        """
+        completed_block = "\n".join(
+            f"- {s['id']}: {s['title']} — {s.get('summary', '(无摘要)')}"
+            for s in completed_sections
+        ) if completed_sections else "(暂无已完成章节)"
+
+        return f"""作为主策划，请根据你对观众意见的消化分析，评估其对讨论的影响范围。
+
+**你的消化分析**:
+{digest_summary}
+
+**当前讨论章节**: {current_section}
+
+**已完成的章节**:
+{completed_block}
+
+**文档规划概览**:
+{doc_plan_summary}
+
+请严格按以下格式输出评估结果（用代码块包裹）：
+
+```intervention_assessment
+impact_level: <CURRENT_ONLY | REOPEN | NEW_TOPIC>
+summary: <一句话总结影响>
+current_section_actions:
+  - <对当前章节的具体调整>
+reopen_sections:
+  - section_id: <要重开的章节 ID>
+    reason: <重开原因>
+    focus: <重开后聚焦的问题>
+new_topics:
+  - title: <新议题标题>
+    description: <新议题描述>
+    priority: <high | medium | low>
+```
+
+**约束**:
+- impact_level 三选一：
+  - CURRENT_ONLY: 仅影响当前章节，在当前讨论中吸纳即可
+  - REOPEN: 需要回溯重开已完成的章节（最多重开 3 个）
+  - NEW_TOPIC: 需要新增讨论议题
+- reopen_sections 最多 3 个，选择影响最大的
+- 优先选择 CURRENT_ONLY，只有观众意见确实与已完成章节强相关时才选 REOPEN"""
+
+    def create_holistic_review_prompt(
+        self,
+        all_file_contents: list[dict],
+        doc_plan_summary: str,
+        pending_agenda_items: list[str],
+        discussion_summary: str,
+    ) -> str:
+        """创建整体审视 prompt，在所有章节完成后对文档进行全局审查。
+
+        Args:
+            all_file_contents: 所有文件内容列表，每项包含 "filename", "title", "content"。
+            doc_plan_summary: 文档规划摘要。
+            pending_agenda_items: 尚未讨论的待定议题列表。
+            discussion_summary: 整个讨论过程的摘要。
+
+        Returns:
+            整体审视 prompt。
+        """
+        files_block = ""
+        for f in all_file_contents:
+            files_block += f"\n---\n**文件**: {f['filename']} ({f['title']})\n{f['content']}\n"
+
+        pending_block = "\n".join(
+            f"- {item}" for item in pending_agenda_items
+        ) if pending_agenda_items else "(无待定议题)"
+
+        return f"""作为主策划，所有章节讨论已完成。请对全部产出文档进行整体审视。
+
+**文档规划概览**:
+{doc_plan_summary}
+
+**讨论过程摘要**:
+{discussion_summary}
+
+**待定议题（未讨论）**:
+{pending_block}
+
+**全部文档内容**:
+{files_block}
+
+请从以下维度进行审视：
+
+### 1. 跨章节一致性
+- 不同章节之间是否存在术语不统一、数值矛盾、逻辑冲突
+- 前后引用是否准确
+
+### 2. 完整性
+- 文档规划中的每个章节是否都有实质性内容
+- 是否有重要设计点遗漏
+- 待定议题是否需要补充到现有文档中
+
+### 3. 观众意见回应
+- 讨论中收到的观众反馈是否已在文档中得到体现
+- 是否有未回应的重要观众诉求
+
+### 4. 整体质量
+- 文档是否具备可执行性
+- 是否需要补充细节或示例
+
+请严格按以下格式输出审视结果（用代码块包裹）：
+
+```holistic_review
+conclusion: <APPROVED | NEEDS_REVISION | NEEDS_NEW_TOPIC>
+quality_score: <1-10>
+summary: <一句话总结审视结论>
+consistency_issues:
+  - file: <文件名>
+    section: <章节 ID>
+    issue: <问题描述>
+    suggestion: <修改建议>
+completeness_gaps:
+  - description: <缺失内容描述>
+    suggested_section: <建议补充到哪个章节>
+    priority: <high | medium | low>
+revision_actions:
+  - section_id: <需要修改的章节 ID>
+    file: <文件名>
+    action: <具体修改要求>
+new_topics:
+  - title: <新议题标题>
+    reason: <为什么需要新增>
+```
+
+**约束**:
+- conclusion 三选一：
+  - APPROVED: 文档质量合格，可以定稿
+  - NEEDS_REVISION: 需要修改部分章节内容（不需要新的讨论轮次）
+  - NEEDS_NEW_TOPIC: 发现重大遗漏，需要新增讨论议题
+- quality_score: 1-10 分，7 分以上才可 APPROVED
+- 审视要客观严格，但不要吹毛求疵"""
 
     def __repr__(self) -> str:
         """Return string representation of the agent."""

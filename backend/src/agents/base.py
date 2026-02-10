@@ -1,7 +1,9 @@
 """Base Agent class for the AI Game Design Team."""
 
+import asyncio
 import logging
 import re
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -10,6 +12,16 @@ from crewai import Agent, Crew, Process, Task
 from src.config.settings import load_role_config, settings
 
 logger = logging.getLogger(__name__)
+
+# Kickoff-level retry settings
+MAX_KICKOFF_RETRIES = 3
+RETRY_BASE_DELAY = 5  # seconds
+
+_RETRYABLE_KEYWORDS = (
+    "Too many connections", "429", "502", "503", "504",
+    "rate_limit", "quota", "timeout", "Connection",
+    "bad_response_status_code", "pre_consume_token_quota_failed",
+)
 
 
 class BaseAgent(ABC):
@@ -154,6 +166,8 @@ class BaseAgent(ABC):
 
         Creates a temporary Crew with a single task and runs it synchronously.
         If the LLM returns a malformed tool-call response, retries once.
+        On retryable API errors (rate limit, connection, 5xx), retries with
+        exponential backoff up to MAX_KICKOFF_RETRIES times.
 
         Args:
             context: The discussion context to respond to.
@@ -173,20 +187,38 @@ class BaseAgent(ABC):
             process=Process.sequential,
         )
 
-        result = crew.kickoff()
-        text = self._sanitize_response(str(result))
+        last_error: Exception | None = None
+        for attempt in range(MAX_KICKOFF_RETRIES):
+            try:
+                result = crew.kickoff()
+                text = self._sanitize_response(str(result))
 
-        if text is None and not _retried:
-            logger.info("Retrying %s response due to malformed output", self.role)
-            return self.respond_sync(context, _retried=True)
+                if text is None and not _retried:
+                    logger.info("Retrying %s response due to malformed output", self.role)
+                    return self.respond_sync(context, _retried=True)
 
-        return text or f"（{self.role}暂时无法给出回复）"
+                return text or f"（{self.role}暂时无法给出回复）"
+            except Exception as e:
+                error_msg = str(e)
+                is_retryable = any(k in error_msg for k in _RETRYABLE_KEYWORDS)
+                if not is_retryable or attempt == MAX_KICKOFF_RETRIES - 1:
+                    raise
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning(
+                    "Agent %s kickoff attempt %d/%d failed, retrying in %ds: %s",
+                    self.role, attempt + 1, MAX_KICKOFF_RETRIES, delay, error_msg[:120],
+                )
+                time.sleep(delay)
+                last_error = e
+
+        raise last_error  # type: ignore[misc]
 
     async def respond_async(self, context: str, *, _retried: bool = False) -> str:
         """Asynchronously generate a response to the given context.
 
         This method creates a temporary Crew with a single task to generate
-        a response based on the discussion context.
+        a response based on the discussion context.  On retryable API errors,
+        retries with exponential backoff.
 
         Args:
             context: The discussion context to respond to.
@@ -206,14 +238,31 @@ class BaseAgent(ABC):
             process=Process.sequential,
         )
 
-        result = await crew.kickoff_async()
-        text = self._sanitize_response(str(result))
+        last_error: Exception | None = None
+        for attempt in range(MAX_KICKOFF_RETRIES):
+            try:
+                result = await crew.kickoff_async()
+                text = self._sanitize_response(str(result))
 
-        if text is None and not _retried:
-            logger.info("Retrying %s async response due to malformed output", self.role)
-            return await self.respond_async(context, _retried=True)
+                if text is None and not _retried:
+                    logger.info("Retrying %s async response due to malformed output", self.role)
+                    return await self.respond_async(context, _retried=True)
 
-        return text or f"（{self.role}暂时无法给出回复）"
+                return text or f"（{self.role}暂时无法给出回复）"
+            except Exception as e:
+                error_msg = str(e)
+                is_retryable = any(k in error_msg for k in _RETRYABLE_KEYWORDS)
+                if not is_retryable or attempt == MAX_KICKOFF_RETRIES - 1:
+                    raise
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning(
+                    "Agent %s async kickoff attempt %d/%d failed, retrying in %ds: %s",
+                    self.role, attempt + 1, MAX_KICKOFF_RETRIES, delay, error_msg[:120],
+                )
+                await asyncio.sleep(delay)
+                last_error = e
+
+        raise last_error  # type: ignore[misc]
 
     def __repr__(self) -> str:
         """Return string representation of the agent."""

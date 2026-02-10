@@ -41,6 +41,12 @@ class ServerMessageType(str, Enum):
     DOC_PLAN = "doc_plan"
     SECTION_FOCUS = "section_focus"
     SECTION_UPDATE = "section_update"
+    # Dynamic discussion events
+    DOC_RESTRUCTURE = "doc_restructure"
+    SECTION_REOPENED = "section_reopened"
+    LEAD_PLANNER_DIGEST = "lead_planner_digest"
+    INTERVENTION_ASSESSMENT = "intervention_assessment"
+    HOLISTIC_REVIEW = "holistic_review"
 
 
 class AgentStatus(str, Enum):
@@ -548,6 +554,7 @@ class AgendaEventType(str, Enum):
     ITEM_COMPLETE = "item_complete"
     ITEM_SKIP = "item_skip"
     ITEM_ADD = "item_add"
+    MAPPING_UPDATE = "mapping_update"
 
 
 class AgendaEventData(BaseModel):
@@ -560,6 +567,7 @@ class AgendaEventData(BaseModel):
     summary: str | None = None
     current_index: int | None = None
     agenda: dict[str, Any] | None = None  # Full agenda for init event
+    mappings: dict[str, list[str]] | None = None  # item_id -> section_ids mapping
     timestamp: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -910,3 +918,207 @@ def create_section_focus_event(discussion_id: str, section_id: str, section_titl
 
 def create_section_update_event(discussion_id: str, filename: str, section_id: str, content: str) -> SectionUpdateEvent:
     return SectionUpdateEvent(data=SectionUpdateEventData(discussion_id=discussion_id, filename=filename, section_id=section_id, content=content))
+
+
+# Dynamic discussion event models
+
+
+class DocRestructureEventData(BaseModel):
+    """Data payload for doc restructure events."""
+
+    discussion_id: str
+    operation: str  # "split" | "merge" | "add_section" | "add_file"
+    details: dict[str, Any] = Field(default_factory=dict)
+    updated_doc_plan: dict[str, Any] = Field(default_factory=dict)
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class DocRestructureEvent(BaseModel):
+    """Event when document structure is modified."""
+
+    type: ServerMessageType = ServerMessageType.DOC_RESTRUCTURE
+    data: DocRestructureEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+class SectionReopenedEventData(BaseModel):
+    """Data payload for section reopened events."""
+
+    discussion_id: str
+    section_id: str
+    title: str
+    filename: str
+    reason: str
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class SectionReopenedEvent(BaseModel):
+    """Event when a completed section is reopened."""
+
+    type: ServerMessageType = ServerMessageType.SECTION_REOPENED
+    data: SectionReopenedEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+class LeadPlannerDigestEventData(BaseModel):
+    """Data payload for lead planner digest events."""
+
+    discussion_id: str
+    digest_summary: str
+    key_points: list[str] = Field(default_factory=list)
+    guidance: str = ""
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class LeadPlannerDigestEvent(BaseModel):
+    """Event when lead planner digests intervention input."""
+
+    type: ServerMessageType = ServerMessageType.LEAD_PLANNER_DIGEST
+    data: LeadPlannerDigestEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+class InterventionAssessmentEventData(BaseModel):
+    """Data payload for intervention assessment events."""
+
+    discussion_id: str
+    impact_level: str  # "ABSORB" | "ADJUST" | "REOPEN"
+    affected_sections: list[str] = Field(default_factory=list)
+    reason: str = ""
+    action_plan: str = ""
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class InterventionAssessmentEvent(BaseModel):
+    """Event when lead planner assesses intervention impact."""
+
+    type: ServerMessageType = ServerMessageType.INTERVENTION_ASSESSMENT
+    data: InterventionAssessmentEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+class ReviewDimension(BaseModel):
+    """A single dimension in holistic review."""
+
+    name: str
+    score: str  # "pass" | "warning" | "fail"
+    notes: str = ""
+
+
+class HolisticReviewEventData(BaseModel):
+    """Data payload for holistic review events."""
+
+    discussion_id: str
+    review_round: int
+    conclusion: str  # "APPROVED" | "NEEDS_REVISION" | "NEEDS_NEW_TOPIC"
+    review_dimensions: list[ReviewDimension] = Field(default_factory=list)
+    revisions_needed: list[dict[str, Any]] = Field(default_factory=list)
+    new_topics: list[dict[str, str]] = Field(default_factory=list)
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class HolisticReviewEvent(BaseModel):
+    """Event when holistic review is completed."""
+
+    type: ServerMessageType = ServerMessageType.HOLISTIC_REVIEW
+    data: HolisticReviewEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+def create_doc_restructure_event(
+    discussion_id: str,
+    operation: str,
+    details: dict[str, Any],
+    updated_doc_plan: dict[str, Any],
+) -> DocRestructureEvent:
+    return DocRestructureEvent(
+        data=DocRestructureEventData(
+            discussion_id=discussion_id,
+            operation=operation,
+            details=details,
+            updated_doc_plan=updated_doc_plan,
+        )
+    )
+
+
+def create_section_reopened_event(
+    discussion_id: str,
+    section_id: str,
+    title: str,
+    filename: str,
+    reason: str,
+) -> SectionReopenedEvent:
+    return SectionReopenedEvent(
+        data=SectionReopenedEventData(
+            discussion_id=discussion_id,
+            section_id=section_id,
+            title=title,
+            filename=filename,
+            reason=reason,
+        )
+    )
+
+
+def create_lead_planner_digest_event(
+    discussion_id: str,
+    digest_summary: str,
+    key_points: list[str] | None = None,
+    guidance: str = "",
+) -> LeadPlannerDigestEvent:
+    return LeadPlannerDigestEvent(
+        data=LeadPlannerDigestEventData(
+            discussion_id=discussion_id,
+            digest_summary=digest_summary,
+            key_points=key_points or [],
+            guidance=guidance,
+        )
+    )
+
+
+def create_intervention_assessment_event(
+    discussion_id: str,
+    impact_level: str,
+    affected_sections: list[str] | None = None,
+    reason: str = "",
+    action_plan: str = "",
+) -> InterventionAssessmentEvent:
+    return InterventionAssessmentEvent(
+        data=InterventionAssessmentEventData(
+            discussion_id=discussion_id,
+            impact_level=impact_level,
+            affected_sections=affected_sections or [],
+            reason=reason,
+            action_plan=action_plan,
+        )
+    )
+
+
+def create_holistic_review_event(
+    discussion_id: str,
+    review_round: int,
+    conclusion: str,
+    review_dimensions: list[dict[str, str]] | None = None,
+    revisions_needed: list[dict[str, Any]] | None = None,
+    new_topics: list[dict[str, str]] | None = None,
+) -> HolisticReviewEvent:
+    dims = [ReviewDimension(**d) for d in (review_dimensions or [])]
+    return HolisticReviewEvent(
+        data=HolisticReviewEventData(
+            discussion_id=discussion_id,
+            review_round=review_round,
+            conclusion=conclusion,
+            review_dimensions=dims,
+            revisions_needed=revisions_needed or [],
+            new_topics=new_topics or [],
+        )
+    )

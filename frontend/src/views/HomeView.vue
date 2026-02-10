@@ -252,6 +252,7 @@ function formatDate(dateStr: string): string {
 
 function getStatusLabel(status: string | null): string {
   switch (status) {
+    case 'queued': return '排队中';
     case 'running': return '进行中';
     case 'failed': return '已中断';
     default: return '已完成';
@@ -260,6 +261,7 @@ function getStatusLabel(status: string | null): string {
 
 function getStatusClass(status: string | null): string {
   switch (status) {
+    case 'queued': return 'badge-queued';
     case 'running': return 'badge-running';
     case 'failed': return 'badge-failed';
     default: return 'badge-completed';
@@ -308,8 +310,8 @@ onMounted(() => {
             @click="viewDiscussion(disc.id)"
           >
             <div class="meeting-indicator">
-              <span class="pulse-dot" />
-              <span class="meeting-label">{{ disc.status === 'paused' ? '已暂停' : '进行中' }}</span>
+              <span :class="disc.status === 'queued' ? 'queued-dot' : 'pulse-dot'" />
+              <span class="meeting-label">{{ disc.status === 'queued' ? '排队中' : disc.status === 'paused' ? '已暂停' : '进行中' }}</span>
             </div>
             <h3 class="meeting-topic">"{{ disc.topic }}"</h3>
             <div class="meeting-meta">
@@ -648,6 +650,14 @@ onMounted(() => {
   50% { opacity: 0.4; }
 }
 
+.queued-dot {
+  width: 8px;
+  height: 8px;
+  background: #0284c7;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
+
 .meeting-label {
   font-size: 13px;
   font-weight: 600;
@@ -857,6 +867,11 @@ onMounted(() => {
 .badge-completed {
   background: #f0fdf4;
   color: #16a34a;
+}
+
+.badge-queued {
+  background: #f0f9ff;
+  color: #0284c7;
 }
 
 .badge-running {

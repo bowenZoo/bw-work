@@ -146,6 +146,18 @@ export function useLobby() {
           if (content === 'discussion_completed' || content === 'discussion_failed') {
             // Remove from active list
             activeDiscussions.value = activeDiscussions.value.filter(d => d.id !== discId);
+          } else if (content === 'discussion_queued' && discId) {
+            // Update status to queued
+            const existing = activeDiscussions.value.find(d => d.id === discId);
+            if (existing) {
+              existing.status = 'queued';
+            }
+          } else if (content === 'discussion_running' && discId) {
+            // Update status to running (transitioned from queued)
+            const existing = activeDiscussions.value.find(d => d.id === discId);
+            if (existing) {
+              existing.status = 'running';
+            }
           } else if (content === 'discussion_created' && discId) {
             // Add to active list (if not already there)
             if (!activeDiscussions.value.some(d => d.id === discId)) {

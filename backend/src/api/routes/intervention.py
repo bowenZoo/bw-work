@@ -16,6 +16,7 @@ from src.crew.discussion_crew import (
     get_discussion_state as get_crew_state,
     set_discussion_state as set_crew_state,
 )
+from src.memory.discussion_memory import DiscussionMemory
 
 logger = logging.getLogger(__name__)
 
@@ -218,3 +219,194 @@ async def get_intervention_status(discussion_id: str) -> dict:
         "injected_messages_count": len(state_info.get("injected_messages", [])) if state_info else 0,
         "discussion_status": discussion.status,
     }
+
+
+# ------------------------------------------------------------------
+# DYN-5.1: Agenda & Doc-Plan manipulation endpoints
+# ------------------------------------------------------------------
+
+
+class AgendaPriorityRequest(BaseModel):
+    """Request body for adjusting agenda item priority."""
+
+    priority: int = Field(ge=-1, le=1, description="Priority: -1=low, 0=normal, 1=high")
+
+
+class DocRestructureRequest(BaseModel):
+    """Request body for manual doc-plan restructure."""
+
+    operation: str = Field(..., description="Operation: add_section | add_file")
+    params: dict = Field(..., description="Operation parameters")
+
+
+def _get_crew_instance(discussion_id: str):
+    """Get the DiscussionCrew instance for a running discussion.
+
+    Returns the crew and its agenda/doc_plan if available.
+    """
+    from src.api.routes.discussion import _running_crews
+    crew = _running_crews.get(discussion_id)
+    return crew
+
+
+@router.post("/{discussion_id}/agenda/items/{item_id}/complete")
+async def complete_agenda_item(discussion_id: str, item_id: str) -> dict:
+    """Manually mark an agenda item as completed."""
+    discussion = get_discussion_state(discussion_id)
+    if discussion is None:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    crew = _get_crew_instance(discussion_id)
+    if crew is None:
+        raise HTTPException(status_code=400, detail="Discussion crew not available")
+
+    agenda = crew.get_agenda()
+    if agenda is None:
+        raise HTTPException(status_code=400, detail="No agenda available for this discussion")
+
+    item = agenda.get_item_by_id(item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"Agenda item {item_id} not found")
+
+    from src.models.agenda import AgendaItemStatus
+    if item.status == AgendaItemStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Item is already completed")
+
+    item.complete("手动标记完结")
+    return {
+        "discussion_id": discussion_id,
+        "item_id": item_id,
+        "status": "completed",
+        "message": f"议题「{item.title}」已标记完结",
+    }
+
+
+@router.post("/{discussion_id}/agenda/items/{item_id}/priority")
+async def set_agenda_item_priority(
+    discussion_id: str,
+    item_id: str,
+    request: AgendaPriorityRequest,
+) -> dict:
+    """Adjust agenda item priority."""
+    discussion = get_discussion_state(discussion_id)
+    if discussion is None:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    crew = _get_crew_instance(discussion_id)
+    if crew is None:
+        raise HTTPException(status_code=400, detail="Discussion crew not available")
+
+    agenda = crew.get_agenda()
+    if agenda is None:
+        raise HTTPException(status_code=400, detail="No agenda available for this discussion")
+
+    item = agenda.get_item_by_id(item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"Agenda item {item_id} not found")
+
+    item.priority = request.priority
+    priority_label = {-1: "low", 0: "normal", 1: "high"}.get(request.priority, "unknown")
+    return {
+        "discussion_id": discussion_id,
+        "item_id": item_id,
+        "priority": request.priority,
+        "message": f"议题「{item.title}」优先级已调整为 {priority_label}",
+    }
+
+
+@router.post("/{discussion_id}/doc-plan/restructure")
+async def restructure_doc_plan(
+    discussion_id: str,
+    request: DocRestructureRequest,
+) -> dict:
+    """Manually restructure the document plan.
+
+    Supported operations:
+    - add_section: params={file_index, after_section_id, title, description}
+    - add_file: params={filename, title, sections: [{title, description}]}
+    """
+    from src.models.doc_plan import SectionPlan, FilePlan
+
+    discussion = get_discussion_state(discussion_id)
+    if discussion is None:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    crew = _get_crew_instance(discussion_id)
+    if crew is None:
+        raise HTTPException(status_code=400, detail="Discussion crew not available")
+
+    doc_plan = crew._doc_plan
+    if doc_plan is None:
+        raise HTTPException(status_code=400, detail="No doc plan available for this discussion")
+
+    operation = request.operation
+    params = request.params
+
+    if operation == "add_section":
+        file_index = params.get("file_index", 0)
+        after_sid = params.get("after_section_id")
+        title = params.get("title", "新章节")
+        description = params.get("description", "")
+
+        # Generate section ID
+        max_id = max(
+            (int(s.id.lstrip("s")) for f in doc_plan.files for s in f.sections
+             if s.id.startswith("s") and s.id[1:].isdigit()),
+            default=0,
+        )
+        new_sid = f"s{max_id + 1}"
+        new_section = SectionPlan(id=new_sid, title=title, description=description)
+
+        if not doc_plan.add_section(file_index, new_section, after_sid):
+            raise HTTPException(status_code=400, detail="Failed to add section")
+
+        # Update file if doc_writer available
+        if crew._doc_writer and file_index < len(doc_plan.files):
+            crew._doc_writer.add_section_marker(
+                doc_plan.files[file_index].filename,
+                new_sid, title, description,
+                after_section_id=after_sid,
+            )
+
+        return {
+            "discussion_id": discussion_id,
+            "operation": "add_section",
+            "section_id": new_sid,
+            "message": f"新增章节「{title}」(ID: {new_sid})",
+        }
+
+    elif operation == "add_file":
+        filename = params.get("filename", "新文件.md")
+        file_title = params.get("title", "新文件")
+        sections_data = params.get("sections", [])
+
+        max_id = max(
+            (int(s.id.lstrip("s")) for f in doc_plan.files for s in f.sections
+             if s.id.startswith("s") and s.id[1:].isdigit()),
+            default=0,
+        )
+        new_sections = []
+        for s_data in sections_data:
+            max_id += 1
+            new_sections.append(SectionPlan(
+                id=f"s{max_id}",
+                title=s_data.get("title", "章节"),
+                description=s_data.get("description", ""),
+            ))
+
+        new_fp = FilePlan(filename=filename, title=file_title, sections=new_sections)
+        if not doc_plan.add_file(new_fp):
+            raise HTTPException(status_code=400, detail=f"Filename conflict: {filename}")
+        if crew._doc_writer:
+            crew._doc_writer.create_new_file(new_fp)
+
+        return {
+            "discussion_id": discussion_id,
+            "operation": "add_file",
+            "filename": filename,
+            "sections": [s.id for s in new_sections],
+            "message": f"新增文件「{filename}」({len(new_sections)} 个章节)",
+        }
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown operation: {operation}")
