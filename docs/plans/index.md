@@ -2,8 +2,8 @@
 
 > **对应 Spec**: [docs/spec.md](../spec.md), [docs/spec-admin.md](../spec-admin.md), [docs/spec-discussion-v2.md](../spec-discussion-v2.md)
 > **创建时间**: 2026-02-04
-> **更新时间**: 2026-02-06
-> **总任务数**: 156 个
+> **更新时间**: 2026-02-10
+> **总任务数**: 169 个
 
 ## 执行批次
 
@@ -23,6 +23,7 @@
 | 11 | [plan-discussion-v2-parallel.md](./plan-discussion-v2-parallel.md) | 8 | pending | Batch 10 |
 | 12 | [plan-discussion-v2-agenda.md](./plan-discussion-v2-agenda.md) | 12 | pending | Batch 10, 11 |
 | 13 | [plan-discussion-v2-resume.md](./plan-discussion-v2-resume.md) | 10 | pending | Batch 10 |
+| 14 | [plan-dynamic-discussion.md](./plan-dynamic-discussion.md) | 13 | pending | Batch 10, 11 |
 
 ## Plan 列表
 
@@ -154,6 +155,18 @@
   - 主策划处理续前上下文
   - **10 个任务**，预计 2 天
 
+### Batch 14: 讨论流程动态化 (Phase 6)
+
+> 对应 Spec: [docs/spec.md#2.9](../spec.md) 讨论流程动态化改造 (F-48 ~ F-59)
+
+- **[plan-dynamic-discussion.md](./plan-dynamic-discussion.md)** - 讨论流程动态化改造
+  - 议题驱动：Agenda 接入 `run_document_centric` 主循环（F-48, F-49, F-50）
+  - 文档结构动态重组：章节拆分/合并/新增（F-51, F-52, F-53, F-54）
+  - 干预回溯：主策划优先消化 + 影响评估 + 章节回溯修订（F-55, F-56, F-58）
+  - 文档变更广播（F-57）
+  - 讨论完成前整体审视（F-59）
+  - **13 个任务**，预计 4-5 天
+
 ## 依赖关系图
 
 ```
@@ -175,7 +188,7 @@ Batch 1: plan-backend-core (基础)
     │                            │
     └────────────────────────────┘
 
-独立分支（讨论系统 V2）：
+独立分支（讨论系统 V2 + 动态化）：
 
 Batch 9: plan-discussion-v2-dialog (可独立执行)
     │
@@ -183,7 +196,10 @@ Batch 9: plan-discussion-v2-dialog (可独立执行)
               │
               ├──→ Batch 11: plan-discussion-v2-parallel
               │         │
-              │         └──→ Batch 12: plan-discussion-v2-agenda
+              │         ├──→ Batch 12: plan-discussion-v2-agenda
+              │         │
+              │         └──→ Batch 14: plan-dynamic-discussion
+              │                        (依赖 Batch 10, 11)
               │
               └──→ Batch 13: plan-discussion-v2-resume
 ```
@@ -200,6 +216,7 @@ Batch 9: plan-discussion-v2-dialog (可独立执行)
 | Phase 6: 高级功能 | plan-advanced | 2-3 天 |
 | Phase 7: 管理后台 | plan-admin | 4-5 天 |
 | **Phase 8: 讨论系统 V2** | plan-discussion-v2-* (5 个 Plan) | **10-14 天** |
+| **Phase 9: 讨论流程动态化** | plan-dynamic-discussion | **4-5 天** |
 
 ## 讨论系统 V2 执行顺序
 
@@ -218,6 +235,9 @@ Batch 9: plan-discussion-v2-dialog (可独立执行)
 
 # Phase 8.5: 讨论恢复（依赖 8.2）
 /bwf-dev docs/plans/plan-discussion-v2-resume.md
+
+# Phase 9: 讨论流程动态化（依赖 8.2, 8.3）
+/bwf-dev docs/plans/plan-dynamic-discussion.md
 ```
 
 ## 下一步
@@ -239,3 +259,4 @@ Batch 9: plan-discussion-v2-dialog (可独立执行)
 | 2026-02-05 | 新增 plan-admin.md (19 tasks)，对应 Spec docs/spec-admin.md 管理后台系统 |
 | 2026-02-05 | 新增 plan-project-discussion.md (20 tasks)，对应 Spec 2.8 项目级策划讨论 |
 | 2026-02-06 | 新增讨论系统 V2 系列 Plan (5 个 Plan, 48 tasks)，对应 Spec docs/spec-discussion-v2.md |
+| 2026-02-10 | 新增 plan-dynamic-discussion.md (13 tasks)，对应 Spec 2.9 讨论流程动态化改造 (F-48~F-59) |
