@@ -219,18 +219,25 @@ def reload_config(category: Optional[str] = None) -> None:
 
 
 def _reload_llm_config(store) -> None:
-    """Reload LLM configuration."""
+    """Reload LLM configuration from active profile."""
     global settings
 
-    api_key = store.get_raw("llm", "openai_api_key")
-    if api_key:
-        settings.openai_api_key = api_key
-
-    model = store.get_raw("llm", "openai_model")
-    if model:
-        settings.openai_model = model
-
-    logger.info("LLM config reloaded from ConfigStore")
+    config = store.get_active_llm_config()
+    if config:
+        if config.get("api_key"):
+            settings.openai_api_key = config["api_key"]
+        if config.get("model"):
+            settings.openai_model = config["model"]
+        logger.info("LLM config reloaded from active profile: %s", config.get("name", ""))
+    else:
+        # Fallback to legacy keys
+        api_key = store.get_raw("llm", "openai_api_key")
+        if api_key:
+            settings.openai_api_key = api_key
+        model = store.get_raw("llm", "openai_model")
+        if model:
+            settings.openai_model = model
+        logger.info("LLM config reloaded from legacy keys")
 
 
 def _reload_langfuse_config(store) -> None:

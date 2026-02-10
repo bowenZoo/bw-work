@@ -2,13 +2,14 @@
 Configuration storage service with encryption support.
 """
 
+import json
 from typing import Optional, Literal
 
 from .database import AdminDatabase
 from .crypto import encrypt_value, decrypt_value, mask_value
 
 
-ConfigCategory = Literal["llm", "langfuse", "image", "general"]
+ConfigCategory = Literal["llm", "langfuse", "image", "general", "discussion"]
 
 
 class ConfigStore:
@@ -247,3 +248,175 @@ class ConfigStore:
             Decrypted value or default
         """
         return self.get(category, key, default)
+
+    # =========================================================================
+    # LLM Profile management
+    # =========================================================================
+
+    def _migrate_legacy_llm_config(self) -> None:
+        """Migrate old-format LLM config to profile format.
+
+        If active_profile doesn't exist but openai_api_key does,
+        migrate existing config into profile_default.
+        """
+        if self.exists("llm", "active_profile"):
+            return  # Already migrated
+
+        api_key = self.get("llm", "openai_api_key")
+        if not api_key:
+            return  # Nothing to migrate
+
+        base_url = self.get("llm", "openai_base_url") or ""
+        model = self.get("llm", "openai_model") or "gpt-4"
+
+        profile_data = json.dumps({
+            "name": "默认配置",
+            "base_url": base_url,
+            "model": model,
+        }, ensure_ascii=False)
+
+        self.set("llm", "profile_default", profile_data)
+        self.set("llm", "profile_default_api_key", api_key, encrypted=True)
+        self.set("llm", "active_profile", "default")
+
+    def get_llm_profiles(self) -> list[dict]:
+        """Get all LLM configuration profiles.
+
+        Returns:
+            List of profile dicts: [{id, name, base_url, model, has_api_key, is_active}]
+        """
+        self._migrate_legacy_llm_config()
+
+        active_id = self.get("llm", "active_profile")
+        configs = self.db.get_configs_by_category("llm")
+
+        profiles = []
+        for config in configs:
+            key = config["key"]
+            # Match profile data keys (not api_key keys)
+            if key.startswith("profile_") and not key.endswith("_api_key") and key != "active_profile":
+                profile_id = key[len("profile_"):]
+                try:
+                    data = json.loads(config["value"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+                has_api_key = self.exists("llm", f"profile_{profile_id}_api_key")
+                profiles.append({
+                    "id": profile_id,
+                    "name": data.get("name", profile_id),
+                    "base_url": data.get("base_url", ""),
+                    "model": data.get("model", "gpt-4"),
+                    "has_api_key": has_api_key,
+                    "is_active": profile_id == active_id,
+                })
+
+        return profiles
+
+    def get_llm_profile(self, profile_id: str) -> dict | None:
+        """Get a single LLM profile with decrypted api_key.
+
+        Args:
+            profile_id: The profile identifier.
+
+        Returns:
+            Profile dict with api_key, or None if not found.
+        """
+        self._migrate_legacy_llm_config()
+
+        raw = self.get("llm", f"profile_{profile_id}")
+        if not raw:
+            return None
+
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+        api_key = self.get("llm", f"profile_{profile_id}_api_key")
+        active_id = self.get("llm", "active_profile")
+
+        return {
+            "id": profile_id,
+            "name": data.get("name", profile_id),
+            "base_url": data.get("base_url", ""),
+            "model": data.get("model", "gpt-4"),
+            "api_key": api_key or "",
+            "has_api_key": api_key is not None and api_key != "",
+            "is_active": profile_id == active_id,
+        }
+
+    def save_llm_profile(
+        self,
+        profile_id: str,
+        name: str,
+        base_url: str,
+        model: str,
+        api_key: str | None = None,
+    ) -> None:
+        """Save an LLM profile. api_key=None means don't update the key.
+
+        Args:
+            profile_id: Profile identifier (e.g. 'default', 'deepseek').
+            name: Display name.
+            base_url: API base URL.
+            model: Model name.
+            api_key: API key (None to keep existing).
+        """
+        profile_data = json.dumps({
+            "name": name,
+            "base_url": base_url,
+            "model": model,
+        }, ensure_ascii=False)
+
+        self.set("llm", f"profile_{profile_id}", profile_data)
+
+        if api_key is not None:
+            self.set("llm", f"profile_{profile_id}_api_key", api_key, encrypted=True)
+
+    def delete_llm_profile(self, profile_id: str) -> bool:
+        """Delete an LLM profile. Cannot delete the active profile.
+
+        Args:
+            profile_id: Profile to delete.
+
+        Returns:
+            True if deleted, False if not found or is active.
+        """
+        active_id = self.get("llm", "active_profile")
+        if profile_id == active_id:
+            return False
+
+        deleted = self.delete("llm", f"profile_{profile_id}")
+        self.delete("llm", f"profile_{profile_id}_api_key")
+        return deleted
+
+    def set_active_llm_profile(self, profile_id: str) -> bool:
+        """Set the active LLM profile.
+
+        Args:
+            profile_id: Profile to activate.
+
+        Returns:
+            True if set, False if profile doesn't exist.
+        """
+        if not self.exists("llm", f"profile_{profile_id}"):
+            return False
+
+        self.set("llm", "active_profile", profile_id)
+        return True
+
+    def get_active_llm_config(self) -> dict | None:
+        """Get the active profile's full config (for consumption by LLM creation).
+
+        Returns:
+            Dict with api_key, base_url, model, name, profile_id
+            or None if no active profile.
+        """
+        self._migrate_legacy_llm_config()
+
+        active_id = self.get("llm", "active_profile")
+        if not active_id:
+            return None
+
+        return self.get_llm_profile(active_id)

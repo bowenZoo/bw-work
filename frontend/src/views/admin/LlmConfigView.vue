@@ -4,34 +4,143 @@
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-bold text-white">LLM 配置</h1>
-        <p class="text-zinc-400 mt-1">配置 OpenAI API 设置</p>
+        <p class="text-zinc-400 mt-1">管理多个 LLM 供应商配置方案</p>
       </div>
-      <div class="flex items-center space-x-2">
-        <span
-          :class="[
-            'px-3 py-1 rounded-full text-sm',
-            config.configured
-              ? 'bg-emerald-900/50 text-emerald-400'
-              : 'bg-yellow-900/50 text-yellow-400'
-          ]"
-        >
-          {{ config.configured ? '已配置' : '未配置' }}
+      <button
+        @click="startCreate"
+        class="px-4 py-2 bg-white text-black rounded-lg hover:bg-zinc-200 transition-colors text-sm font-medium"
+      >
+        + 新增方案
+      </button>
+    </div>
+
+    <!-- Profile List -->
+    <div v-if="profiles.length === 0 && !editing" class="bg-zinc-800 rounded-lg p-8 text-center">
+      <p class="text-zinc-400">暂无配置方案，点击右上角新增</p>
+    </div>
+
+    <div v-for="profile in profiles" :key="profile.id" class="bg-zinc-800 rounded-lg p-5">
+      <div class="flex items-start justify-between">
+        <div class="flex items-center space-x-3">
+          <!-- Active indicator -->
+          <span
+            :class="[
+              'w-3 h-3 rounded-full flex-shrink-0',
+              profile.is_active ? 'bg-emerald-400' : 'bg-zinc-600'
+            ]"
+          />
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="text-white font-medium">{{ profile.name }}</span>
+              <span
+                v-if="profile.is_active"
+                class="px-2 py-0.5 rounded text-xs bg-emerald-900/50 text-emerald-400"
+              >
+                当前激活
+              </span>
+              <span
+                v-if="!profile.has_api_key"
+                class="px-2 py-0.5 rounded text-xs bg-yellow-900/50 text-yellow-400"
+              >
+                未配置密钥
+              </span>
+            </div>
+            <div class="text-zinc-500 text-sm mt-1">
+              <span>{{ profile.model }}</span>
+              <span v-if="profile.base_url" class="ml-3">{{ profile.base_url }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex items-center space-x-2">
+          <button
+            @click="startEdit(profile)"
+            class="px-3 py-1.5 text-sm bg-zinc-700 text-zinc-300 rounded hover:bg-zinc-600 transition-colors"
+          >
+            编辑
+          </button>
+          <button
+            @click="testProfile(profile.id)"
+            :disabled="testingId === profile.id"
+            class="px-3 py-1.5 text-sm bg-zinc-700 text-zinc-300 rounded hover:bg-zinc-600 disabled:opacity-50 transition-colors"
+          >
+            <span v-if="testingId === profile.id">测试中...</span>
+            <span v-else>测试</span>
+          </button>
+          <button
+            v-if="!profile.is_active"
+            @click="activateProfile(profile.id)"
+            :disabled="activatingId === profile.id"
+            class="px-3 py-1.5 text-sm bg-emerald-900/50 text-emerald-400 rounded hover:bg-emerald-900/70 disabled:opacity-50 transition-colors"
+          >
+            激活
+          </button>
+          <button
+            v-if="!profile.is_active"
+            @click="deleteProfile(profile.id, profile.name)"
+            class="px-3 py-1.5 text-sm bg-zinc-700 text-red-400 rounded hover:bg-red-900/30 transition-colors"
+          >
+            删除
+          </button>
+        </div>
+      </div>
+
+      <!-- Test result for this profile -->
+      <div
+        v-if="testResults[profile.id]"
+        :class="[
+          'mt-3 p-3 rounded text-sm',
+          testResults[profile.id].success
+            ? 'bg-emerald-900/20 text-emerald-300'
+            : 'bg-red-900/20 text-red-300'
+        ]"
+      >
+        {{ testResults[profile.id].message }}
+        <span v-if="testResults[profile.id].latency_ms" class="ml-1 opacity-75">
+          ({{ testResults[profile.id].latency_ms.toFixed(0) }}ms)
         </span>
       </div>
     </div>
 
-    <!-- Configuration Form -->
-    <div class="bg-zinc-800 rounded-lg p-6 space-y-6">
+    <!-- Edit / Create Form -->
+    <div v-if="editing" class="bg-zinc-800 rounded-lg p-6 space-y-5 border border-zinc-600">
+      <h2 class="text-lg font-medium text-white">
+        {{ isNew ? '新增方案' : `编辑方案: ${form.name}` }}
+      </h2>
+
+      <!-- Profile ID (only for new) -->
+      <div v-if="isNew">
+        <label class="block text-sm font-medium text-zinc-300 mb-2">
+          方案 ID（可选，留空自动生成）
+        </label>
+        <input
+          v-model="form.id"
+          type="text"
+          placeholder="如 deepseek, moonshot"
+          class="w-full px-4 py-2 bg-zinc-700 border border-zinc-600 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-400"
+        />
+      </div>
+
+      <!-- Name -->
+      <div>
+        <label class="block text-sm font-medium text-zinc-300 mb-2">名称</label>
+        <input
+          v-model="form.name"
+          type="text"
+          placeholder="如 问问 AI、DeepSeek"
+          class="w-full px-4 py-2 bg-zinc-700 border border-zinc-600 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-400"
+        />
+      </div>
+
       <!-- API Key -->
       <div>
-        <label class="block text-sm font-medium text-zinc-300 mb-2">
-          OpenAI API Key
-        </label>
+        <label class="block text-sm font-medium text-zinc-300 mb-2">API Key</label>
         <div class="flex space-x-2">
           <input
-            v-model="form.openai_api_key"
+            v-model="form.api_key"
             :type="showApiKey ? 'text' : 'password'"
-            :placeholder="config.openai_api_key || 'sk-...'"
+            :placeholder="isNew ? 'sk-...' : '留空保持不变'"
             class="flex-1 px-4 py-2 bg-zinc-700 border border-zinc-600 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-400"
           />
           <button
@@ -48,141 +157,104 @@
             </svg>
           </button>
         </div>
-        <p class="text-zinc-500 text-sm mt-1">
-          您的 API 密钥将被加密安全存储
-        </p>
+        <p class="text-zinc-500 text-sm mt-1">密钥使用 AES-256-GCM 加密存储</p>
       </div>
 
-      <!-- Base URL (Optional) -->
+      <!-- Base URL -->
       <div>
-        <label class="block text-sm font-medium text-zinc-300 mb-2">
-          Base URL（可选）
-        </label>
+        <label class="block text-sm font-medium text-zinc-300 mb-2">Base URL</label>
         <input
-          v-model="form.openai_base_url"
+          v-model="form.base_url"
           type="text"
           placeholder="https://api.openai.com/v1"
           class="w-full px-4 py-2 bg-zinc-700 border border-zinc-600 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-400"
         />
-        <p class="text-zinc-500 text-sm mt-1">
-          需填写完整路径（含 /v1），留空则使用 OpenAI 默认端点
-        </p>
+        <p class="text-zinc-500 text-sm mt-1">需填写完整路径（含 /v1），留空则使用 OpenAI 默认端点</p>
       </div>
 
-      <!-- Model Selection -->
+      <!-- Model -->
       <div>
-        <label class="block text-sm font-medium text-zinc-300 mb-2">
-          默认模型
-        </label>
-        <div class="relative">
-          <input
-            v-model="form.openai_model"
-            type="text"
-            list="model-options"
-            placeholder="输入或选择模型名称"
-            class="w-full px-4 py-2 bg-zinc-700 border border-zinc-600 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-400"
-          />
-          <datalist id="model-options">
-            <optgroup label="OpenAI">
-              <option value="gpt-4">GPT-4</option>
-              <option value="gpt-4-turbo">GPT-4 Turbo</option>
-              <option value="gpt-4o">GPT-4o</option>
-              <option value="gpt-4o-mini">GPT-4o Mini</option>
-              <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-            </optgroup>
-            <optgroup label="Moonshot (Kimi)">
-              <option value="moonshot-v1-8k">Moonshot V1 8K</option>
-              <option value="moonshot-v1-32k">Moonshot V1 32K</option>
-              <option value="moonshot-v1-128k">Moonshot V1 128K</option>
-              <option value="kimi-k2.5">Kimi K2.5</option>
-            </optgroup>
-            <optgroup label="通义千问 (Qwen)">
-              <option value="qwen-max">Qwen Max</option>
-              <option value="qwen-plus">Qwen Plus</option>
-              <option value="qwen-turbo">Qwen Turbo</option>
-              <option value="qwen-long">Qwen Long</option>
-            </optgroup>
-            <optgroup label="MiniMax">
-              <option value="abab6.5s-chat">ABAB 6.5s Chat</option>
-              <option value="abab5.5-chat">ABAB 5.5 Chat</option>
-            </optgroup>
-            <optgroup label="DeepSeek">
-              <option value="deepseek-chat">DeepSeek Chat</option>
-              <option value="deepseek-coder">DeepSeek Coder</option>
-            </optgroup>
-          </datalist>
-        </div>
-        <p class="text-zinc-500 text-sm mt-1">
-          可选择预设模型或直接输入自定义模型名称
-        </p>
+        <label class="block text-sm font-medium text-zinc-300 mb-2">模型</label>
+        <input
+          v-model="form.model"
+          type="text"
+          list="model-options"
+          placeholder="输入或选择模型名称"
+          class="w-full px-4 py-2 bg-zinc-700 border border-zinc-600 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-400"
+        />
+        <datalist id="model-options">
+          <optgroup label="OpenAI">
+            <option value="gpt-4">GPT-4</option>
+            <option value="gpt-4-turbo">GPT-4 Turbo</option>
+            <option value="gpt-4o">GPT-4o</option>
+            <option value="gpt-4o-mini">GPT-4o Mini</option>
+          </optgroup>
+          <optgroup label="Moonshot (Kimi)">
+            <option value="moonshot-v1-8k">Moonshot V1 8K</option>
+            <option value="moonshot-v1-32k">Moonshot V1 32K</option>
+            <option value="moonshot-v1-128k">Moonshot V1 128K</option>
+            <option value="kimi-k2.5">Kimi K2.5</option>
+          </optgroup>
+          <optgroup label="DeepSeek">
+            <option value="deepseek-chat">DeepSeek Chat</option>
+            <option value="deepseek-coder">DeepSeek Coder</option>
+          </optgroup>
+          <optgroup label="通义千问 (Qwen)">
+            <option value="qwen-max">Qwen Max</option>
+            <option value="qwen-plus">Qwen Plus</option>
+            <option value="qwen-turbo">Qwen Turbo</option>
+          </optgroup>
+          <optgroup label="MiniMax">
+            <option value="abab6.5s-chat">ABAB 6.5s Chat</option>
+            <option value="abab5.5-chat">ABAB 5.5 Chat</option>
+          </optgroup>
+        </datalist>
       </div>
 
-      <!-- Actions -->
-      <div class="flex items-center justify-between pt-4 border-t border-zinc-700">
+      <!-- Form Actions -->
+      <div class="flex items-center justify-end space-x-3 pt-4 border-t border-zinc-700">
         <button
-          @click="testConnection"
-          :disabled="testing || !config.configured && !form.openai_api_key"
-          class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          @click="cancelEdit"
+          class="px-4 py-2 bg-zinc-700 text-zinc-300 rounded-lg hover:bg-zinc-600 transition-colors"
         >
-          <span v-if="testing" class="flex items-center">
-            <svg class="animate-spin -ml-1 mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-            </svg>
-            测试中...
-          </span>
-          <span v-else>测试连接</span>
+          取消
         </button>
-
         <button
-          @click="saveConfig"
-          :disabled="saving || !hasChanges"
+          @click="saveProfile"
+          :disabled="saving || !form.name"
           class="px-4 py-2 bg-white text-black rounded-lg hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           <span v-if="saving">保存中...</span>
-          <span v-else>保存更改</span>
+          <span v-else>保存</span>
         </button>
       </div>
     </div>
 
-    <!-- Test Result -->
+    <!-- Global message -->
     <div
-      v-if="testResult"
+      v-if="globalMessage"
       :class="[
         'p-4 rounded-lg',
-        testResult.success
+        globalMessage.success
           ? 'bg-emerald-900/30 border border-emerald-700 text-emerald-300'
           : 'bg-red-900/30 border border-red-700 text-red-300'
       ]"
     >
-      <div class="flex items-center">
-        <svg v-if="testResult.success" class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-        </svg>
-        <svg v-else class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-        <span>{{ testResult.message }}</span>
-        <span v-if="testResult.latency_ms" class="ml-2 text-sm opacity-75">
-          ({{ testResult.latency_ms.toFixed(0) }}ms)
-        </span>
-      </div>
+      {{ globalMessage.text }}
     </div>
 
     <!-- Info Box -->
     <div class="bg-zinc-800/50 border border-zinc-700 rounded-lg p-4">
-      <h3 class="text-zinc-400 font-medium mb-2">关于 LLM 配置</h3>
-      <ul class="text-zinc-400 text-sm space-y-1">
-        <li>• API 密钥使用 AES-256-GCM 加密存储</li>
-        <li>• 配置更改立即生效（热重载）</li>
-        <li>• 环境变量优先于数据库配置</li>
-        <li>• 支持 OpenAI 兼容 API 的服务商</li>
-      </ul>
-
-      <h4 class="text-zinc-400 font-medium mt-4 mb-2">常用服务商配置</h4>
+      <h3 class="text-zinc-400 font-medium mb-2">常用服务商配置参考</h3>
       <div class="text-zinc-400 text-sm space-y-2">
         <div class="bg-zinc-800/50 rounded p-2">
-          <span class="text-zinc-300">Moonshot (Kimi) 中国区</span>
+          <span class="text-zinc-300">问问 AI</span>
+          <div class="text-xs mt-1">
+            Base URL: <code class="text-emerald-400">https://api.wenwen-ai.com/v1</code>
+          </div>
+        </div>
+        <div class="bg-zinc-800/50 rounded p-2">
+          <span class="text-zinc-300">Moonshot (Kimi)</span>
           <div class="text-xs mt-1">
             Base URL: <code class="text-emerald-400">https://api.moonshot.cn/v1</code><br>
             模型: moonshot-v1-8k / moonshot-v1-32k / moonshot-v1-128k
@@ -209,29 +281,24 @@
             模型: qwen-max / qwen-plus / qwen-turbo
           </div>
         </div>
-        <div class="bg-zinc-800/50 rounded p-2">
-          <span class="text-zinc-300">MiniMax</span>
-          <div class="text-xs mt-1">
-            Base URL: <code class="text-emerald-400">https://api.minimaxi.com/v1</code><br>
-            模型: abab6.5s-chat / abab5.5-chat
-          </div>
-        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 
 const { apiRequest } = useAdminAuth()
 
-interface LlmConfig {
-  openai_api_key: string | null
-  openai_base_url: string | null
-  openai_model: string
-  configured: boolean
+interface LlmProfile {
+  id: string
+  name: string
+  base_url: string
+  model: string
+  has_api_key: boolean
+  is_active: boolean
 }
 
 interface TestResult {
@@ -240,117 +307,164 @@ interface TestResult {
   latency_ms?: number
 }
 
-const config = ref<LlmConfig>({
-  openai_api_key: null,
-  openai_base_url: null,
-  openai_model: 'gpt-4',
-  configured: false,
-})
+const profiles = ref<LlmProfile[]>([])
+const editing = ref(false)
+const isNew = ref(false)
+const saving = ref(false)
+const showApiKey = ref(false)
+const testingId = ref<string | null>(null)
+const activatingId = ref<string | null>(null)
+const testResults = reactive<Record<string, TestResult>>({})
+const globalMessage = ref<{ success: boolean; text: string } | null>(null)
 
 const form = ref({
-  openai_api_key: '',
-  openai_base_url: '',
-  openai_model: 'gpt-4',
+  id: '',
+  name: '',
+  api_key: '',
+  base_url: '',
+  model: 'gpt-4',
 })
 
-const showApiKey = ref(false)
-const saving = ref(false)
-const testing = ref(false)
-const testResult = ref<TestResult | null>(null)
+// Currently editing profile ID (for PUT vs POST)
+const editingProfileId = ref<string | null>(null)
 
-const hasChanges = computed(() => {
-  return (
-    form.value.openai_api_key !== '' ||
-    form.value.openai_base_url !== (config.value.openai_base_url || '') ||
-    form.value.openai_model !== config.value.openai_model
-  )
-})
-
-async function loadConfig() {
+async function loadProfiles() {
   try {
-    const data = await apiRequest<LlmConfig>('/config/llm')
-    config.value = data
-    form.value.openai_model = data.openai_model || 'gpt-4'
-    form.value.openai_base_url = data.openai_base_url || ''
+    profiles.value = await apiRequest<LlmProfile[]>('/config/llm/profiles')
   } catch (error) {
-    console.error('Failed to load config:', error)
+    console.error('Failed to load profiles:', error)
   }
 }
 
-async function saveConfig() {
+function startCreate() {
+  editing.value = true
+  isNew.value = true
+  editingProfileId.value = null
+  form.value = { id: '', name: '', api_key: '', base_url: '', model: 'gpt-4' }
+  showApiKey.value = false
+}
+
+function startEdit(profile: LlmProfile) {
+  editing.value = true
+  isNew.value = false
+  editingProfileId.value = profile.id
+  form.value = {
+    id: profile.id,
+    name: profile.name,
+    api_key: '',
+    base_url: profile.base_url,
+    model: profile.model,
+  }
+  showApiKey.value = false
+}
+
+function cancelEdit() {
+  editing.value = false
+  editingProfileId.value = null
+}
+
+async function saveProfile() {
   saving.value = true
-  testResult.value = null
+  globalMessage.value = null
 
   try {
-    // Save API key if provided
-    if (form.value.openai_api_key) {
-      await apiRequest('/config/llm/openai_api_key', {
-        method: 'PUT',
-        body: JSON.stringify({
-          value: form.value.openai_api_key,
-          encrypted: true,
-        }),
+    const payload: Record<string, unknown> = {
+      name: form.value.name,
+      base_url: form.value.base_url,
+      model: form.value.model,
+    }
+
+    if (form.value.api_key) {
+      payload.api_key = form.value.api_key
+    }
+
+    if (isNew.value) {
+      payload.id = form.value.id
+      await apiRequest('/config/llm/profiles', {
+        method: 'POST',
+        body: JSON.stringify(payload),
       })
-    }
-
-    // Save base URL
-    if (form.value.openai_base_url) {
-      await apiRequest('/config/llm/openai_base_url', {
+      globalMessage.value = { success: true, text: '方案创建成功' }
+    } else {
+      await apiRequest(`/config/llm/profiles/${editingProfileId.value}`, {
         method: 'PUT',
-        body: JSON.stringify({
-          value: form.value.openai_base_url,
-          encrypted: false,
-        }),
+        body: JSON.stringify(payload),
       })
+      globalMessage.value = { success: true, text: '方案保存成功' }
     }
 
-    // Save model
-    await apiRequest('/config/llm/openai_model', {
-      method: 'PUT',
-      body: JSON.stringify({
-        value: form.value.openai_model,
-        encrypted: false,
-      }),
-    })
-
-    // Reload config
-    await loadConfig()
-    form.value.openai_api_key = ''
-
-    testResult.value = {
-      success: true,
-      message: 'Configuration saved successfully',
-    }
+    editing.value = false
+    editingProfileId.value = null
+    await loadProfiles()
   } catch (error) {
-    testResult.value = {
+    globalMessage.value = {
       success: false,
-      message: error instanceof Error ? error.message : 'Failed to save configuration',
+      text: error instanceof Error ? error.message : '保存失败',
     }
   } finally {
     saving.value = false
   }
 }
 
-async function testConnection() {
-  testing.value = true
-  testResult.value = null
+async function testProfile(profileId: string) {
+  testingId.value = profileId
+  delete testResults[profileId]
 
   try {
-    const result = await apiRequest<TestResult>('/config/test/llm', {
+    const result = await apiRequest<TestResult>(`/config/test/llm/${profileId}`, {
       method: 'POST',
     })
-    testResult.value = result
+    testResults[profileId] = result
   } catch (error) {
-    testResult.value = {
+    testResults[profileId] = {
       success: false,
-      message: error instanceof Error ? error.message : 'Test failed',
+      message: error instanceof Error ? error.message : '测试失败',
     }
   } finally {
-    testing.value = false
+    testingId.value = null
+  }
+}
+
+async function activateProfile(profileId: string) {
+  activatingId.value = profileId
+  globalMessage.value = null
+
+  try {
+    await apiRequest(`/config/llm/profiles/${profileId}/activate`, {
+      method: 'POST',
+    })
+    globalMessage.value = { success: true, text: '已切换激活方案' }
+    await loadProfiles()
+  } catch (error) {
+    globalMessage.value = {
+      success: false,
+      text: error instanceof Error ? error.message : '激活失败',
+    }
+  } finally {
+    activatingId.value = null
+  }
+}
+
+async function deleteProfile(profileId: string, name: string) {
+  if (!confirm(`确定删除方案「${name}」？此操作不可撤销。`)) return
+
+  globalMessage.value = null
+
+  try {
+    await apiRequest(`/config/llm/profiles/${profileId}`, {
+      method: 'DELETE',
+    })
+    globalMessage.value = { success: true, text: `已删除方案「${name}」` }
+    await loadProfiles()
+  } catch (error) {
+    globalMessage.value = {
+      success: false,
+      text: error instanceof Error ? error.message : '删除失败',
+    }
   }
 }
 
 onMounted(() => {
-  loadConfig()
+  loadProfiles()
 })
 </script>
