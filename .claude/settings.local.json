@@ -96,7 +96,8 @@
       "Bash(rsync:*)",
       "Bash(/Users/bowen/workspace/claude/bw-work/backend/.venv/bin/pip show:*)",
       "Bash(ssh-add:*)",
-      "WebFetch(domain:118.89.16.95)"
+      "WebFetch(domain:118.89.16.95)",
+      "Bash(git checkout:*)"
     ]
   }
 }
