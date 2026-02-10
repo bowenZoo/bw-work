@@ -964,6 +964,8 @@ Response:
 - US-29: 作为用户，我希望策划文档的结构能随讨论深入而演化，而不是被初始规划限死
 - US-30: 作为用户，我希望注入意见后，系统能智能判断影响范围，必要时回溯修订已完成的章节
 - US-31: 作为用户，我希望文档结构变更时前端能实时更新，不需要刷新页面
+- US-32: 作为用户，我希望观众干预后由主策划先统一思考消化，而不是直接让其他 agent 接话
+- US-33: 作为用户，我希望讨论结束前主策划对整体策划案做一次全面审视，确认是否真的讨论完成
 
 #### 功能点
 
@@ -979,6 +981,8 @@ Response:
 | F-55 | 干预影响评估 | P0 | 观众消息注入后，主策划执行影响评估环节 |
 | F-56 | 章节回溯修订 | P1 | 已完成章节可标记回 pending，保留内容允许增量修订 |
 | F-57 | 文档变更广播 | P0 | DocPlan 变更后实时广播给前端 |
+| F-58 | 干预后主策划优先消化 | P0 | 观众消息注入后，主策划先独立消化评估，再恢复其他 agent 讨论 |
+| F-59 | 讨论完成前整体审视 | P0 | 所有章节完成后，主策划对全部策划案做整体审视，确认是否真正完成 |
 
 #### 详细设计
 
@@ -1133,45 +1137,57 @@ add_file: filename="数值平衡.md", title="数值平衡设计", sections=[{id:
   └─ 广播 doc_plan 事件 + section_update 事件
 ```
 
-##### 3. 观众干预后的回溯审视
+##### 3. 观众干预后的回溯审视（主策划优先消化）
 
 **现状分析**：
 
-当前 `_inject_user_messages` 仅将消息记录到 memory 并广播，然后在下一轮正常讨论中作为上下文使用。不存在"影响评估"环节，也无法回溯已完成章节。
+当前 `_inject_user_messages` 仅将消息记录到 memory 并广播，然后在下一轮正常讨论中作为上下文使用。不存在"影响评估"环节，也无法回溯已完成章节。更关键的是，**干预恢复后直接让所有 agent 正常讨论，没有让主策划先统一思考消化**。
 
 **改造方案**：
 
-在 `_inject_user_messages` 之后、下一轮正常讨论之前，插入一个"影响评估"环节。
+在 `_inject_user_messages` 之后、其他 agent 恢复讨论之前，插入**主策划专属消化步骤**。主策划先独立消化观众意见、评估影响范围、规划处理方案，然后再恢复其他 agent 的正常讨论。
 
-**影响评估流程**：
+**核心原则**：观众干预后，必须由主策划先统一思考，而非直接让其他 agent 接话。
+
+**主策划消化 + 影响评估流程**：
 
 ```
 观众消息注入
   │
   ├─ _inject_user_messages(injected)          # 已有
   │
-  └─ [新增] _assess_intervention_impact(injected)
+  └─ [新增] _lead_planner_digest_intervention(injected)
       │
-      ├─ 调用 lead_planner 评估影响范围
-      │   输入：用户消息 + 当前 DocPlan + 当前章节内容 + 已完成章节列表
+      ├─ Step 1: 主策划消化（Digest）
+      │   ├─ 调用 lead_planner 消化观众意见
+      │   │   输入：用户消息 + 当前讨论上下文 + 当前章节 + 已讨论进度
+      │   │   输出：消化总结（包含观点理解、关键诉求提取、与当前讨论的关联分析）
+      │   ├─ 广播 lead_planner_digest 事件（让前端展示主策划的思考过程）
+      │   └─ 将消化总结写入 memory（后续 agent 可参考）
       │
-      ├─ 解析评估结果
-      │   ├─ CURRENT_ONLY  → 仅在当前章节处理，无需回溯
-      │   ├─ REOPEN:[s1,s3] → 需要重开指定已完成章节
-      │   └─ NEW_TOPIC      → 需要新增议题和/或章节
+      ├─ Step 2: 影响评估（Assessment）
+      │   ├─ 调用 lead_planner 评估影响范围
+      │   │   输入：消化总结 + 当前 DocPlan + 当前章节内容 + 已完成章节列表
+      │   ├─ 解析评估结果
+      │   │   ├─ CURRENT_ONLY  → 仅在当前章节处理，无需回溯
+      │   │   ├─ REOPEN:[s1,s3] → 需要重开指定已完成章节
+      │   │   └─ NEW_TOPIC      → 需要新增议题和/或章节
+      │   └─ 广播 intervention_assessment 事件
       │
-      ├─ 执行回溯操作（如需要）
-      │   ├─ section.status = "pending"（保留已有内容）
-      │   ├─ 更新 DocPlan.current_section_id（可选：优先回溯）
-      │   └─ 广播 section_reopened 事件
+      ├─ Step 3: 执行评估决策
+      │   ├─ 执行回溯操作（如需要）
+      │   │   ├─ section.status = "pending"（保留已有内容）
+      │   │   ├─ 更新 DocPlan.current_section_id（可选：优先回溯）
+      │   │   └─ 广播 section_reopened 事件
+      │   ├─ 执行新增操作（如需要）
+      │   │   ├─ 新增 Agenda item
+      │   │   ├─ 新增 DocPlan section
+      │   │   └─ DocWriter 追加 section marker
+      │   └─ 广播处理方案给前端
       │
-      ├─ 执行新增操作（如需要）
-      │   ├─ 新增 Agenda item
-      │   ├─ 新增 DocPlan section
-      │   └─ DocWriter 追加 section marker
-      │
-      └─ 广播 intervention_assessment 事件
-          内容：评估结论、受影响章节、处理方案
+      └─ Step 4: 恢复讨论
+          ├─ 主策划输出下一步讨论引导（将观众意见融入讨论方向）
+          └─ 其他 agent 基于主策划的引导继续正常讨论
 ```
 
 **影响评估 Prompt**：
@@ -1210,6 +1226,100 @@ action_plan:
 - DocWriter 的 `update_section` 已支持增量更新（"在其基础上增补和完善，不要推翻已有结论"），天然适配回溯修订
 - 回溯的章节在讨论队列中优先级低于当前章节（先完成当前，再回溯修订），除非用户明确要求立即回溯
 - 每次回溯最多重开 3 个章节，避免过度回溯导致讨论失控
+
+##### 4. 讨论完成前的整体审视
+
+**现状分析**：
+
+当前 `run_document_centric` 在所有章节的 `status` 变为 `completed` 后直接结束讨论，没有任何最终审查环节。这可能导致：
+- 各章节虽然单独完善，但跨章节存在矛盾或不一致
+- 讨论过程中发现的新议题未被处理就结束了
+- 观众干预引发的修改与其他章节不协调
+- 缺少一个"全局视角"来判断策划案是否真正完整
+
+**改造方案**：
+
+在所有章节完成后、讨论正式结束前，插入**主策划整体审视环节**。
+
+**整体审视流程**：
+
+```
+所有章节 completed
+  │
+  └─ [新增] _lead_planner_holistic_review(doc_plan)
+      │
+      ├─ Step 1: 全局审视
+      │   ├─ 调用 lead_planner 整体审视
+      │   │   输入：所有文件内容 + DocPlan + Agenda(含未完成项) + 讨论历史摘要
+      │   │   输出：审视报告
+      │   └─ 广播 holistic_review 事件（前端展示审视过程）
+      │
+      ├─ Step 2: 解析审视结论
+      │   ├─ APPROVED → 讨论真正完成，进入结束流程
+      │   ├─ NEEDS_REVISION → 需要修订部分章节
+      │   │   ├─ 指明需修订的章节及原因
+      │   │   ├─ reopen 指定章节（status → pending）
+      │   │   └─ 返回讨论主循环继续处理
+      │   └─ NEEDS_NEW_TOPIC → 发现遗漏议题
+      │       ├─ 新增 Agenda item + DocPlan section
+      │       └─ 返回讨论主循环继续处理
+      │
+      └─ Step 3: 输出最终总结（仅 APPROVED 时）
+          ├─ 生成跨章节一致性确认
+          ├─ 标记所有 Agenda items 为 completed
+          └─ 广播 discussion_completed 事件
+```
+
+**审视 Prompt**：
+
+```python
+# lead_planner.py 新增方法
+class LeadPlanner:
+    def create_holistic_review_prompt(
+        self,
+        all_file_contents: list[dict],      # [{filename, content}]
+        doc_plan_summary: str,
+        pending_agenda_items: list[str],     # 未完成的议题
+        discussion_summary: str,             # 讨论过程摘要
+    ) -> str:
+        """创建整体审视 prompt。
+
+        审视维度：
+        1. 跨章节一致性：各章节之间是否存在矛盾或不协调
+        2. 完整性检查：是否覆盖了所有议题，有无遗漏的关键设计点
+        3. 观众意见回应：是否充分回应了观众的所有干预意见
+        4. 整体质量：策划案整体是否达到可交付标准
+        """
+```
+
+**审视结果格式**：
+
+```markdown
+### 整体审视报告
+```holistic_review
+conclusion: APPROVED | NEEDS_REVISION | NEEDS_NEW_TOPIC
+review_dimensions:
+  consistency: "各章节数值体系一致，战斗公式与经济系统参数匹配"
+  completeness: "所有12个议题已完成讨论，无遗漏"
+  audience_response: "已回应观众提出的PvP平衡问题"
+  quality: "策划案内容详实，可作为开发参考"
+revision_needed:
+  - section: s2
+    reason: "战斗系统中的数值与第5章经济系统的产出不匹配，需要统一"
+  - section: s7
+    reason: "缺少与新增PvP模式的交互说明"
+new_topics:
+  - title: "跨系统数值校验"
+    description: "对战斗、经济、成长三个系统的数值进行交叉校验"
+```（结束标记）
+```
+
+**审视约束**：
+
+- 整体审视最多执行 2 次（防止无限循环）
+- 第 2 次审视如仍为 NEEDS_REVISION，强制 APPROVED 并在最终总结中注明待改进项
+- 审视过程中不执行文档结构变更（仅 reopen 已有章节或新增议题）
+- 审视报告自动保存到讨论记录中
 
 #### 数据模型变更
 
@@ -1322,6 +1432,35 @@ class DocPlan:
     action_plan: string[]
   }
 }
+
+// [新增] 主策划消化观众干预（F-58）
+{
+  type: "lead_planner_digest",
+  data: {
+    discussion_id: string,
+    digest_summary: string,        // 主策划的消化总结
+    key_points: string[],          // 提取的关键诉求
+    guidance: string               // 后续讨论引导方向
+  }
+}
+
+// [新增] 整体审视报告（F-59）
+{
+  type: "holistic_review",
+  data: {
+    discussion_id: string,
+    review_round: number,          // 第几次审视（1 或 2）
+    conclusion: "APPROVED" | "NEEDS_REVISION" | "NEEDS_NEW_TOPIC",
+    review_dimensions: {
+      consistency: string,
+      completeness: string,
+      audience_response: string,
+      quality: string
+    },
+    revisions_needed: Array<{section_id: string, reason: string}>,
+    new_topics: Array<{title: string, description: string}>
+  }
+}
 ```
 
 #### API 接口变更
@@ -1358,9 +1497,9 @@ Response: { "status": "success", "doc_plan": DocPlan }
 |------|----------|------|
 | `backend/src/models/agenda.py` | 扩展 | AgendaItem 新增 `related_sections`、`priority`、`source` |
 | `backend/src/models/doc_plan.py` | 扩展 | SectionPlan 新增字段; DocPlan 新增 `split_section`/`merge_sections`/`add_section`/`add_file`/`reopen_section` |
-| `backend/src/agents/lead_planner.py` | 扩展 | 新增 `create_intervention_assessment_prompt`; 修改 `create_section_summary_prompt` 加入议题和结构调整指令格式 |
+| `backend/src/agents/lead_planner.py` | 扩展 | 新增 `create_intervention_digest_prompt`、`create_intervention_assessment_prompt`、`create_holistic_review_prompt`; 修改 `create_section_summary_prompt` 加入议题和结构调整指令格式 |
 | `backend/src/agents/doc_writer.py` | 扩展 | 新增 `add_section_marker`/`split_section_content`/`merge_section_content`/`create_new_file` |
-| `backend/src/crew/discussion_crew.py` | 核心改动 | `run_document_centric` 主循环插入议题生成、议题管理、结构变更处理、干预评估步骤 |
+| `backend/src/crew/discussion_crew.py` | 核心改动 | `run_document_centric` 主循环插入议题生成、议题管理、结构变更处理、干预消化评估、整体审视步骤 |
 | `backend/src/api/routes/intervention.py` | 扩展 | 新增议题优先级调整、手动文档重组接口 |
 | `backend/src/api/websocket/events.py` | 扩展 | 新增 `doc_restructure`、`section_reopened`、`intervention_assessment` 事件 |
 | `frontend/src/composables/useDiscussion.ts` | 扩展 | 处理新 WebSocket 事件，更新本地 docPlan/agenda 状态 |
@@ -1409,12 +1548,47 @@ def run_document_centric(self, topic, max_rounds, attachment, auto_pause_interva
         if injected:
             self._inject_user_messages(injected)
 
-            # [新增] 干预影响评估
-            assessment = self._assess_intervention_impact(injected, doc_plan, section)
+            # [新增] 主策划优先消化 + 影响评估（F-58）
+            # 关键：主策划先独立消化，再恢复其他 agent 讨论
+            digest = self._lead_planner_digest_intervention(injected, section)
+            self._broadcast_event("lead_planner_digest", digest)
+
+            assessment = self._assess_intervention_impact(digest, doc_plan, section)
             self._execute_assessment_actions(assessment, doc_plan)
+
+            # 主策划输出讨论引导，融入观众意见
+            self._lead_planner_post_intervention_guidance(digest, assessment)
 
         # 广播更新后的状态
         self._broadcast_doc_plan_event(doc_plan)
+
+    # [新增] Phase Final: 讨论完成前整体审视（F-59）
+    holistic_review_count = 0
+    max_holistic_reviews = 2
+
+    while holistic_review_count < max_holistic_reviews:
+        review = self._lead_planner_holistic_review(doc_plan, agenda)
+        self._broadcast_event("holistic_review", review)
+        holistic_review_count += 1
+
+        if review.conclusion == "APPROVED":
+            break
+        elif review.conclusion in ("NEEDS_REVISION", "NEEDS_NEW_TOPIC"):
+            self._execute_review_actions(review, doc_plan, agenda)
+            # 回到讨论主循环处理新增/重开的章节
+            for round_num in range(round_num + 1, max_rounds + 1):
+                file_plan, section = self._pick_next_section(doc_plan)
+                if file_plan is None:
+                    break
+                # ... 正常讨论流程 ...
+        else:
+            break
+
+    if holistic_review_count >= max_holistic_reviews and review.conclusion != "APPROVED":
+        # 强制结束，注明待改进项
+        self._force_complete_with_notes(review)
+
+    self._finalize_discussion(doc_plan, agenda)
 ```
 
 #### 验收标准
@@ -1430,6 +1604,11 @@ def run_document_centric(self, topic, max_rounds, attachment, auto_pause_interva
 - [ ] AC-48: 影响评估判定需要回溯时，已完成章节正确标记回 pending
 - [ ] AC-49: 回溯修订的章节保留已有内容，DocWriter 在已有内容基础上增量更新
 - [ ] AC-50: 每次回溯最多重开 3 个章节，超出时提示用户确认
+- [ ] AC-51: 观众干预后，主策划先独立消化评估，产出消化总结后再恢复其他 agent 讨论
+- [ ] AC-52: 主策划消化过程通过 WebSocket 广播，前端展示主策划的思考过程
+- [ ] AC-53: 所有章节完成后，主策划执行整体审视，检查跨章节一致性和完整性
+- [ ] AC-54: 整体审视判定 NEEDS_REVISION 时，正确 reopen 相关章节并继续讨论
+- [ ] AC-55: 整体审视最多 2 次，第 2 次仍有问题则强制结束并注明待改进项
 
 #### 暂不实现
 
@@ -1628,6 +1807,8 @@ data/
 - 干预影响评估 (F-55)
 - 章节回溯修订 (F-56)
 - 文档变更广播 (F-57)
+- 干预后主策划优先消化 (F-58)
+- 讨论完成前整体审视 (F-59)
 
 ### Phase 7: 高级功能
 - 人工介入节点 (F-11)
@@ -1659,6 +1840,8 @@ data/
 | 文档重组 | 讨论过程中对 DocPlan 结构的动态调整（拆分/合并/新增） |
 | 干预回溯 | 观众注入消息后，评估影响范围并回溯修订已完成章节 |
 | 影响评估 | 主策划对观众干预的影响范围进行分析的环节 |
+| 干预消化 | 观众干预后主策划先独立思考消化，提取关键诉求并规划处理方案 |
+| 整体审视 | 所有章节完成后主策划对全部策划案的全局审视，检查一致性和完整性 |
 | section marker | DocWriter 在 .md 文件中用 `<!-- section:sN -->` 标记的章节边界 |
 
 ### B. 文档版本历史
@@ -1670,3 +1853,4 @@ data/
 | 1.2 | 2026-02-05 | 新增图像生成系统模块 (2.7)，更新里程碑规划 |
 | 1.3 | 2026-02-05 | 新增项目级策划讨论模块 (2.8)，支持 GDD 上传、批量模块讨论、策划案生成 |
 | 1.4 | 2026-02-10 | 新增讨论流程动态化改造模块 (2.9)，议题驱动、文档动态重组、干预回溯审视 |
+| 1.5 | 2026-02-10 | 补充干预后主策划优先消化机制 (F-58)、讨论完成前整体审视 (F-59)，新增 AC-51~AC-55 |
