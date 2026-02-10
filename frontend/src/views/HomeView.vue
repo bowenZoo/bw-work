@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { Plus, Search, X, Paperclip, PlayCircle, MessageSquare, FileText, Eye } from 'lucide-vue-next';
+import { Plus, Search, X, Paperclip, MessageSquare, FileText } from 'lucide-vue-next';
 import { getDiscussionHistory } from '@/api/discussion';
 import { useLobby } from '@/composables/useLobby';
 import { AgentConfigEditor } from '@/components/discussion';
@@ -12,7 +12,6 @@ const router = useRouter();
 // Lobby state (active discussions via WebSocket)
 const {
   activeDiscussions,
-  viewerCount,
   createDiscussion: lobbyCreateDiscussion,
 } = useLobby();
 
@@ -26,33 +25,83 @@ const PAGE_SIZE = 20;
 
 // Search
 const searchQuery = ref('');
-const filteredWorkspaces = computed(() => {
+
+// Unified card item
+interface CardItem {
+  id: string;
+  topic: string;
+  status: string | null;
+  message_count: number;
+  doc_count: number;
+  rounds: number;
+  created_at: string;
+  isLive: boolean;
+}
+
+// Merge active discussions + history into unified list
+const allCards = computed<CardItem[]>(() => {
+  const activeIds = new Set(activeDiscussions.value.map(d => d.id));
+  const cards: CardItem[] = [];
+
+  // Add active discussions first (they have live status)
+  for (const d of activeDiscussions.value) {
+    cards.push({
+      id: d.id,
+      topic: d.topic,
+      status: d.status,
+      message_count: 0,
+      doc_count: 0,
+      rounds: d.rounds,
+      created_at: d.created_at,
+      isLive: true,
+    });
+  }
+
+  // Add history items that aren't already in active list
+  for (const w of workspaces.value) {
+    if (!activeIds.has(w.id)) {
+      cards.push({
+        id: w.id,
+        topic: w.topic,
+        status: w.status,
+        message_count: w.message_count,
+        doc_count: w.doc_count,
+        rounds: 0,
+        created_at: w.created_at,
+        isLive: false,
+      });
+    }
+  }
+
+  return cards;
+});
+
+// Filter by search
+const filteredCards = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
-  if (!q) return workspaces.value;
-  return workspaces.value.filter(
-    (w) =>
-      w.topic?.toLowerCase().includes(q) ||
-      w.summary?.toLowerCase().includes(q)
-  );
+  if (!q) return allCards.value;
+  return allCards.value.filter(c => c.topic?.toLowerCase().includes(q));
 });
 
 // Date grouping
 interface DateGroup {
   label: string;
-  items: DiscussionSummary[];
+  items: CardItem[];
 }
 
-const groupedWorkspaces = computed<DateGroup[]>(() => {
-  const items = filteredWorkspaces.value;
+const groupedCards = computed<DateGroup[]>(() => {
+  const items = filteredCards.value;
   if (items.length === 0) return [];
 
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const yesterdayStart = todayStart - 86400000;
+  const weekStart = todayStart - 6 * 86400000;
 
-  const today: DiscussionSummary[] = [];
-  const yesterday: DiscussionSummary[] = [];
-  const earlier: DiscussionSummary[] = [];
+  const today: CardItem[] = [];
+  const yesterday: CardItem[] = [];
+  const thisWeek: CardItem[] = [];
+  const earlier: CardItem[] = [];
 
   for (const item of items) {
     const ts = new Date(item.created_at).getTime();
@@ -60,6 +109,8 @@ const groupedWorkspaces = computed<DateGroup[]>(() => {
       today.push(item);
     } else if (ts >= yesterdayStart) {
       yesterday.push(item);
+    } else if (ts >= weekStart) {
+      thisWeek.push(item);
     } else {
       earlier.push(item);
     }
@@ -68,9 +119,14 @@ const groupedWorkspaces = computed<DateGroup[]>(() => {
   const groups: DateGroup[] = [];
   if (today.length) groups.push({ label: '今天', items: today });
   if (yesterday.length) groups.push({ label: '昨天', items: yesterday });
+  if (thisWeek.length) groups.push({ label: '本周', items: thisWeek });
   if (earlier.length) groups.push({ label: '更早', items: earlier });
   return groups;
 });
+
+const isEmpty = computed(
+  () => !isLoadingList.value && allCards.value.length === 0
+);
 
 // New discussion dialog
 const showNewDialog = ref(false);
@@ -84,13 +140,6 @@ const isCreating = ref(false);
 // Agent config
 const selectedAgents = ref<string[]>([]);
 const agentConfigs = ref<Record<string, Partial<AgentConfig>>>({});
-
-// Has active discussions?
-const hasActive = computed(() => activeDiscussions.value.length > 0);
-
-const isEmpty = computed(
-  () => !isLoadingList.value && filteredWorkspaces.value.length === 0 && !hasActive.value
-);
 
 // Load workspace list
 async function loadWorkspaces(reset = false) {
@@ -126,12 +175,8 @@ function handleScroll(event: Event) {
 }
 
 // Navigation
-function viewDiscussion(id: string) {
-  router.push({ name: 'discussion-by-id', params: { id } });
-}
-
-function viewWorkspace(workspace: DiscussionSummary) {
-  router.push({ name: 'discussion-by-id', params: { id: workspace.id } });
+function viewCard(card: CardItem) {
+  router.push({ name: 'discussion-by-id', params: { id: card.id } });
 }
 
 // New discussion
@@ -155,12 +200,10 @@ async function createDiscussion() {
 
   isCreating.value = true;
   try {
-    // Prepare attachment
     const attachment = attachmentContent.value
       ? { filename: attachmentFile.value?.name || 'attachment.md', content: attachmentContent.value }
       : null;
 
-    // Filter out empty config overrides
     const cleanConfigs: Record<string, Partial<AgentConfig>> = {};
     for (const [role, config] of Object.entries(agentConfigs.value)) {
       const nonEmpty: Partial<AgentConfig> = {};
@@ -184,8 +227,6 @@ async function createDiscussion() {
     );
 
     showNewDialog.value = false;
-
-    // Navigate to the new discussion
     router.push({ name: 'discussion-by-id', params: { id: response.id } });
   } catch (e) {
     console.error('Failed to create discussion:', e);
@@ -233,7 +274,7 @@ function removeAttachment() {
   if (fileInputRef.value) fileInputRef.value.value = '';
 }
 
-// Format date helper
+// Helpers
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
   const now = new Date();
@@ -254,6 +295,7 @@ function getStatusLabel(status: string | null): string {
   switch (status) {
     case 'queued': return '排队中';
     case 'running': return '进行中';
+    case 'paused': return '已暂停';
     case 'failed': return '已中断';
     default: return '已完成';
   }
@@ -263,9 +305,14 @@ function getStatusClass(status: string | null): string {
   switch (status) {
     case 'queued': return 'badge-queued';
     case 'running': return 'badge-running';
+    case 'paused': return 'badge-paused';
     case 'failed': return 'badge-failed';
     default: return 'badge-completed';
   }
+}
+
+function isActiveStatus(status: string | null): boolean {
+  return status === 'running' || status === 'queued' || status === 'paused';
 }
 
 // Lifecycle
@@ -296,58 +343,13 @@ onMounted(() => {
     <!-- Content -->
     <main class="home-content">
 
-      <!-- Active Discussions Section -->
-      <section v-if="hasActive" class="active-section">
-        <h4 class="section-label">
-          <span class="pulse-dot" />
-          进行中的讨论
-        </h4>
-        <div class="active-cards">
-          <div
-            v-for="disc in activeDiscussions"
-            :key="disc.id"
-            class="meeting-card meeting-running"
-            @click="viewDiscussion(disc.id)"
-          >
-            <div class="meeting-indicator">
-              <span :class="disc.status === 'queued' ? 'queued-dot' : 'pulse-dot'" />
-              <span class="meeting-label">{{ disc.status === 'queued' ? '排队中' : disc.status === 'paused' ? '已暂停' : '进行中' }}</span>
-            </div>
-            <h3 class="meeting-topic">"{{ disc.topic }}"</h3>
-            <div class="meeting-meta">
-              <span>第 {{ disc.rounds }} 轮</span>
-              <span v-if="disc.agents.length > 0" class="meta-sep">·</span>
-              <span v-if="disc.agents.length > 0">{{ disc.agents.length }} 位参与者</span>
-            </div>
-            <button class="join-btn" @click.stop="viewDiscussion(disc.id)">
-              <PlayCircle class="icon-sm" />
-              加入会议
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <!-- Idle state (no active discussions) -->
-      <section v-else class="meeting-card-wrapper">
-        <div class="meeting-card meeting-idle">
-          <div class="meeting-idle-text">
-            <MessageSquare class="icon-lg text-weak" />
-            <p class="idle-hint">随时可以发起新的策划讨论</p>
-          </div>
-          <button class="btn-primary" @click="openNewDialog">
-            <Plus class="icon-sm" />
-            发起讨论
-          </button>
-        </div>
-      </section>
-
       <!-- Search bar -->
-      <div v-if="workspaces.length > 0 || searchQuery" class="search-bar">
+      <div v-if="allCards.length > 0 || searchQuery" class="search-bar">
         <Search class="search-icon" />
         <input
           v-model="searchQuery"
           type="text"
-          placeholder="搜索讨论记录..."
+          placeholder="搜索讨论..."
           class="search-input"
         />
         <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
@@ -355,40 +357,63 @@ onMounted(() => {
         </button>
       </div>
 
-      <!-- History list with date groups -->
-      <section v-if="groupedWorkspaces.length > 0" class="history-section">
-        <div v-for="group in groupedWorkspaces" :key="group.label" class="date-group">
+      <!-- Card grid with date groups -->
+      <section v-if="groupedCards.length > 0" class="cards-section">
+        <div v-for="group in groupedCards" :key="group.label" class="date-group">
           <h4 class="date-label">{{ group.label }}</h4>
-          <div class="history-list">
+          <div class="card-grid">
             <div
-              v-for="ws in group.items"
-              :key="ws.id"
-              class="history-card"
-              @click="viewWorkspace(ws)"
+              v-for="card in group.items"
+              :key="card.id"
+              class="card"
+              :class="{ 'card-active': isActiveStatus(card.status) }"
+              @click="viewCard(card)"
             >
-              <h3 class="history-topic">{{ ws.topic }}</h3>
-              <div class="history-meta">
-                <span class="history-badge" :class="getStatusClass(ws.status)">
-                  {{ getStatusLabel(ws.status) }}
+              <!-- Status badge -->
+              <div class="card-status">
+                <span v-if="isActiveStatus(card.status)" class="pulse-dot" :class="{ 'queued-dot': card.status === 'queued' }" />
+                <span class="card-badge" :class="getStatusClass(card.status)">
+                  {{ getStatusLabel(card.status) }}
                 </span>
-                <span class="meta-item">
+                <span class="card-time">{{ formatDate(card.created_at) }}</span>
+              </div>
+
+              <!-- Topic -->
+              <h3 class="card-topic">{{ card.topic }}</h3>
+
+              <!-- Metrics -->
+              <div class="card-metrics">
+                <span v-if="card.isLive && card.rounds > 0" class="metric">
+                  第 {{ card.rounds }} 轮
+                </span>
+                <span v-if="card.message_count > 0" class="metric">
                   <MessageSquare class="icon-xs" />
-                  {{ ws.message_count }} 条消息
+                  {{ card.message_count }}
                 </span>
-                <span v-if="ws.doc_count > 0" class="meta-item">
+                <span v-if="card.doc_count > 0" class="metric">
                   <FileText class="icon-xs" />
-                  {{ ws.doc_count }} 份文档
+                  {{ card.doc_count }}
                 </span>
-                <span class="meta-item meta-time">{{ formatDate(ws.created_at) }}</span>
               </div>
             </div>
           </div>
         </div>
       </section>
 
+      <!-- Empty state -->
+      <section v-if="isEmpty" class="empty-state">
+        <MessageSquare class="icon-xl text-weak" />
+        <p class="empty-title">还没有讨论</p>
+        <p class="empty-desc">发起一个新的策划讨论开始吧</p>
+        <button class="btn-primary" @click="openNewDialog">
+          <Plus class="icon-sm" />
+          发起讨论
+        </button>
+      </section>
+
       <!-- Empty search result -->
-      <section v-if="filteredWorkspaces.length === 0 && searchQuery && !isLoadingList" class="empty-state">
-        <p class="empty-title">没有匹配的讨论记录</p>
+      <section v-if="filteredCards.length === 0 && searchQuery && !isLoadingList" class="empty-state">
+        <p class="empty-title">没有匹配的讨论</p>
         <p class="empty-desc">试试其他关键词</p>
       </section>
 
@@ -408,7 +433,7 @@ onMounted(() => {
       </div>
 
       <!-- Load more hint -->
-      <div v-if="hasMore && !isLoadingList && filteredWorkspaces.length > 0" class="load-more-hint">
+      <div v-if="hasMore && !isLoadingList && filteredCards.length > 0" class="load-more-hint">
         向下滚动加载更多
       </div>
     </main>
@@ -472,7 +497,7 @@ onMounted(() => {
                 </button>
               </div>
 
-              <!-- Agent Configuration (collapsible) -->
+              <!-- Agent Configuration -->
               <div class="agent-config-section">
                 <AgentConfigEditor
                   v-model:agents="selectedAgents"
@@ -504,7 +529,6 @@ onMounted(() => {
 .icon-md { width: 20px; height: 20px; }
 .icon-lg { width: 32px; height: 32px; }
 .icon-xl { width: 48px; height: 48px; }
-.text-muted { color: var(--text-secondary, #9ca3af); }
 .text-weak { color: var(--text-weak, #d1d5db); }
 .text-blue { color: #3b82f6; }
 
@@ -581,174 +605,15 @@ onMounted(() => {
 
 /* ===== Content ===== */
 .home-content {
-  max-width: 720px;
+  max-width: 960px;
   margin: 0 auto;
-  padding: 24px 16px;
-}
-
-/* ===== Active Discussions Section ===== */
-.active-section {
-  margin-bottom: 24px;
-}
-
-.section-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #059669;
-  letter-spacing: 0.3px;
-  margin-bottom: 10px;
-}
-
-.active-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-/* ===== Meeting Room Card ===== */
-.meeting-card-wrapper {
-  margin-bottom: 24px;
-}
-
-.meeting-card {
-  background: white;
-  border-radius: 12px;
-  padding: 24px;
-  transition: box-shadow 0.2s;
-}
-
-/* Running state */
-.meeting-running {
-  border: 2px solid var(--success-color, #10b981);
-  cursor: pointer;
-}
-
-.meeting-running:hover {
-  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.15);
-}
-
-.meeting-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.pulse-dot {
-  width: 8px;
-  height: 8px;
-  background: var(--success-color, #10b981);
-  border-radius: 50%;
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-.queued-dot {
-  width: 8px;
-  height: 8px;
-  background: #0284c7;
-  border-radius: 50%;
-  animation: pulse 2s infinite;
-}
-
-.meeting-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #059669;
-  letter-spacing: 0.3px;
-}
-
-.meeting-topic {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-primary, #111827);
-  margin-bottom: 8px;
-}
-
-.meeting-meta {
-  font-size: 13px;
-  color: var(--text-secondary, #6b7280);
-  margin-bottom: 18px;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 2px;
-}
-
-.meta-sep {
-  margin: 0 6px;
-  color: var(--text-weak, #d1d5db);
-}
-
-.join-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 28px;
-  background: var(--success-color, #10b981);
-  color: white;
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 600;
-  transition: background 0.2s;
-}
-
-.join-btn:hover {
-  background: #059669;
-}
-
-/* Idle state */
-.meeting-idle {
-  border: 2px dashed var(--border-color, #d1d5db);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  padding: 32px 24px;
-}
-
-.meeting-idle-text {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 18px;
-}
-
-.idle-hint {
-  font-size: 14px;
-  color: var(--text-secondary, #9ca3af);
-}
-
-/* ===== Buttons ===== */
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 24px;
-  background: var(--primary-color, #3b82f6);
-  color: white;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  transition: background 0.2s;
-}
-
-.btn-primary:hover {
-  background: #2563eb;
+  padding: 24px 20px;
 }
 
 /* ===== Search ===== */
 .search-bar {
   position: relative;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .search-icon {
@@ -797,17 +662,17 @@ onMounted(() => {
   color: var(--text-primary, #6b7280);
 }
 
-/* ===== History Section ===== */
-.history-section {
+/* ===== Card Grid Section ===== */
+.cards-section {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px;
 }
 
 .date-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .date-label {
@@ -819,45 +684,68 @@ onMounted(() => {
   padding-left: 2px;
 }
 
-.history-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
 }
 
-.history-card {
-  padding: 14px 18px;
+/* ===== Card ===== */
+.card {
   background: white;
   border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 10px;
+  border-radius: 12px;
+  padding: 16px;
   cursor: pointer;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+  display: flex;
+  flex-direction: column;
+  min-height: 120px;
 }
 
-.history-card:hover {
+.card:hover {
   border-color: #d1d5db;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  transform: translateY(-1px);
 }
 
-.history-topic {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary, #111827);
-  margin-bottom: 6px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.card-active {
+  border-color: var(--success-color, #10b981);
+  border-width: 1.5px;
 }
 
-.history-meta {
+.card-active:hover {
+  border-color: #059669;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.12);
+}
+
+/* Card status row */
+.card-status {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: var(--text-secondary, #9ca3af);
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
-.history-badge {
+.pulse-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--success-color, #10b981);
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+  flex-shrink: 0;
+}
+
+.queued-dot {
+  background: #0284c7;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.card-badge {
   padding: 1px 7px;
   border-radius: 4px;
   font-weight: 500;
@@ -875,6 +763,11 @@ onMounted(() => {
 }
 
 .badge-running {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.badge-paused {
   background: #fefce8;
   color: #ca8a04;
 }
@@ -884,33 +777,79 @@ onMounted(() => {
   color: #dc2626;
 }
 
-.meta-item {
+.card-time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-secondary, #b0b7c3);
+}
+
+/* Card topic */
+.card-topic {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #111827);
+  line-height: 1.4;
+  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Card metrics */
+.card-metrics {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-secondary, #9ca3af);
+}
+
+.metric {
   display: inline-flex;
   align-items: center;
   gap: 3px;
 }
 
-.meta-time {
-  margin-left: auto;
-}
-
 /* ===== Empty state ===== */
 .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
   padding: 60px 20px;
+  gap: 8px;
 }
 
 .empty-title {
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary, #374151);
-  margin-bottom: 8px;
 }
 
 .empty-desc {
   font-size: 14px;
   color: var(--text-secondary, #9ca3af);
-  margin-bottom: 24px;
+  margin-bottom: 16px;
+}
+
+/* ===== Buttons ===== */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 24px;
+  background: var(--primary-color, #3b82f6);
+  color: white;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: #2563eb;
 }
 
 /* ===== Loading ===== */
@@ -1190,17 +1129,23 @@ onMounted(() => {
 }
 
 /* ===== Responsive ===== */
-@media (max-width: 640px) {
-  .home-header {
-    padding: 12px 16px;
+@media (max-width: 768px) {
+  .card-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .home-content {
     padding: 16px 12px;
   }
+}
 
-  .meeting-card {
-    padding: 18px;
+@media (max-width: 480px) {
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .home-header {
+    padding: 12px 16px;
   }
 }
 </style>
