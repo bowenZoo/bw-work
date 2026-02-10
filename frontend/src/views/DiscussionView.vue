@@ -203,21 +203,41 @@ const speakingAgentId = computed(() => {
 watch(
   [discussionId, isPlaybackMode],
   async ([newId, isPlayback]) => {
-    if (isPlayback && newId) {
+    if (!newId) return;
+    if (isPlayback) {
       loadPlaybackDiscussion(newId);
+      return;
     }
-    if (!isPlayback && newId) {
-      loadLiveDiscussion(newId);
+
+    // Check password before loading data
+    const verified = JSON.parse(sessionStorage.getItem('verified_discussions') || '{}');
+    if (verified[newId]) {
+      passwordVerified.value = true;
+    } else {
+      // Lightweight request to check if password is needed
+      try {
+        const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
+        const res = await fetch(`${API_BASE_URL}/api/discussions/${newId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.has_password) {
+            needsPassword.value = true;
+            return; // Don't load data, wait for password verification
+          }
+        }
+      } catch {
+        // Don't block on error
+      }
+      passwordVerified.value = true;
     }
+
+    // Password verified or not needed — load data
+    loadLiveDiscussion(newId);
   },
   { immediate: true }
 );
 
 onMounted(async () => {
-  // Check password first
-  if (discussionId.value) {
-    await checkPassword();
-  }
   // Fetch agenda if discussion is loaded
   if (discussionId.value) {
     await fetchAgenda();
@@ -226,40 +246,14 @@ onMounted(async () => {
   loadDiscussionStyles();
 });
 
-// Password verification
-async function checkPassword() {
-  const discId = discussionId.value || (route.params.id as string);
-  if (!discId) return;
-
-  // Check sessionStorage for already-verified
-  const verified = JSON.parse(sessionStorage.getItem('verified_discussions') || '{}');
-  if (verified[discId]) {
-    passwordVerified.value = true;
-    return;
-  }
-
-  // Fetch discussion info to check has_password
-  try {
-    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:18000';
-    const res = await fetch(`${API_BASE_URL}/api/discussions/${discId}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.has_password) {
-        needsPassword.value = true;
-      } else {
-        passwordVerified.value = true;
-      }
-    } else {
-      passwordVerified.value = true; // Don't block on error
-    }
-  } catch {
-    passwordVerified.value = true; // Don't block on error
-  }
-}
-
 function onPasswordVerified() {
   needsPassword.value = false;
   passwordVerified.value = true;
+  // Load discussion data after password verification
+  const id = discussionId.value || (route.params.id as string);
+  if (id) {
+    loadLiveDiscussion(id);
+  }
 }
 
 function onPasswordCancel() {
@@ -372,23 +366,20 @@ async function submitContinue() {
   }
 }
 
-// Open continue popup and fetch current discussion's style
+// Open continue popup and use already-loaded discussion data for style
 function openContinuePopup() {
   showContinuePopup.value = true;
   showPromptEditor.value = false;
-  continueOverrides.value = null;
   overridesModified.value = false;
-  // Try to fetch the current discussion's style so the default matches
-  const discId = discussionId.value || discussion.value?.id;
-  if (discId) {
-    api.get(`/api/discussions/${discId}`).then((res: any) => {
-      const style = res.data?.discussion_style;
-      if (style && discussionStyles.value.some(s => s.id === style)) {
-        continueStyle.value = style;
-        // Also load the overrides for the current style
-        loadOverridesForStyle(style);
-      }
-    }).catch(() => {});
+
+  // Use style from already-loaded discussion data instead of extra API request
+  const currentStyle = (discussion.value as any)?.discussion_style;
+  if (currentStyle && discussionStyles.value.some(s => s.id === currentStyle)) {
+    continueStyle.value = currentStyle;
+  }
+
+  if (continueStyle.value) {
+    loadOverridesForStyle(continueStyle.value);
   }
 }
 

@@ -153,8 +153,11 @@ const collapsedSections = ref<Record<string, boolean>>({});
 const newFocusArea = ref('');
 
 // Password
-const password = ref('123456');
+const password = ref('');
 const showPassword = ref(false);
+
+// Error state
+const createError = ref('');
 
 // Load workspace list
 async function loadWorkspaces(reset = false) {
@@ -204,7 +207,7 @@ function openNewDialog() {
   selectedAgents.value = [];
   agentConfigs.value = {};
   selectedStyle.value = defaultStyleId.value;
-  password.value = '123456';
+  password.value = '';
   showPassword.value = false;
   collapsedSections.value = {};
   newFocusArea.value = '';
@@ -220,6 +223,7 @@ async function createDiscussion() {
   if (!topic) return;
 
   isCreating.value = true;
+  createError.value = '';
   try {
     const attachment = attachmentContent.value
       ? { filename: attachmentFile.value?.name || 'attachment.md', content: attachmentContent.value }
@@ -266,6 +270,7 @@ async function createDiscussion() {
     router.push({ name: 'discussion-by-id', params: { id: response.id } });
   } catch (e) {
     console.error('Failed to create discussion:', e);
+    createError.value = '创建讨论失败，请重试';
   } finally {
     isCreating.value = false;
   }
@@ -286,14 +291,14 @@ function onStyleSelect(styleId: string) {
   selectedStyle.value = styleId;
   const style = discussionStylesFull.value.find(s => s.id === styleId);
   if (style) {
-    customOverrides.value = { ...style.overrides, focus_areas: [...style.overrides.focus_areas] };
+    customOverrides.value = structuredClone(style.overrides);
   }
 }
 
 function resetToPreset() {
   const style = discussionStylesFull.value.find(s => s.id === selectedStyle.value);
   if (style) {
-    customOverrides.value = { ...style.overrides, focus_areas: [...style.overrides.focus_areas] };
+    customOverrides.value = structuredClone(style.overrides);
   }
 }
 
@@ -309,7 +314,7 @@ function removeFocusArea(index: number) {
 
 function addFocusArea() {
   const text = newFocusArea.value.trim();
-  if (text && customOverrides.value) {
+  if (text && customOverrides.value && !customOverrides.value.focus_areas.includes(text)) {
     customOverrides.value.focus_areas.push(text);
     newFocusArea.value = '';
   }
@@ -318,6 +323,7 @@ function addFocusArea() {
 function handleFocusAreaKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter') {
     event.preventDefault();
+    event.stopPropagation();
     addFocusArea();
   }
 }
@@ -402,14 +408,17 @@ async function loadStyles() {
     selectedStyle.value = data.default;
     onStyleSelect(data.default);
   } catch {
-    // Fallback defaults (no overrides available)
-    const fallbackStyles: DiscussionStyleFull[] = [
+    // Fallback defaults (no overrides available) — use independent arrays to avoid shared references
+    discussionStylesFull.value = [
       { id: 'socratic', name: '苏格拉底式', description: '不断追问「为什么」，逼迫每个决策回到第一性原理', overrides: { goal: '', backstory: '', communication_style: '', focus_areas: [] } },
       { id: 'directive', name: '主策划主导制', description: '主策划提出框架，团队挑战补充，主策划有否决权', overrides: { goal: '', backstory: '', communication_style: '', focus_areas: [] } },
       { id: 'debate', name: '辩论制', description: '各策划独立提案，互相质疑辩论，主策划裁决', overrides: { goal: '', backstory: '', communication_style: '', focus_areas: [] } },
     ];
-    discussionStylesFull.value = fallbackStyles;
-    discussionStyles.value = fallbackStyles;
+    discussionStyles.value = [
+      { id: 'socratic', name: '苏格拉底式', description: '不断追问「为什么」，逼迫每个决策回到第一性原理' },
+      { id: 'directive', name: '主策划主导制', description: '主策划提出框架，团队挑战补充，主策划有否决权' },
+      { id: 'debate', name: '辩论制', description: '各策划独立提案，互相质疑辩论，主策划裁决' },
+    ];
   }
 }
 
@@ -541,7 +550,7 @@ onMounted(() => {
     <Teleport to="body">
       <Transition name="modal">
         <div v-if="showNewDialog" class="create-panel-overlay" @click.self="closeNewDialog">
-          <div class="create-panel" @keydown="handleNewDialogKeydown">
+          <div class="create-panel" tabindex="-1" @keydown="handleNewDialogKeydown">
             <!-- Panel Header -->
             <div class="panel-header">
               <h3 class="panel-title">新建讨论</h3>
@@ -756,6 +765,7 @@ onMounted(() => {
 
             <!-- Panel Footer -->
             <div class="panel-footer">
+              <p v-if="createError" class="create-error">{{ createError }}</p>
               <button class="btn-cancel" @click="closeNewDialog">取消</button>
               <button
                 class="btn-create"
@@ -1667,6 +1677,14 @@ onMounted(() => {
 .btn-create:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.create-error {
+  color: var(--error-color, #dc2626);
+  font-size: 12px;
+  margin: 0;
+  margin-right: auto;
+  align-self: center;
 }
 
 .hidden {

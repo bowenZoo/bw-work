@@ -83,7 +83,7 @@ function showLatest() {
         <div v-if="currentSummary?.open_questions?.length" class="section open-questions">
           <h4 class="section-title">待讨论问题</h4>
           <ul class="point-list">
-            <li v-for="(q, idx) in currentSummary.open_questions" :key="idx">{{ q }}</li>
+            <li v-for="(q, idx) in currentSummary.open_questions" :key="idx" v-html="toSanitizedMarkdownHtml(q)"></li>
           </ul>
         </div>
       </template>

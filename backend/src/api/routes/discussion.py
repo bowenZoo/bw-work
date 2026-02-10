@@ -1,11 +1,14 @@
 """Discussion API routes."""
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import os
 import threading
+import time
 import uuid
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from enum import Enum
@@ -145,12 +148,19 @@ class VerifyPasswordRequest(BaseModel):
     password: str = Field(..., description="Password to verify")
 
 
+class VerifyPasswordResponse(BaseModel):
+    """Response for verifying a discussion password."""
+
+    verified: bool
+
+
 class ExtendDiscussionRequest(BaseModel):
     """Request body for extending a completed discussion with more rounds."""
 
     follow_up: str = Field(default="", description="Follow-up topic or question")
     additional_rounds: int = Field(default=10, ge=1, le=100, description="Additional rounds to discuss")
     discussion_style: str = Field(default="", description="Discussion style override (socratic, directive, debate)")
+    agent_configs: dict = Field(default_factory=dict, description="Agent config overrides")
 
 
 class ExtendDiscussionResponse(BaseModel):
@@ -224,7 +234,7 @@ class CreateCurrentDiscussionRequest(BaseModel):
     agents: list[str] = Field(default_factory=list, description="Agent role names to participate")
     agent_configs: dict = Field(default_factory=dict, description="Per-agent config overrides")
     discussion_style: str = Field(default="", description="Discussion style (socratic, directive, debate)")
-    password: str = Field(default="123456", description="Discussion password (empty string for no password)")
+    password: str = Field(default="", description="Discussion password (empty string for no password)")
 
 
 class CreateCurrentDiscussionResponse(BaseModel):
@@ -953,8 +963,8 @@ async def get_current_discussion_api() -> GetDiscussionResponse | None:
         attachment=discussion.attachment,
         continued_from=discussion.continued_from,
         is_continuation=discussion.continued_from is not None,
-        discussion_style=getattr(discussion, "discussion_style", ""),
-        has_password=bool(getattr(discussion, "password_hash", "")),
+        discussion_style=discussion.discussion_style,
+        has_password=bool(discussion.password_hash),
     )
 
 
@@ -987,9 +997,9 @@ async def create_current_discussion(
             lead_config.update(style_overrides)
             agent_configs["lead_planner"] = lead_config
 
-        # 计算密码哈希
+        # 计算密码哈希（使用 discussion_id 作为盐值）
         pwd = request.password or ""
-        password_hash = hashlib.sha256(pwd.encode()).hexdigest() if pwd else ""
+        password_hash = hashlib.sha256(f"{discussion_id}:{pwd}".encode()).hexdigest() if pwd else ""
 
         discussion = DiscussionState(
             id=discussion_id,
@@ -1000,7 +1010,7 @@ async def create_current_discussion(
             created_at=now,
             started_at=now,
             attachment=request.attachment,
-            agents=request.agents if hasattr(request, 'agents') and request.agents else [],
+            agents=request.agents or [],
             agent_configs=agent_configs,
             discussion_style=request.discussion_style or "",
             password_hash=password_hash,
@@ -1084,8 +1094,8 @@ async def join_current_discussion() -> JoinDiscussionResponse:
             attachment=discussion.attachment,
             continued_from=discussion.continued_from,
             is_continuation=discussion.continued_from is not None,
-            discussion_style=getattr(discussion, "discussion_style", ""),
-            has_password=bool(getattr(discussion, "password_hash", "")),
+            discussion_style=discussion.discussion_style,
+            has_password=bool(discussion.password_hash),
         ),
         messages=messages,
     )
@@ -1212,23 +1222,37 @@ async def list_available_agents():
     return {"agents": agents}
 
 
-@router.post("/{discussion_id}/verify")
+# 密码验证速率限制: {discussion_id: [timestamps]}
+_verify_attempts: dict[str, list[float]] = defaultdict(list)
+_VERIFY_MAX_ATTEMPTS = 5  # 每分钟最多 5 次
+_VERIFY_WINDOW = 60  # 60 秒窗口
+
+
+@router.post("/{discussion_id}/verify", response_model=VerifyPasswordResponse)
 async def verify_discussion_password(discussion_id: str, request: VerifyPasswordRequest):
     """验证讨论密码。
 
     如果讨论无密码保护，直接返回 verified=True。
     密码正确返回 verified=True，错误返回 403。
     """
+    # 速率限制检查
+    now = time.time()
+    attempts = _verify_attempts[discussion_id]
+    _verify_attempts[discussion_id] = [t for t in attempts if now - t < _VERIFY_WINDOW]
+    if len(_verify_attempts[discussion_id]) >= _VERIFY_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="尝试次数过多，请稍后再试")
+    _verify_attempts[discussion_id].append(now)
+
     discussion = get_discussion_state(discussion_id)
     if not discussion:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
     if not discussion.password_hash:
-        return {"verified": True}
+        return VerifyPasswordResponse(verified=True)
 
-    input_hash = hashlib.sha256(request.password.encode()).hexdigest()
-    if input_hash == discussion.password_hash:
-        return {"verified": True}
+    input_hash = hashlib.sha256(f"{discussion_id}:{request.password}".encode()).hexdigest()
+    if hmac.compare_digest(input_hash, discussion.password_hash):
+        return VerifyPasswordResponse(verified=True)
     else:
         raise HTTPException(status_code=403, detail="密码错误")
 
@@ -1253,8 +1277,8 @@ async def get_discussion(discussion_id: str) -> GetDiscussionResponse:
         attachment=discussion.attachment,
         continued_from=discussion.continued_from,
         is_continuation=discussion.continued_from is not None,
-        discussion_style=getattr(discussion, "discussion_style", ""),
-        has_password=bool(getattr(discussion, "password_hash", "")),
+        discussion_style=discussion.discussion_style,
+        has_password=bool(discussion.password_hash),
     )
 
 
@@ -1584,6 +1608,11 @@ async def extend_discussion(
             detail=f"Only completed or failed discussions can be extended. Current: {discussion.status}",
         )
 
+    # Merge request agent_configs into existing discussion agent_configs
+    agent_configs = dict(discussion.agent_configs) if discussion.agent_configs else {}
+    if request.agent_configs:
+        agent_configs = {**agent_configs, **request.agent_configs}
+
     # Merge discussion style into agent_configs if provided
     if request.discussion_style:
         from src.config.settings import get_discussion_style_overrides
@@ -1593,12 +1622,12 @@ async def extend_discussion(
                 status_code=400,
                 detail=f"未知的讨论风格: {request.discussion_style}",
             )
-        agent_configs = dict(discussion.agent_configs) if discussion.agent_configs else {}
         lead_config = dict(agent_configs.get("lead_planner", {}))
         lead_config.update(style_overrides)
         agent_configs["lead_planner"] = lead_config
-        discussion.agent_configs = agent_configs
         discussion.discussion_style = request.discussion_style
+
+    discussion.agent_configs = agent_configs
 
     # Re-activate the discussion
     discussion.status = DiscussionStatus.RUNNING

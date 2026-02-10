@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { verifyDiscussionPassword } from '@/api/discussion'
 
 const props = defineProps<{
   discussionId: string
@@ -24,27 +25,14 @@ async function verify() {
   loading.value = true
   error.value = ''
   try {
-    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:18000'
-    const res = await fetch(`${API_BASE_URL}/api/discussions/${props.discussionId}/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: password.value }),
-    })
-    if (res.ok) {
-      const data = await res.json()
-      if (data.verified === false) {
-        error.value = '密码错误，请重试'
-        return
-      }
-      // Store verification state in sessionStorage
+    const result = await verifyDiscussionPassword(props.discussionId, password.value)
+    if (result.verified) {
       const verified = JSON.parse(sessionStorage.getItem('verified_discussions') || '{}')
       verified[props.discussionId] = true
       sessionStorage.setItem('verified_discussions', JSON.stringify(verified))
       emit('verified')
-    } else if (res.status === 403) {
-      error.value = '密码错误，请重试'
     } else {
-      error.value = '验证失败，请重试'
+      error.value = '密码错误，请重试'
     }
   } catch {
     error.value = '验证失败，请重试'
@@ -85,7 +73,6 @@ function handleOverlayClick(event: MouseEvent) {
         <div class="input-group">
           <div class="input-wrapper">
             <input
-              ref="inputRef"
               v-model="password"
               :type="showPassword ? 'text' : 'password'"
               class="password-input"
