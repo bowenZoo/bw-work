@@ -269,6 +269,7 @@ export function useLobby() {
     agents?: string[],
     agentConfigs?: Record<string, Partial<AgentConfig>>,
     discussionStyle?: string,
+    password?: string,
   ): Promise<CreateCurrentDiscussionResponse> {
     const response = await createCurrentDiscussion({
       topic,
@@ -278,6 +279,7 @@ export function useLobby() {
       agents,
       agent_configs: agentConfigs,
       discussion_style: discussionStyle,
+      password,
     });
 
     // Optimistically add to active list

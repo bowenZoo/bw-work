@@ -10,6 +10,7 @@ import type {
   LobbyDiscussion,
   AvailableAgentsResponse,
   DiscussionStyle,
+  DiscussionStyleFull,
 } from '@/types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
@@ -136,15 +137,34 @@ export async function getAvailableAgents(): Promise<AvailableAgentsResponse> {
 }
 
 /**
- * Get available discussion styles
+ * Get available discussion styles (with full overrides for prompt editing)
  */
 export async function getDiscussionStyles(): Promise<{
   default: string;
-  styles: DiscussionStyle[];
+  styles: DiscussionStyleFull[];
 }> {
   const response = await fetch(`${API_BASE_URL}/api/discussions/styles`);
   if (!response.ok) {
     throw new Error(`Failed to get discussion styles: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Verify discussion password
+ */
+export async function verifyDiscussionPassword(
+  discussionId: string,
+  password: string
+): Promise<{ verified: boolean }> {
+  const response = await fetch(`${API_BASE_URL}/api/discussions/${discussionId}/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (!response.ok) {
+    if (response.status === 403) return { verified: false };
+    throw new Error('Verification failed');
   }
   return response.json();
 }

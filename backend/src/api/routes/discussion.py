@@ -1,5 +1,6 @@
 """Discussion API routes."""
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -85,6 +86,7 @@ class DiscussionState(BaseModel):
     agents: list[str] = Field(default_factory=list)  # 参与的 agent role_name 列表
     agent_configs: dict = Field(default_factory=dict)  # role_name -> config 覆盖
     discussion_style: str = ""  # 讨论风格 (socratic/directive/debate)
+    password_hash: str = ""  # 空字符串表示无密码
 
 
 class GetDiscussionResponse(BaseModel):
@@ -103,6 +105,7 @@ class GetDiscussionResponse(BaseModel):
     continued_from: str | None = None  # 原讨论 ID
     is_continuation: bool = False  # 是否是续前讨论
     discussion_style: str = ""  # 讨论风格
+    has_password: bool = False  # 是否有密码保护
 
 
 class StartDiscussionResponse(BaseModel):
@@ -134,6 +137,12 @@ class ContinueDiscussionResponse(BaseModel):
     topic: str = Field(..., description="Combined topic for the continuation")
     status: DiscussionStatus = Field(..., description="Current status")
     message: str = Field(..., description="Status message")
+
+
+class VerifyPasswordRequest(BaseModel):
+    """Request body for verifying a discussion password."""
+
+    password: str = Field(..., description="Password to verify")
 
 
 class ExtendDiscussionRequest(BaseModel):
@@ -215,6 +224,7 @@ class CreateCurrentDiscussionRequest(BaseModel):
     agents: list[str] = Field(default_factory=list, description="Agent role names to participate")
     agent_configs: dict = Field(default_factory=dict, description="Per-agent config overrides")
     discussion_style: str = Field(default="", description="Discussion style (socratic, directive, debate)")
+    password: str = Field(default="123456", description="Discussion password (empty string for no password)")
 
 
 class CreateCurrentDiscussionResponse(BaseModel):
@@ -944,6 +954,7 @@ async def get_current_discussion_api() -> GetDiscussionResponse | None:
         continued_from=discussion.continued_from,
         is_continuation=discussion.continued_from is not None,
         discussion_style=getattr(discussion, "discussion_style", ""),
+        has_password=bool(getattr(discussion, "password_hash", "")),
     )
 
 
@@ -976,6 +987,10 @@ async def create_current_discussion(
             lead_config.update(style_overrides)
             agent_configs["lead_planner"] = lead_config
 
+        # 计算密码哈希
+        pwd = request.password or ""
+        password_hash = hashlib.sha256(pwd.encode()).hexdigest() if pwd else ""
+
         discussion = DiscussionState(
             id=discussion_id,
             topic=request.topic,
@@ -988,6 +1003,7 @@ async def create_current_discussion(
             agents=request.agents if hasattr(request, 'agents') and request.agents else [],
             agent_configs=agent_configs,
             discussion_style=request.discussion_style or "",
+            password_hash=password_hash,
         )
 
         # _current_discussion points to the most recently created discussion
@@ -1069,6 +1085,7 @@ async def join_current_discussion() -> JoinDiscussionResponse:
             continued_from=discussion.continued_from,
             is_continuation=discussion.continued_from is not None,
             discussion_style=getattr(discussion, "discussion_style", ""),
+            has_password=bool(getattr(discussion, "password_hash", "")),
         ),
         messages=messages,
     )
@@ -1110,7 +1127,7 @@ async def create_discussion(request: CreateDiscussionRequest) -> CreateDiscussio
 
 @router.get("/styles")
 async def get_discussion_styles():
-    """获取可用的讨论风格列表。"""
+    """获取可用的讨论风格列表（含完整 overrides）。"""
     from src.config.settings import load_discussion_styles
     data = load_discussion_styles()
     default_style = data.get("default", "socratic")
@@ -1120,6 +1137,7 @@ async def get_discussion_styles():
             "id": style_id,
             "name": style_def.get("name", style_id),
             "description": style_def.get("description", ""),
+            "overrides": style_def.get("overrides", {}),
         })
     return {"default": default_style, "styles": styles}
 
@@ -1194,6 +1212,27 @@ async def list_available_agents():
     return {"agents": agents}
 
 
+@router.post("/{discussion_id}/verify")
+async def verify_discussion_password(discussion_id: str, request: VerifyPasswordRequest):
+    """验证讨论密码。
+
+    如果讨论无密码保护，直接返回 verified=True。
+    密码正确返回 verified=True，错误返回 403。
+    """
+    discussion = get_discussion_state(discussion_id)
+    if not discussion:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    if not discussion.password_hash:
+        return {"verified": True}
+
+    input_hash = hashlib.sha256(request.password.encode()).hexdigest()
+    if input_hash == discussion.password_hash:
+        return {"verified": True}
+    else:
+        raise HTTPException(status_code=403, detail="密码错误")
+
+
 @router.get("/{discussion_id}", response_model=GetDiscussionResponse)
 async def get_discussion(discussion_id: str) -> GetDiscussionResponse:
     """Get the status and result of a discussion."""
@@ -1215,6 +1254,7 @@ async def get_discussion(discussion_id: str) -> GetDiscussionResponse:
         continued_from=discussion.continued_from,
         is_continuation=discussion.continued_from is not None,
         discussion_style=getattr(discussion, "discussion_style", ""),
+        has_password=bool(getattr(discussion, "password_hash", "")),
     )
 
 

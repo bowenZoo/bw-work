@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { Plus, Search, X, Paperclip, MessageSquare, FileText } from 'lucide-vue-next';
+import { Plus, Search, X, Paperclip, MessageSquare, FileText, Eye, EyeOff, RotateCcw, ChevronDown, ChevronUp } from 'lucide-vue-next';
 import { getDiscussionHistory, getDiscussionStyles } from '@/api/discussion';
 import { useLobby } from '@/composables/useLobby';
 import { AgentConfigEditor } from '@/components/discussion';
-import type { DiscussionSummary, AgentConfig, DiscussionStyle } from '@/types';
+import type { DiscussionSummary, AgentConfig, DiscussionStyle, DiscussionStyleFull, DiscussionStyleOverrides } from '@/types';
 
 const router = useRouter();
 
@@ -143,8 +143,18 @@ const agentConfigs = ref<Record<string, Partial<AgentConfig>>>({});
 
 // Discussion style
 const discussionStyles = ref<DiscussionStyle[]>([]);
+const discussionStylesFull = ref<DiscussionStyleFull[]>([]);
 const defaultStyleId = ref('socratic');
 const selectedStyle = ref('socratic');
+
+// Prompt overrides (right panel)
+const customOverrides = ref<DiscussionStyleOverrides | null>(null);
+const collapsedSections = ref<Record<string, boolean>>({});
+const newFocusArea = ref('');
+
+// Password
+const password = ref('123456');
+const showPassword = ref(false);
 
 // Load workspace list
 async function loadWorkspaces(reset = false) {
@@ -194,6 +204,11 @@ function openNewDialog() {
   selectedAgents.value = [];
   agentConfigs.value = {};
   selectedStyle.value = defaultStyleId.value;
+  password.value = '123456';
+  showPassword.value = false;
+  collapsedSections.value = {};
+  newFocusArea.value = '';
+  onStyleSelect(defaultStyleId.value);
 }
 
 function closeNewDialog() {
@@ -223,14 +238,28 @@ async function createDiscussion() {
       }
     }
 
+    // Merge custom prompt overrides into agent_configs for lead_planner
+    const agentConfigsFinal = { ...cleanConfigs };
+    if (customOverrides.value) {
+      const defaultStyle = discussionStylesFull.value.find(s => s.id === selectedStyle.value);
+      const overridesChanged = defaultStyle && JSON.stringify(customOverrides.value) !== JSON.stringify(defaultStyle.overrides);
+      if (overridesChanged) {
+        agentConfigsFinal['lead_planner'] = {
+          ...(agentConfigsFinal['lead_planner'] || {}),
+          ...customOverrides.value,
+        };
+      }
+    }
+
     const response = await lobbyCreateDiscussion(
       topic,
       10,
       attachment,
       autoPauseInterval.value,
       selectedAgents.value.length > 0 ? selectedAgents.value : undefined,
-      Object.keys(cleanConfigs).length > 0 ? cleanConfigs : undefined,
+      Object.keys(agentConfigsFinal).length > 0 ? agentConfigsFinal : undefined,
       selectedStyle.value || undefined,
+      password.value || undefined,
     );
 
     showNewDialog.value = false;
@@ -249,6 +278,47 @@ function handleNewDialogKeydown(event: KeyboardEvent) {
   }
   if (event.key === 'Escape') {
     closeNewDialog();
+  }
+}
+
+// Style selection & prompt overrides
+function onStyleSelect(styleId: string) {
+  selectedStyle.value = styleId;
+  const style = discussionStylesFull.value.find(s => s.id === styleId);
+  if (style) {
+    customOverrides.value = { ...style.overrides, focus_areas: [...style.overrides.focus_areas] };
+  }
+}
+
+function resetToPreset() {
+  const style = discussionStylesFull.value.find(s => s.id === selectedStyle.value);
+  if (style) {
+    customOverrides.value = { ...style.overrides, focus_areas: [...style.overrides.focus_areas] };
+  }
+}
+
+function toggleSection(section: string) {
+  collapsedSections.value[section] = !collapsedSections.value[section];
+}
+
+function removeFocusArea(index: number) {
+  if (customOverrides.value) {
+    customOverrides.value.focus_areas.splice(index, 1);
+  }
+}
+
+function addFocusArea() {
+  const text = newFocusArea.value.trim();
+  if (text && customOverrides.value) {
+    customOverrides.value.focus_areas.push(text);
+    newFocusArea.value = '';
+  }
+}
+
+function handleFocusAreaKeydown(event: KeyboardEvent) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    addFocusArea();
   }
 }
 
@@ -326,16 +396,20 @@ function isActiveStatus(status: string | null): boolean {
 async function loadStyles() {
   try {
     const data = await getDiscussionStyles();
-    discussionStyles.value = data.styles;
+    discussionStylesFull.value = data.styles;
+    discussionStyles.value = data.styles; // 保持兼容
     defaultStyleId.value = data.default;
     selectedStyle.value = data.default;
+    onStyleSelect(data.default);
   } catch {
-    // Fallback defaults
-    discussionStyles.value = [
-      { id: 'socratic', name: '苏格拉底式', description: '不断追问「为什么」，逼迫每个决策回到第一性原理' },
-      { id: 'directive', name: '主策划主导制', description: '主策划提出框架，团队挑战补充，主策划有否决权' },
-      { id: 'debate', name: '辩论制', description: '各策划独立提案，互相质疑辩论，主策划裁决' },
+    // Fallback defaults (no overrides available)
+    const fallbackStyles: DiscussionStyleFull[] = [
+      { id: 'socratic', name: '苏格拉底式', description: '不断追问「为什么」，逼迫每个决策回到第一性原理', overrides: { goal: '', backstory: '', communication_style: '', focus_areas: [] } },
+      { id: 'directive', name: '主策划主导制', description: '主策划提出框架，团队挑战补充，主策划有否决权', overrides: { goal: '', backstory: '', communication_style: '', focus_areas: [] } },
+      { id: 'debate', name: '辩论制', description: '各策划独立提案，互相质疑辩论，主策划裁决', overrides: { goal: '', backstory: '', communication_style: '', focus_areas: [] } },
     ];
+    discussionStylesFull.value = fallbackStyles;
+    discussionStyles.value = fallbackStyles;
   }
 }
 
@@ -463,90 +537,225 @@ onMounted(() => {
       </div>
     </main>
 
-    <!-- New Discussion Modal -->
+    <!-- New Discussion Panel (large, two-column) -->
     <Teleport to="body">
       <Transition name="modal">
-        <div v-if="showNewDialog" class="modal-backdrop" @click.self="closeNewDialog">
-          <div class="modal-container" @keydown="handleNewDialogKeydown">
-            <div class="modal-header">
-              <h3 class="modal-title">新建讨论</h3>
-              <button class="modal-close" @click="closeNewDialog">
+        <div v-if="showNewDialog" class="create-panel-overlay" @click.self="closeNewDialog">
+          <div class="create-panel" @keydown="handleNewDialogKeydown">
+            <!-- Panel Header -->
+            <div class="panel-header">
+              <h3 class="panel-title">新建讨论</h3>
+              <button class="panel-close" @click="closeNewDialog">
                 <X class="icon-md" />
               </button>
             </div>
-            <div class="modal-body">
-              <label class="input-label">讨论主题</label>
-              <input
-                v-model="topicInput"
-                type="text"
-                placeholder="例如：为 RPG 游戏设计抽卡系统"
-                class="topic-input"
-                autofocus
-              />
 
-              <div v-if="discussionStyles.length > 0" class="style-section">
-                <label class="input-label">讨论风格</label>
-                <div class="style-options">
-                  <div
-                    v-for="style in discussionStyles"
-                    :key="style.id"
-                    class="style-option"
-                    :class="{ 'style-selected': selectedStyle === style.id }"
-                    @click="selectedStyle = style.id"
-                  >
-                    <span class="style-name">{{ style.name }}</span>
-                    <span class="style-desc">{{ style.description }}</span>
+            <!-- Panel Body: two columns -->
+            <div class="panel-body">
+              <!-- Left Column: Basic Settings (40%) -->
+              <div class="panel-left">
+                <div class="left-scroll">
+                  <!-- Topic -->
+                  <div class="form-section">
+                    <label class="input-label">讨论主题</label>
+                    <input
+                      v-model="topicInput"
+                      type="text"
+                      placeholder="例如：为 RPG 游戏设计抽卡系统"
+                      class="topic-input"
+                      autofocus
+                    />
+                  </div>
+
+                  <!-- Password -->
+                  <div class="form-section">
+                    <label class="input-label">密码设置</label>
+                    <div class="password-field">
+                      <input
+                        v-model="password"
+                        :type="showPassword ? 'text' : 'password'"
+                        class="password-input"
+                        placeholder="设置讨论密码"
+                      />
+                      <button class="password-toggle" @click="showPassword = !showPassword" type="button">
+                        <Eye v-if="!showPassword" class="icon-sm" />
+                        <EyeOff v-else class="icon-sm" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Auto-pause interval -->
+                  <div class="form-section">
+                    <label class="input-label">自动暂停间隔</label>
+                    <div class="auto-pause-control">
+                      <input
+                        v-model.number="autoPauseInterval"
+                        type="number"
+                        min="0"
+                        max="50"
+                        class="auto-pause-input"
+                      />
+                      <span class="auto-pause-hint">
+                        {{ autoPauseInterval > 0 ? `每 ${autoPauseInterval} 轮自动暂停` : '不自动暂停' }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- Agent Selection -->
+                  <div class="form-section">
+                    <AgentConfigEditor
+                      v-model:agents="selectedAgents"
+                      v-model:configs="agentConfigs"
+                    />
+                  </div>
+
+                  <!-- Attachment -->
+                  <div class="form-section">
+                    <input
+                      ref="fileInputRef"
+                      type="file"
+                      accept=".md"
+                      class="hidden"
+                      @change="handleFileSelect"
+                    />
+                    <div v-if="attachmentFile" class="attachment-info">
+                      <Paperclip class="icon-sm text-blue" />
+                      <span class="attachment-name">{{ attachmentFile.name }}</span>
+                      <span class="attachment-size">{{ (attachmentFile.size / 1024).toFixed(1) }} KB</span>
+                      <button class="attachment-remove" @click="removeAttachment">
+                        <X class="icon-xs" />
+                      </button>
+                    </div>
+                    <button v-else class="attachment-add" @click="triggerFileInput">
+                      <Paperclip class="icon-sm" />
+                      <span>添加参考文档（.md）</span>
+                    </button>
                   </div>
                 </div>
               </div>
 
-              <div class="auto-pause-section">
-                <label class="input-label">自动暂停间隔</label>
-                <div class="auto-pause-control">
-                  <input
-                    v-model.number="autoPauseInterval"
-                    type="number"
-                    min="0"
-                    max="50"
-                    class="auto-pause-input"
-                  />
-                  <span class="auto-pause-hint">
-                    {{ autoPauseInterval > 0 ? `每 ${autoPauseInterval} 轮自动暂停` : '不自动暂停' }}
-                  </span>
-                </div>
-              </div>
-
-              <div class="attachment-section">
-                <input
-                  ref="fileInputRef"
-                  type="file"
-                  accept=".md"
-                  class="hidden"
-                  @change="handleFileSelect"
-                />
-                <div v-if="attachmentFile" class="attachment-info">
-                  <Paperclip class="icon-sm text-blue" />
-                  <span class="attachment-name">{{ attachmentFile.name }}</span>
-                  <span class="attachment-size">{{ (attachmentFile.size / 1024).toFixed(1) }} KB</span>
-                  <button class="attachment-remove" @click="removeAttachment">
-                    <X class="icon-xs" />
+              <!-- Right Column: Prompt Preview & Edit (60%) -->
+              <div class="panel-right">
+                <!-- Style pills/tabs at top -->
+                <div v-if="discussionStylesFull.length > 0" class="style-pills">
+                  <button
+                    v-for="style in discussionStylesFull"
+                    :key="style.id"
+                    class="style-pill"
+                    :class="{ 'style-pill-active': selectedStyle === style.id }"
+                    @click="onStyleSelect(style.id)"
+                    :title="style.description"
+                  >
+                    {{ style.name }}
                   </button>
                 </div>
-                <button v-else class="attachment-add" @click="triggerFileInput">
-                  <Paperclip class="icon-sm" />
-                  <span>添加参考文档（.md）</span>
-                </button>
-              </div>
 
-              <!-- Agent Configuration -->
-              <div class="agent-config-section">
-                <AgentConfigEditor
-                  v-model:agents="selectedAgents"
-                  v-model:configs="agentConfigs"
-                />
+                <!-- Prompt content area (scrollable) -->
+                <div class="prompt-scroll">
+                  <template v-if="customOverrides">
+                    <!-- Goal section -->
+                    <div class="prompt-section">
+                      <button class="prompt-section-header" @click="toggleSection('goal')">
+                        <span class="prompt-section-title">目标 (goal)</span>
+                        <component :is="collapsedSections['goal'] ? ChevronDown : ChevronUp" class="icon-sm" />
+                      </button>
+                      <div v-if="!collapsedSections['goal']" class="prompt-section-body">
+                        <textarea
+                          v-model="customOverrides.goal"
+                          class="prompt-textarea prompt-textarea-sm"
+                          rows="3"
+                          placeholder="主策划的目标..."
+                        />
+                      </div>
+                    </div>
+
+                    <!-- Backstory section -->
+                    <div class="prompt-section">
+                      <button class="prompt-section-header" @click="toggleSection('backstory')">
+                        <span class="prompt-section-title">背景设定 (backstory)</span>
+                        <component :is="collapsedSections['backstory'] ? ChevronDown : ChevronUp" class="icon-sm" />
+                      </button>
+                      <div v-if="!collapsedSections['backstory']" class="prompt-section-body">
+                        <textarea
+                          v-model="customOverrides.backstory"
+                          class="prompt-textarea prompt-textarea-lg"
+                          rows="10"
+                          placeholder="主策划的背景设定..."
+                        />
+                      </div>
+                    </div>
+
+                    <!-- Communication style section -->
+                    <div class="prompt-section">
+                      <button class="prompt-section-header" @click="toggleSection('communication_style')">
+                        <span class="prompt-section-title">沟通风格 (communication_style)</span>
+                        <component :is="collapsedSections['communication_style'] ? ChevronDown : ChevronUp" class="icon-sm" />
+                      </button>
+                      <div v-if="!collapsedSections['communication_style']" class="prompt-section-body">
+                        <textarea
+                          v-model="customOverrides.communication_style"
+                          class="prompt-textarea prompt-textarea-md"
+                          rows="4"
+                          placeholder="沟通风格描述..."
+                        />
+                      </div>
+                    </div>
+
+                    <!-- Focus areas section -->
+                    <div class="prompt-section">
+                      <button class="prompt-section-header" @click="toggleSection('focus_areas')">
+                        <span class="prompt-section-title">关注领域 (focus_areas)</span>
+                        <component :is="collapsedSections['focus_areas'] ? ChevronDown : ChevronUp" class="icon-sm" />
+                      </button>
+                      <div v-if="!collapsedSections['focus_areas']" class="prompt-section-body">
+                        <div class="focus-areas-chips">
+                          <span
+                            v-for="(area, idx) in customOverrides.focus_areas"
+                            :key="idx"
+                            class="focus-chip"
+                          >
+                            <span class="focus-chip-text">{{ area }}</span>
+                            <button class="focus-chip-remove" @click="removeFocusArea(idx)">
+                              <X class="icon-xs" />
+                            </button>
+                          </span>
+                          <div class="focus-add-wrapper">
+                            <input
+                              v-model="newFocusArea"
+                              class="focus-add-input"
+                              placeholder="添加领域..."
+                              @keydown="handleFocusAreaKeydown"
+                            />
+                            <button
+                              v-if="newFocusArea.trim()"
+                              class="focus-add-btn"
+                              @click="addFocusArea"
+                            >
+                              <Plus class="icon-xs" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <div v-else class="prompt-empty">
+                    <p>选择讨论风格后可预览和编辑 Prompt</p>
+                  </div>
+                </div>
+
+                <!-- Reset button at bottom -->
+                <div class="prompt-footer">
+                  <button class="reset-preset-btn" @click="resetToPreset">
+                    <RotateCcw class="icon-sm" />
+                    <span>恢复预设</span>
+                  </button>
+                </div>
               </div>
             </div>
-            <div class="modal-footer">
+
+            <!-- Panel Footer -->
+            <div class="panel-footer">
               <button class="btn-cancel" @click="closeNewDialog">取消</button>
               <button
                 class="btn-create"
@@ -940,66 +1149,390 @@ onMounted(() => {
   color: var(--text-weak, #d1d5db);
 }
 
-/* ===== Modal styles ===== */
-.modal-backdrop {
+/* ===== Create Panel (large, two-column) ===== */
+.create-panel-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
+  z-index: 1000;
 }
 
-.modal-container {
-  background: white;
-  border-radius: 14px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-  width: 100%;
-  max-width: 560px;
-  max-height: 90vh;
-  overflow-y: auto;
-  margin: 16px;
+.create-panel {
+  width: 90vw;
+  max-width: 1200px;
+  height: 85vh;
+  background: var(--bg-primary, white);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.18);
 }
 
-.modal-header {
+.panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid #f3f4f6;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border-color, #e5e7eb);
+  flex-shrink: 0;
 }
 
-.modal-title {
-  font-size: 16px;
+.panel-title {
+  font-size: 17px;
   font-weight: 600;
   color: var(--text-primary, #111827);
 }
 
-.modal-close {
+.panel-close {
   padding: 4px;
   color: var(--text-secondary, #9ca3af);
   border-radius: 6px;
   transition: all 0.2s;
 }
 
-.modal-close:hover {
+.panel-close:hover {
   background: #f3f4f6;
   color: var(--text-primary, #374151);
 }
 
-.modal-body {
-  padding: 20px;
+.panel-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.modal-footer {
+/* Left column (40%) */
+.panel-left {
+  width: 40%;
+  border-right: 1px solid var(--border-color, #e5e7eb);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.left-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Right column (60%) */
+.panel-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.panel-footer {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  padding: 14px 20px;
-  border-top: 1px solid #f3f4f6;
+  padding: 14px 24px;
+  border-top: 1px solid var(--border-color, #e5e7eb);
   background: var(--bg-secondary, #fafafa);
-  border-radius: 0 0 14px 14px;
+  flex-shrink: 0;
+}
+
+/* ===== Password Field ===== */
+.password-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-input {
+  width: 100%;
+  padding: 10px 40px 10px 14px;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  font-size: 14px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.password-input:focus {
+  outline: none;
+  border-color: var(--primary-color, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.password-toggle {
+  position: absolute;
+  right: 10px;
+  padding: 4px;
+  color: var(--text-secondary, #9ca3af);
+  border-radius: 4px;
+  transition: color 0.2s;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.password-toggle:hover {
+  color: var(--text-primary, #374151);
+}
+
+/* ===== Style Pills ===== */
+.style-pills {
+  display: flex;
+  gap: 8px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color, #e5e7eb);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.style-pill {
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1.5px solid var(--border-color, #e5e7eb);
+  background: white;
+  color: var(--text-secondary, #6b7280);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.style-pill:hover {
+  border-color: #d1d5db;
+  background: #fafbfc;
+}
+
+.style-pill-active {
+  border-color: var(--primary-color, #3b82f6);
+  background: #eff6ff;
+  color: var(--primary-color, #3b82f6);
+}
+
+.style-pill-active:hover {
+  border-color: var(--primary-color, #3b82f6);
+  background: #eff6ff;
+}
+
+/* ===== Prompt Scroll Area ===== */
+.prompt-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prompt-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary, #9ca3af);
+  font-size: 14px;
+}
+
+/* ===== Prompt Sections (collapsible) ===== */
+.prompt-section {
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.prompt-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--bg-secondary, #fafafa);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.prompt-section-header:hover {
+  background: #f3f4f6;
+}
+
+.prompt-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #374151);
+}
+
+.prompt-section-body {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border-color, #e5e7eb);
+}
+
+/* ===== Prompt Textareas ===== */
+.prompt-textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.6;
+  color: var(--text-primary, #111827);
+  resize: vertical;
+  transition: border-color 0.2s;
+}
+
+.prompt-textarea:focus {
+  outline: none;
+  border-color: var(--primary-color, #3b82f6);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.prompt-textarea::placeholder {
+  color: var(--text-weak, #d1d5db);
+}
+
+.prompt-textarea-sm {
+  min-height: 72px;
+}
+
+.prompt-textarea-md {
+  min-height: 100px;
+}
+
+.prompt-textarea-lg {
+  min-height: 200px;
+}
+
+/* ===== Focus Areas Chips ===== */
+.focus-areas-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.focus-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 16px;
+  font-size: 12px;
+  color: var(--primary-color, #3b82f6);
+}
+
+.focus-chip-text {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-chip-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px;
+  color: #93c5fd;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  background: none;
+  border: none;
+}
+
+.focus-chip-remove:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.focus-add-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px dashed var(--border-color, #d1d5db);
+  border-radius: 16px;
+  padding: 2px 8px;
+  transition: border-color 0.15s;
+}
+
+.focus-add-wrapper:focus-within {
+  border-color: var(--primary-color, #3b82f6);
+}
+
+.focus-add-input {
+  border: none;
+  outline: none;
+  font-size: 12px;
+  width: 100px;
+  padding: 3px 0;
+  background: transparent;
+  color: var(--text-primary, #111827);
+}
+
+.focus-add-input::placeholder {
+  color: var(--text-weak, #d1d5db);
+}
+
+.focus-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  color: var(--primary-color, #3b82f6);
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: background 0.15s;
+}
+
+.focus-add-btn:hover {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+/* ===== Prompt Footer ===== */
+.prompt-footer {
+  padding: 10px 20px;
+  border-top: 1px solid var(--border-color, #e5e7eb);
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.reset-preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--text-secondary, #6b7280);
+  background: white;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.reset-preset-btn:hover {
+  color: var(--primary-color, #3b82f6);
+  border-color: var(--primary-color, #3b82f6);
 }
 
 .input-label {
@@ -1029,10 +1562,6 @@ onMounted(() => {
   color: var(--text-secondary, #9ca3af);
 }
 
-.auto-pause-section {
-  margin-top: 14px;
-}
-
 .auto-pause-control {
   display: flex;
   align-items: center;
@@ -1057,10 +1586,6 @@ onMounted(() => {
 .auto-pause-hint {
   font-size: 12px;
   color: var(--text-secondary, #9ca3af);
-}
-
-.attachment-section {
-  margin-top: 14px;
 }
 
 .attachment-info {
@@ -1105,54 +1630,6 @@ onMounted(() => {
 
 .attachment-add:hover {
   color: var(--primary-color, #3b82f6);
-}
-
-.style-section {
-  margin-top: 14px;
-}
-
-.style-options {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.style-option {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 10px 14px;
-  border: 1.5px solid var(--border-color, #e5e7eb);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
-}
-
-.style-option:hover {
-  border-color: #d1d5db;
-  background: #fafbfc;
-}
-
-.style-selected {
-  border-color: var(--primary-color, #3b82f6);
-  background: #eff6ff;
-}
-
-.style-selected:hover {
-  border-color: var(--primary-color, #3b82f6);
-  background: #eff6ff;
-}
-
-.style-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary, #111827);
-}
-
-.style-desc {
-  font-size: 12px;
-  color: var(--text-secondary, #9ca3af);
-  line-height: 1.3;
 }
 
 .agent-config-section {
@@ -1202,8 +1679,8 @@ onMounted(() => {
   transition: opacity 0.2s ease;
 }
 
-.modal-enter-active .modal-container,
-.modal-leave-active .modal-container {
+.modal-enter-active .create-panel,
+.modal-leave-active .create-panel {
   transition: transform 0.2s ease;
 }
 
@@ -1212,8 +1689,8 @@ onMounted(() => {
   opacity: 0;
 }
 
-.modal-enter-from .modal-container,
-.modal-leave-to .modal-container {
+.modal-enter-from .create-panel,
+.modal-leave-to .create-panel {
   transform: scale(0.95) translateY(10px);
 }
 
@@ -1225,6 +1702,26 @@ onMounted(() => {
 
   .home-content {
     padding: 16px 12px;
+  }
+
+  .create-panel {
+    width: 98vw;
+    height: 95vh;
+  }
+
+  .panel-body {
+    flex-direction: column;
+  }
+
+  .panel-left {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color, #e5e7eb);
+    max-height: 45%;
+  }
+
+  .panel-right {
+    flex: 1;
   }
 }
 

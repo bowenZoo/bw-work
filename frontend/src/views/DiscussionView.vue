@@ -13,13 +13,14 @@ import {
   RightPanel,
   InterventionDigestCard,
   HolisticReviewCard,
+  PasswordVerifyModal,
 } from '@/components/discussion';
 import { usePlayback } from '@/composables/usePlayback';
 import { useDiscussion } from '@/composables/useDiscussion';
 import { useAgentsStore } from '@/stores/agents';
 import api from '@/api';
 import { getDiscussionStyles } from '@/api/discussion';
-import type { AgendaItem, AgentStatus, DiscussionStyle } from '@/types';
+import type { AgendaItem, AgentStatus, DiscussionStyle, DiscussionStyleFull, DiscussionStyleOverrides } from '@/types';
 
 // Props for playback mode
 const props = defineProps<{
@@ -36,6 +37,10 @@ const isPlaybackMode = computed(() => false);
 // Get discussion ID from route
 const discussionId = computed(() => route.params.id as string | undefined);
 
+// Password verification state
+const needsPassword = ref(false);
+const passwordVerified = ref(false);
+
 // Continue discussion state
 const continueFollowUp = ref('');
 const continueRounds = ref(5);
@@ -43,6 +48,12 @@ const showContinuePopup = ref(false);
 const isContinuing = ref(false);
 const continueStyle = ref('');
 const discussionStyles = ref<DiscussionStyle[]>([]);
+
+// Enhanced continue: full style data with overrides for prompt editing
+const discussionStylesFull = ref<DiscussionStyleFull[]>([]);
+const continueOverrides = ref<Partial<DiscussionStyleOverrides> | null>(null);
+const showPromptEditor = ref(false);
+const overridesModified = ref(false);
 
 // Attachment preview modal state
 const showAttachmentPreview = ref(false);
@@ -203,6 +214,10 @@ watch(
 );
 
 onMounted(async () => {
+  // Check password first
+  if (discussionId.value) {
+    await checkPassword();
+  }
   // Fetch agenda if discussion is loaded
   if (discussionId.value) {
     await fetchAgenda();
@@ -210,6 +225,46 @@ onMounted(async () => {
   // Load discussion styles for continue popup
   loadDiscussionStyles();
 });
+
+// Password verification
+async function checkPassword() {
+  const discId = discussionId.value || (route.params.id as string);
+  if (!discId) return;
+
+  // Check sessionStorage for already-verified
+  const verified = JSON.parse(sessionStorage.getItem('verified_discussions') || '{}');
+  if (verified[discId]) {
+    passwordVerified.value = true;
+    return;
+  }
+
+  // Fetch discussion info to check has_password
+  try {
+    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:18000';
+    const res = await fetch(`${API_BASE_URL}/api/discussions/${discId}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.has_password) {
+        needsPassword.value = true;
+      } else {
+        passwordVerified.value = true;
+      }
+    } else {
+      passwordVerified.value = true; // Don't block on error
+    }
+  } catch {
+    passwordVerified.value = true; // Don't block on error
+  }
+}
+
+function onPasswordVerified() {
+  needsPassword.value = false;
+  passwordVerified.value = true;
+}
+
+function onPasswordCancel() {
+  router.push('/');
+}
 
 // Handle topic submission (live mode only — creates a new discussion)
 async function handleSubmit(topic: string) {
@@ -297,9 +352,18 @@ async function submitContinue() {
     if (continueStyle.value) {
       payload.discussion_style = continueStyle.value;
     }
+    // If user has modified prompt overrides, send agent_configs
+    if (overridesModified.value && continueOverrides.value) {
+      payload.agent_configs = {
+        lead_planner: continueOverrides.value,
+      };
+    }
     await api.post(`/api/discussions/${discId}/extend`, payload);
     continueFollowUp.value = '';
     showContinuePopup.value = false;
+    showPromptEditor.value = false;
+    continueOverrides.value = null;
+    overridesModified.value = false;
   } catch (error: any) {
     console.error('Failed to extend discussion:', error);
     setError(error.response?.data?.detail || '继续讨论失败');
@@ -311,6 +375,9 @@ async function submitContinue() {
 // Open continue popup and fetch current discussion's style
 function openContinuePopup() {
   showContinuePopup.value = true;
+  showPromptEditor.value = false;
+  continueOverrides.value = null;
+  overridesModified.value = false;
   // Try to fetch the current discussion's style so the default matches
   const discId = discussionId.value || discussion.value?.id;
   if (discId) {
@@ -318,9 +385,34 @@ function openContinuePopup() {
       const style = res.data?.discussion_style;
       if (style && discussionStyles.value.some(s => s.id === style)) {
         continueStyle.value = style;
+        // Also load the overrides for the current style
+        loadOverridesForStyle(style);
       }
     }).catch(() => {});
   }
+}
+
+// Load overrides when a style is selected in continue popup
+function loadOverridesForStyle(styleId: string) {
+  const full = discussionStylesFull.value.find(s => s.id === styleId);
+  if (full?.overrides) {
+    continueOverrides.value = { ...full.overrides };
+    overridesModified.value = false;
+  } else {
+    continueOverrides.value = null;
+    overridesModified.value = false;
+  }
+}
+
+// Handle style change in continue popup
+function handleContinueStyleChange(styleId: string) {
+  continueStyle.value = styleId;
+  loadOverridesForStyle(styleId);
+}
+
+// Reset overrides to the style default
+function resetContinueOverrides() {
+  loadOverridesForStyle(continueStyle.value);
 }
 
 // Load discussion styles for continue popup
@@ -328,6 +420,7 @@ async function loadDiscussionStyles() {
   try {
     const data = await getDiscussionStyles();
     discussionStyles.value = data.styles;
+    discussionStylesFull.value = data.styles;
     continueStyle.value = data.default;
   } catch {
     discussionStyles.value = [
@@ -335,6 +428,7 @@ async function loadDiscussionStyles() {
       { id: 'directive', name: '主策划主导制', description: '主策划提出框架，团队挑战补充，主策划有否决权' },
       { id: 'debate', name: '辩论制', description: '各策划独立提案，互相质疑辩论，主策划裁决' },
     ];
+    discussionStylesFull.value = [];
     continueStyle.value = 'socratic';
   }
 }
@@ -401,6 +495,15 @@ onUnmounted(() => {
 
 <template>
   <div class="discussion-layout">
+    <!-- Password verification modal -->
+    <PasswordVerifyModal
+      v-if="needsPassword && !passwordVerified"
+      :discussion-id="discussionId || (route.params.id as string)"
+      :topic="discussion?.topic"
+      @verified="onPasswordVerified"
+      @cancel="onPasswordCancel"
+    />
+
     <!-- Header -->
     <Header :connection-status="connectionStatus">
       <template #extra>
@@ -569,38 +672,9 @@ onUnmounted(() => {
             </svg>
             <span>继续讨论</span>
           </button>
-          <!-- Expanded popup -->
-          <div v-else class="continue-popup">
-            <!-- Discussion style selector -->
-            <div v-if="discussionStyles.length > 0" class="continue-style-row">
-              <label class="continue-label">讨论风格</label>
-              <div class="continue-style-chips">
-                <button
-                  v-for="style in discussionStyles"
-                  :key="style.id"
-                  class="style-chip"
-                  :class="{ 'style-chip-active': continueStyle === style.id }"
-                  :title="style.description"
-                  @click="continueStyle = style.id"
-                >
-                  {{ style.name }}
-                </button>
-              </div>
-            </div>
-            <div class="continue-popup-row">
-              <label class="continue-label">追加轮次</label>
-              <div class="rounds-stepper">
-                <button class="stepper-btn" @click="continueRounds = Math.max(1, continueRounds - 1)">-</button>
-                <input
-                  v-model.number="continueRounds"
-                  type="number"
-                  class="rounds-input"
-                  min="1"
-                  max="100"
-                />
-                <button class="stepper-btn" @click="continueRounds = Math.min(100, continueRounds + 1)">+</button>
-              </div>
-            </div>
+          <!-- Expanded continue panel -->
+          <div v-else class="continue-panel">
+            <!-- Follow-up input -->
             <div class="continue-popup-row">
               <input
                 v-model="continueFollowUp"
@@ -611,8 +685,111 @@ onUnmounted(() => {
                 @keydown.enter="submitContinue"
               />
             </div>
+
+            <!-- Rounds + Style row -->
+            <div class="continue-row-split">
+              <div class="continue-popup-row">
+                <label class="continue-label">追加轮次</label>
+                <div class="rounds-stepper">
+                  <button class="stepper-btn" @click="continueRounds = Math.max(1, continueRounds - 1)">-</button>
+                  <input
+                    v-model.number="continueRounds"
+                    type="number"
+                    class="rounds-input"
+                    min="1"
+                    max="100"
+                  />
+                  <button class="stepper-btn" @click="continueRounds = Math.min(100, continueRounds + 1)">+</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Discussion style selector -->
+            <div v-if="discussionStyles.length > 0" class="continue-style-row">
+              <label class="continue-label">讨论风格</label>
+              <div class="continue-style-chips">
+                <button
+                  v-for="style in discussionStyles"
+                  :key="style.id"
+                  class="style-chip"
+                  :class="{ 'style-chip-active': continueStyle === style.id }"
+                  :title="style.description"
+                  @click="handleContinueStyleChange(style.id)"
+                >
+                  {{ style.name }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Prompt editor toggle -->
+            <button class="prompt-editor-toggle" @click="showPromptEditor = !showPromptEditor">
+              <svg class="prompt-editor-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              <span>自定义 Prompt</span>
+              <svg class="toggle-chevron" :class="{ 'is-open': showPromptEditor }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+              <span v-if="overridesModified" class="modified-dot" />
+            </button>
+
+            <!-- Prompt editor content -->
+            <div v-if="showPromptEditor && continueOverrides" class="prompt-editor">
+              <div class="prompt-editor-header">
+                <span class="prompt-editor-hint">编辑主策划的提示词（基于当前风格预设）</span>
+                <button
+                  v-if="overridesModified"
+                  class="prompt-reset-btn"
+                  @click="resetContinueOverrides"
+                >
+                  <svg class="prompt-reset-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  恢复预设
+                </button>
+              </div>
+              <div class="prompt-field">
+                <label class="prompt-field-label">目标 (Goal)</label>
+                <textarea
+                  class="prompt-textarea"
+                  rows="2"
+                  :value="continueOverrides.goal || ''"
+                  placeholder="主策划的目标..."
+                  @input="continueOverrides!.goal = ($event.target as HTMLTextAreaElement).value; overridesModified = true"
+                />
+              </div>
+              <div class="prompt-field">
+                <label class="prompt-field-label">背景 (Backstory)</label>
+                <textarea
+                  class="prompt-textarea"
+                  rows="3"
+                  :value="continueOverrides.backstory || ''"
+                  placeholder="主策划的背景设定..."
+                  @input="continueOverrides!.backstory = ($event.target as HTMLTextAreaElement).value; overridesModified = true"
+                />
+              </div>
+              <div class="prompt-field">
+                <label class="prompt-field-label">沟通风格 (Communication Style)</label>
+                <textarea
+                  class="prompt-textarea"
+                  rows="2"
+                  :value="continueOverrides.communication_style || ''"
+                  placeholder="沟通和表达方式..."
+                  @input="continueOverrides!.communication_style = ($event.target as HTMLTextAreaElement).value; overridesModified = true"
+                />
+              </div>
+            </div>
+
+            <!-- No overrides hint (when style has no override data) -->
+            <div v-else-if="showPromptEditor && !continueOverrides" class="prompt-editor-empty">
+              <span>当前风格暂无可编辑的 Prompt 数据</span>
+            </div>
+
+            <!-- Actions -->
             <div class="continue-popup-actions">
-              <button class="continue-cancel-btn" @click="showContinuePopup = false" :disabled="isContinuing">取消</button>
+              <button class="continue-cancel-btn" @click="showContinuePopup = false; showPromptEditor = false" :disabled="isContinuing">取消</button>
               <button class="continue-confirm-btn" :disabled="isContinuing" @click="submitContinue">
                 <svg v-if="isContinuing" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
@@ -951,11 +1128,19 @@ onUnmounted(() => {
   background: var(--bg-hover, rgba(0, 0, 0, 0.04));
 }
 
-.continue-popup {
+.continue-panel {
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.continue-row-split {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .continue-style-row {
@@ -1129,6 +1314,139 @@ onUnmounted(() => {
 .continue-confirm-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Prompt editor toggle */
+.prompt-editor-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  transition: color 0.15s;
+  align-self: flex-start;
+  position: relative;
+}
+
+.prompt-editor-toggle:hover {
+  color: var(--primary-color, #0A0A0A);
+}
+
+.prompt-editor-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.toggle-chevron {
+  width: 13px;
+  height: 13px;
+  transition: transform 0.2s;
+}
+
+.toggle-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.modified-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--primary-color, #3b82f6);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Prompt editor panel */
+.prompt-editor {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-primary);
+}
+
+.prompt-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.prompt-editor-hint {
+  font-size: 11px;
+  color: var(--text-weak);
+}
+
+.prompt-reset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 2px 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.prompt-reset-btn:hover {
+  color: var(--primary-color, #0A0A0A);
+  border-color: var(--primary-color, #0A0A0A);
+}
+
+.prompt-reset-icon {
+  width: 11px;
+  height: 11px;
+}
+
+.prompt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.prompt-field-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.prompt-textarea {
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+  transition: border-color 0.2s;
+}
+
+.prompt-textarea:focus {
+  outline: none;
+  border-color: var(--primary-color, #0A0A0A);
+  box-shadow: 0 0 0 2px rgba(10, 10, 10, 0.06);
+}
+
+.prompt-textarea::placeholder {
+  color: var(--text-weak);
+}
+
+.prompt-editor-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-weak);
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
 }
 
 /* Waiting placeholder */

@@ -72,7 +72,7 @@ function showLatest() {
         <div v-if="currentSummary?.key_points?.length" class="section">
           <h4 class="section-title">要点</h4>
           <ul class="point-list">
-            <li v-for="(point, idx) in currentSummary.key_points" :key="idx">{{ point }}</li>
+            <li v-for="(point, idx) in currentSummary.key_points" :key="idx" v-html="toSanitizedMarkdownHtml(point)"></li>
           </ul>
         </div>
 

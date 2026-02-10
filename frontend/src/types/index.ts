@@ -355,6 +355,21 @@ export interface DiscussionStyle {
   description: string
 }
 
+// Discussion style with full overrides (for prompt editing)
+export interface DiscussionStyleOverrides {
+  goal: string
+  backstory: string
+  communication_style: string
+  focus_areas: string[]
+}
+
+export interface DiscussionStyleFull {
+  id: string
+  name: string
+  description: string
+  overrides: DiscussionStyleOverrides
+}
+
 // Create discussion request with agent customization
 export interface CreateCurrentDiscussionRequest {
   topic: string
@@ -364,6 +379,7 @@ export interface CreateCurrentDiscussionRequest {
   agents?: string[]
   agent_configs?: Record<string, Partial<AgentConfig>>
   discussion_style?: string
+  password?: string  // 默认 "123456"
 }
 
 // Create discussion response (from POST /current)
