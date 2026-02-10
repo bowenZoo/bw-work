@@ -9,6 +9,7 @@ import type {
   RoundSummariesResponse,
   LobbyDiscussion,
   AvailableAgentsResponse,
+  DiscussionStyle,
 } from '@/types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
@@ -131,6 +132,20 @@ export async function getAvailableAgents(): Promise<AvailableAgentsResponse> {
     throw new Error(`Failed to get available agents: ${response.statusText}`);
   }
 
+  return response.json();
+}
+
+/**
+ * Get available discussion styles
+ */
+export async function getDiscussionStyles(): Promise<{
+  default: string;
+  styles: DiscussionStyle[];
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/discussions/styles`);
+  if (!response.ok) {
+    throw new Error(`Failed to get discussion styles: ${response.statusText}`);
+  }
   return response.json();
 }
 

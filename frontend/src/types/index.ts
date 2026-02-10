@@ -347,6 +347,13 @@ export interface LobbyDiscussion {
   agents: string[]
 }
 
+// Discussion style
+export interface DiscussionStyle {
+  id: string
+  name: string
+  description: string
+}
+
 // Create discussion request with agent customization
 export interface CreateCurrentDiscussionRequest {
   topic: string
@@ -355,6 +362,7 @@ export interface CreateCurrentDiscussionRequest {
   attachment?: AttachmentInfo | null
   agents?: string[]
   agent_configs?: Record<string, Partial<AgentConfig>>
+  discussion_style?: string
 }
 
 // Create discussion response (from POST /current)

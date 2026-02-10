@@ -84,6 +84,7 @@ class DiscussionState(BaseModel):
     continued_from: str | None = None  # 原讨论 ID（如果是续前讨论）
     agents: list[str] = Field(default_factory=list)  # 参与的 agent role_name 列表
     agent_configs: dict = Field(default_factory=dict)  # role_name -> config 覆盖
+    discussion_style: str = ""  # 讨论风格 (socratic/directive/debate)
 
 
 class GetDiscussionResponse(BaseModel):
@@ -139,6 +140,7 @@ class ExtendDiscussionRequest(BaseModel):
 
     follow_up: str = Field(default="", description="Follow-up topic or question")
     additional_rounds: int = Field(default=10, ge=1, le=100, description="Additional rounds to discuss")
+    discussion_style: str = Field(default="", description="Discussion style override (socratic, directive, debate)")
 
 
 class ExtendDiscussionResponse(BaseModel):
@@ -211,6 +213,7 @@ class CreateCurrentDiscussionRequest(BaseModel):
     attachment: AttachmentInfo | None = Field(default=None, description="Optional markdown attachment")
     agents: list[str] = Field(default_factory=list, description="Agent role names to participate")
     agent_configs: dict = Field(default_factory=dict, description="Per-agent config overrides")
+    discussion_style: str = Field(default="", description="Discussion style (socratic, directive, debate)")
 
 
 class CreateCurrentDiscussionResponse(BaseModel):
@@ -957,6 +960,16 @@ async def create_current_discussion(
         discussion_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
 
+        # Merge discussion style into agent_configs
+        agent_configs = dict(request.agent_configs) if request.agent_configs else {}
+        if request.discussion_style:
+            from src.config.settings import get_discussion_style_overrides
+            style_overrides = get_discussion_style_overrides(request.discussion_style)
+            if style_overrides:
+                lead_config = dict(agent_configs.get("lead_planner", {}))
+                lead_config.update(style_overrides)
+                agent_configs["lead_planner"] = lead_config
+
         discussion = DiscussionState(
             id=discussion_id,
             topic=request.topic,
@@ -967,7 +980,8 @@ async def create_current_discussion(
             started_at=now,
             attachment=request.attachment,
             agents=request.agents if hasattr(request, 'agents') and request.agents else [],
-            agent_configs=request.agent_configs if hasattr(request, 'agent_configs') and request.agent_configs else {},
+            agent_configs=agent_configs,
+            discussion_style=request.discussion_style or "",
         )
 
         # _current_discussion points to the most recently created discussion
@@ -1085,6 +1099,22 @@ async def create_discussion(request: CreateDiscussionRequest) -> CreateDiscussio
         status=DiscussionStatus.PENDING,
         created_at=now,
     )
+
+
+@router.get("/styles")
+async def get_discussion_styles():
+    """获取可用的讨论风格列表。"""
+    from src.config.settings import load_discussion_styles
+    data = load_discussion_styles()
+    default_style = data.get("default", "socratic")
+    styles = []
+    for style_id, style_def in data.get("styles", {}).items():
+        styles.append({
+            "id": style_id,
+            "name": style_def.get("name", style_id),
+            "description": style_def.get("description", ""),
+        })
+    return {"default": default_style, "styles": styles}
 
 
 @router.get("/active")
@@ -1505,6 +1535,18 @@ async def extend_discussion(
             status_code=400,
             detail=f"Only completed or failed discussions can be extended. Current: {discussion.status}",
         )
+
+    # Merge discussion style into agent_configs if provided
+    if request.discussion_style:
+        from src.config.settings import get_discussion_style_overrides
+        style_overrides = get_discussion_style_overrides(request.discussion_style)
+        if style_overrides:
+            agent_configs = dict(discussion.agent_configs) if discussion.agent_configs else {}
+            lead_config = dict(agent_configs.get("lead_planner", {}))
+            lead_config.update(style_overrides)
+            agent_configs["lead_planner"] = lead_config
+            discussion.agent_configs = agent_configs
+            discussion.discussion_style = request.discussion_style
 
     # Re-activate the discussion
     discussion.status = DiscussionStatus.RUNNING

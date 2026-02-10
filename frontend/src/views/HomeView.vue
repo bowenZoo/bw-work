@@ -2,10 +2,10 @@
 import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { Plus, Search, X, Paperclip, MessageSquare, FileText } from 'lucide-vue-next';
-import { getDiscussionHistory } from '@/api/discussion';
+import { getDiscussionHistory, getDiscussionStyles } from '@/api/discussion';
 import { useLobby } from '@/composables/useLobby';
 import { AgentConfigEditor } from '@/components/discussion';
-import type { DiscussionSummary, AgentConfig } from '@/types';
+import type { DiscussionSummary, AgentConfig, DiscussionStyle } from '@/types';
 
 const router = useRouter();
 
@@ -141,6 +141,11 @@ const isCreating = ref(false);
 const selectedAgents = ref<string[]>([]);
 const agentConfigs = ref<Record<string, Partial<AgentConfig>>>({});
 
+// Discussion style
+const discussionStyles = ref<DiscussionStyle[]>([]);
+const defaultStyleId = ref('socratic');
+const selectedStyle = ref('socratic');
+
 // Load workspace list
 async function loadWorkspaces(reset = false) {
   if (isLoadingList.value) return;
@@ -188,6 +193,7 @@ function openNewDialog() {
   attachmentContent.value = '';
   selectedAgents.value = [];
   agentConfigs.value = {};
+  selectedStyle.value = defaultStyleId.value;
 }
 
 function closeNewDialog() {
@@ -224,6 +230,7 @@ async function createDiscussion() {
       autoPauseInterval.value,
       selectedAgents.value.length > 0 ? selectedAgents.value : undefined,
       Object.keys(cleanConfigs).length > 0 ? cleanConfigs : undefined,
+      selectedStyle.value || undefined,
     );
 
     showNewDialog.value = false;
@@ -315,9 +322,27 @@ function isActiveStatus(status: string | null): boolean {
   return status === 'running' || status === 'queued' || status === 'paused';
 }
 
+// Load discussion styles
+async function loadStyles() {
+  try {
+    const data = await getDiscussionStyles();
+    discussionStyles.value = data.styles;
+    defaultStyleId.value = data.default;
+    selectedStyle.value = data.default;
+  } catch {
+    // Fallback defaults
+    discussionStyles.value = [
+      { id: 'socratic', name: '苏格拉底式', description: '不断追问「为什么」，逼迫每个决策回到第一性原理' },
+      { id: 'directive', name: '主策划主导制', description: '主策划提出框架，团队挑战补充，主策划有否决权' },
+      { id: 'debate', name: '辩论制', description: '各策划独立提案，互相质疑辩论，主策划裁决' },
+    ];
+  }
+}
+
 // Lifecycle
 onMounted(() => {
   loadWorkspaces(true);
+  loadStyles();
 });
 </script>
 
@@ -458,6 +483,22 @@ onMounted(() => {
                 class="topic-input"
                 autofocus
               />
+
+              <div v-if="discussionStyles.length > 0" class="style-section">
+                <label class="input-label">讨论风格</label>
+                <div class="style-options">
+                  <div
+                    v-for="style in discussionStyles"
+                    :key="style.id"
+                    class="style-option"
+                    :class="{ 'style-selected': selectedStyle === style.id }"
+                    @click="selectedStyle = style.id"
+                  >
+                    <span class="style-name">{{ style.name }}</span>
+                    <span class="style-desc">{{ style.description }}</span>
+                  </div>
+                </div>
+              </div>
 
               <div class="auto-pause-section">
                 <label class="input-label">自动暂停间隔</label>
@@ -1064,6 +1105,54 @@ onMounted(() => {
 
 .attachment-add:hover {
   color: var(--primary-color, #3b82f6);
+}
+
+.style-section {
+  margin-top: 14px;
+}
+
+.style-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.style-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1.5px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.style-option:hover {
+  border-color: #d1d5db;
+  background: #fafbfc;
+}
+
+.style-selected {
+  border-color: var(--primary-color, #3b82f6);
+  background: #eff6ff;
+}
+
+.style-selected:hover {
+  border-color: var(--primary-color, #3b82f6);
+  background: #eff6ff;
+}
+
+.style-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #111827);
+}
+
+.style-desc {
+  font-size: 12px;
+  color: var(--text-secondary, #9ca3af);
+  line-height: 1.3;
 }
 
 .agent-config-section {

@@ -268,6 +268,7 @@ export function useLobby() {
     autoPauseInterval: number = 5,
     agents?: string[],
     agentConfigs?: Record<string, Partial<AgentConfig>>,
+    discussionStyle?: string,
   ): Promise<CreateCurrentDiscussionResponse> {
     const response = await createCurrentDiscussion({
       topic,
@@ -276,6 +277,7 @@ export function useLobby() {
       attachment: attachment || null,
       agents,
       agent_configs: agentConfigs,
+      discussion_style: discussionStyle,
     });
 
     // Optimistically add to active list

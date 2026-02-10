@@ -180,6 +180,36 @@ def load_role_config(role_name: str, settings: Settings | None = None) -> dict[s
         return yaml.safe_load(f)
 
 
+def load_discussion_styles() -> dict[str, Any]:
+    """Load discussion style definitions from YAML.
+
+    Returns:
+        Dictionary with 'default' and 'styles' keys.
+    """
+    styles_path = Path(__file__).parent / "discussion_styles.yaml"
+    if not styles_path.exists():
+        return {"default": "socratic", "styles": {}}
+    with open(styles_path, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    return data or {"default": "socratic", "styles": {}}
+
+
+def get_discussion_style_overrides(style_id: str) -> dict[str, Any] | None:
+    """Get lead_planner config overrides for a discussion style.
+
+    Args:
+        style_id: Style identifier (e.g., 'socratic', 'directive', 'debate')
+
+    Returns:
+        Dict of config overrides, or None if style not found.
+    """
+    data = load_discussion_styles()
+    style = data.get("styles", {}).get(style_id)
+    if not style:
+        return None
+    return style.get("overrides")
+
+
 # Global settings instance
 settings = Settings()
 

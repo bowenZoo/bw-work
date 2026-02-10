@@ -18,7 +18,8 @@ import { usePlayback } from '@/composables/usePlayback';
 import { useDiscussion } from '@/composables/useDiscussion';
 import { useAgentsStore } from '@/stores/agents';
 import api from '@/api';
-import type { AgendaItem, AgentStatus } from '@/types';
+import { getDiscussionStyles } from '@/api/discussion';
+import type { AgendaItem, AgentStatus, DiscussionStyle } from '@/types';
 
 // Props for playback mode
 const props = defineProps<{
@@ -40,6 +41,8 @@ const continueFollowUp = ref('');
 const continueRounds = ref(5);
 const showContinuePopup = ref(false);
 const isContinuing = ref(false);
+const continueStyle = ref('');
+const discussionStyles = ref<DiscussionStyle[]>([]);
 
 // Attachment preview modal state
 const showAttachmentPreview = ref(false);
@@ -204,6 +207,8 @@ onMounted(async () => {
   if (discussionId.value) {
     await fetchAgenda();
   }
+  // Load discussion styles for continue popup
+  loadDiscussionStyles();
 });
 
 // Handle topic submission (live mode only — creates a new discussion)
@@ -285,10 +290,14 @@ async function submitContinue() {
 
   isContinuing.value = true;
   try {
-    await api.post(`/api/discussions/${discId}/extend`, {
+    const payload: Record<string, any> = {
       follow_up: followUp,
       additional_rounds: continueRounds.value,
-    });
+    };
+    if (continueStyle.value) {
+      payload.discussion_style = continueStyle.value;
+    }
+    await api.post(`/api/discussions/${discId}/extend`, payload);
     continueFollowUp.value = '';
     showContinuePopup.value = false;
   } catch (error: any) {
@@ -296,6 +305,22 @@ async function submitContinue() {
     setError(error.response?.data?.detail || '继续讨论失败');
   } finally {
     isContinuing.value = false;
+  }
+}
+
+// Load discussion styles for continue popup
+async function loadDiscussionStyles() {
+  try {
+    const data = await getDiscussionStyles();
+    discussionStyles.value = data.styles;
+    continueStyle.value = data.default;
+  } catch {
+    discussionStyles.value = [
+      { id: 'socratic', name: '苏格拉底式', description: '不断追问「为什么」，逼迫每个决策回到第一性原理' },
+      { id: 'directive', name: '主策划主导制', description: '主策划提出框架，团队挑战补充，主策划有否决权' },
+      { id: 'debate', name: '辩论制', description: '各策划独立提案，互相质疑辩论，主策划裁决' },
+    ];
+    continueStyle.value = 'socratic';
   }
 }
 
@@ -531,6 +556,22 @@ onUnmounted(() => {
           </button>
           <!-- Expanded popup -->
           <div v-else class="continue-popup">
+            <!-- Discussion style selector -->
+            <div v-if="discussionStyles.length > 0" class="continue-style-row">
+              <label class="continue-label">讨论风格</label>
+              <div class="continue-style-chips">
+                <button
+                  v-for="style in discussionStyles"
+                  :key="style.id"
+                  class="style-chip"
+                  :class="{ 'style-chip-active': continueStyle === style.id }"
+                  :title="style.description"
+                  @click="continueStyle = style.id"
+                >
+                  {{ style.name }}
+                </button>
+              </div>
+            </div>
             <div class="continue-popup-row">
               <label class="continue-label">追加轮次</label>
               <div class="rounds-stepper">
@@ -900,6 +941,46 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.continue-style-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.continue-style-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.style-chip {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.style-chip:hover {
+  border-color: #d1d5db;
+  background: var(--bg-hover, #f9fafb);
+}
+
+.style-chip-active {
+  color: var(--primary-color, #3b82f6);
+  background: #eff6ff;
+  border-color: var(--primary-color, #3b82f6);
+}
+
+.style-chip-active:hover {
+  background: #eff6ff;
+  border-color: var(--primary-color, #3b82f6);
 }
 
 .continue-popup-row {
