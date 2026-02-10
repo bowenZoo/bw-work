@@ -1,8 +1,8 @@
 # 游戏策划 AI 团队 规格文档
 
-> **版本**: 1.3
+> **版本**: 1.4
 > **创建时间**: 2026-02-04
-> **更新时间**: 2026-02-05
+> **更新时间**: 2026-02-10
 
 ## 1. 项目概述
 
@@ -921,6 +921,524 @@ Response:
 - 与外部项目管理工具集成（如 Jira）
 - 自动生成技术规格（由 bw-game 负责）
 
+### 2.9 讨论流程动态化改造
+
+#### 概述
+
+当前的文档驱动讨论流程（`run_document_centric`）存在三个核心局限：
+
+1. **议题层(Agenda)是孤岛**：`Agenda` 模型和 `create_agenda_prompt` 已实现，但未真正接入 `run_document_centric` 主循环。议题仅作为展示数据，不影响讨论走向。
+2. **文档结构一次性固化**：`DocPlan` 在 Phase 0 生成后不再变化，无法响应讨论中发现的新需求（如需拆分章节、新增文件）。
+3. **观众干预缺乏回溯能力**：用户注入消息后，讨论只能在当前章节处理，无法回溯已完成章节进行修订。
+
+本模块的目标是将这三个能力真正融入讨论主循环，使讨论过程具备"自适应"特性。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│               讨论流程动态化 - 三层改造                             │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Layer 1: 议题驱动 (Agenda-Driven)                       │   │
+│  │  Agenda ←→ DocPlan sections (多对多)                      │   │
+│  │  每轮结束：标记完结 / 新增议题 / 调整优先级                   │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                           ↕                                     │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Layer 2: 文档结构动态重组 (Dynamic DocPlan)              │   │
+│  │  主策划每轮总结时可：拆分 / 合并 / 新增章节                   │   │
+│  │  DocWriter 支持追加 section marker                        │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                           ↕                                     │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Layer 3: 干预回溯 (Intervention Retrospection)          │   │
+│  │  观众消息 → 影响评估 → 当前章节处理 / 回溯修订              │   │
+│  │  已完成章节可标记回 pending，保留内容允许修订                 │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 用户故事
+
+- US-27: 作为用户，我希望讨论开始时自动生成议程，并在讨论过程中看到议题的推进和完成状态
+- US-28: 作为用户，我希望系统能在讨论中发现新议题并自动追加，而不是遗漏它们
+- US-29: 作为用户，我希望策划文档的结构能随讨论深入而演化，而不是被初始规划限死
+- US-30: 作为用户，我希望注入意见后，系统能智能判断影响范围，必要时回溯修订已完成的章节
+- US-31: 作为用户，我希望文档结构变更时前端能实时更新，不需要刷新页面
+
+#### 功能点
+
+| ID | 功能 | 优先级 | 描述 |
+|----|------|--------|------|
+| F-48 | 议题自动生成 | P0 | 讨论启动时主策划根据话题生成初始议程 |
+| F-49 | 议题生命周期管理 | P0 | 每轮结束后主策划可标记议题完结、新增、调整优先级 |
+| F-50 | 议题-章节多对多映射 | P0 | 建立议题与文档章节的关联关系 |
+| F-51 | 章节拆分 | P1 | 主策划可将一个章节拆分为多个子章节 |
+| F-52 | 章节合并 | P1 | 主策划可将多个相关章节合并为一个 |
+| F-53 | 章节/文件新增 | P0 | 主策划可在讨论中途新增文件或章节 |
+| F-54 | DocWriter 动态追加 | P0 | DocWriter 支持在已有骨架上追加 section marker |
+| F-55 | 干预影响评估 | P0 | 观众消息注入后，主策划执行影响评估环节 |
+| F-56 | 章节回溯修订 | P1 | 已完成章节可标记回 pending，保留内容允许增量修订 |
+| F-57 | 文档变更广播 | P0 | DocPlan 变更后实时广播给前端 |
+
+#### 详细设计
+
+##### 1. 议题层(Agenda)接入讨论流程
+
+**现状分析**：
+
+当前代码中 `Agenda`、`AgendaItem` 模型已完整实现（`backend/src/models/agenda.py`），`LeadPlanner.create_agenda_prompt` 已定义（`backend/src/agents/lead_planner.py:549`），`DiscussionCrew._init_agenda` 和 `complete_current_agenda_item` 方法已实现，前端 `AgendaPanel` 组件和 WebSocket 事件处理已就绪。但 `run_document_centric` 主循环从未调用这些方法。
+
+**改造方案**：
+
+在 `run_document_centric` 的 Phase 0（生成 DocPlan 之后）插入议题生成步骤，并在每轮 section summary 之后插入议题管理步骤。
+
+```
+Phase 0 流程变更:
+  1. _generate_doc_plan(topic, attachment)        # 已有
+  2. _doc_writer.create_skeleton(doc_plan)         # 已有
+  3. [新增] _generate_initial_agenda(topic, attachment)
+     └→ 调用 lead_planner.create_agenda_prompt()
+     └→ 解析输出，调用 _init_agenda()
+     └→ 广播 agenda_init 事件
+
+每轮结束时的流程变更:
+  1. _lead_planner_section_summary()              # 已有
+  2. [新增] _agenda_round_update(summary, section)
+     └→ 解析 summary 中的议题指令
+     └→ 执行：标记完结 / 新增 / 调整优先级
+     └→ 广播 agenda 事件
+```
+
+**议题管理指令格式**（在主策划 summary 中输出）：
+
+```markdown
+### 议题状态更新
+```agenda_update
+complete: <agenda_item_id>  # 标记议题完结
+add: [新议题标题] - 描述     # 新增发现的议题
+priority: <agenda_item_id> high|low  # 调整优先级
+```（结束标记）
+```
+
+**议题-章节映射**：
+
+在 `AgendaItem` 模型上新增 `related_sections` 字段，在 `SectionPlan` 上新增 `related_agenda_items` 字段，建立多对多关系。
+
+```python
+# agenda.py 扩展
+class AgendaItem(BaseModel):
+    # ... 已有字段 ...
+    related_sections: list[str] = Field(default_factory=list)  # section IDs
+    priority: int = 0  # 0=normal, 1=high, -1=low
+
+# doc_plan.py 扩展
+@dataclass
+class SectionPlan:
+    # ... 已有字段 ...
+    related_agenda_items: list[str] = field(default_factory=list)  # agenda item IDs
+```
+
+**映射建立时机**：
+- Phase 0 初始映射：根据议题标题与章节标题的语义匹配自动建立
+- 讨论中动态映射：主策划在 section opening 中可声明当前章节关联哪些议题
+- 映射广播：通过 `agenda_mapping_update` WebSocket 事件通知前端
+
+##### 2. 文档结构动态重组
+
+**现状分析**：
+
+`DocPlan` 在 `_generate_doc_plan` 中一次性生成，后续仅有 `section.status` 的变更。`DocWriter.create_skeleton` 只在开头调用一次。需要支持运行时修改 `DocPlan` 并同步修改文件。
+
+**支持的结构变更操作**：
+
+| 操作 | 触发者 | 前置条件 | 影响 |
+|------|--------|----------|------|
+| 拆分章节 | 主策划 summary | 原章节尚未 completed | 原章节替换为多个子章节，内容分发 |
+| 合并章节 | 主策划 summary | 被合并章节均未 completed | 多个章节合并为一个，内容合并 |
+| 新增章节 | 主策划 summary | 无 | 在指定文件的指定位置插入新章节 |
+| 新增文件 | 主策划 summary | 无 | 创建新文件和其章节 |
+
+**DocPlan 变更操作接口**：
+
+```python
+# doc_plan.py 新增方法
+class DocPlan:
+    def split_section(self, section_id: str, new_sections: list[SectionPlan]) -> bool:
+        """将一个章节拆分为多个子章节。"""
+
+    def merge_sections(self, section_ids: list[str], merged: SectionPlan) -> bool:
+        """将多个章节合并为一个。"""
+
+    def add_section(self, file_index: int, section: SectionPlan,
+                    after_section_id: str | None = None) -> bool:
+        """在指定文件中添加新章节。"""
+
+    def add_file(self, file_plan: "FilePlan") -> None:
+        """添加新文件到文档计划。"""
+```
+
+**DocWriter 动态更新接口**：
+
+```python
+# doc_writer.py 新增方法
+class DocWriter:
+    def add_section_marker(self, filename: str, section_id: str,
+                           title: str, description: str,
+                           after_section_id: str | None = None) -> str:
+        """在已有文件中追加 section marker。"""
+
+    def split_section_content(self, filename: str, old_section_id: str,
+                              new_sections: list[dict]) -> str:
+        """拆分一个 section 的内容到多个新 section。"""
+
+    def merge_section_content(self, filename: str, section_ids: list[str],
+                              merged_section_id: str, merged_title: str) -> str:
+        """合并多个 section 的内容为一个。"""
+
+    def create_new_file(self, file_plan) -> None:
+        """创建新的骨架文件。"""
+```
+
+**变更指令格式**（在主策划 summary 中输出）：
+
+```markdown
+### 文档结构调整
+```doc_restructure
+split: s3 -> [s3a: "战斗公式设计", s3b: "战斗反馈设计"]
+merge: [s5, s6] -> s5_6: "音效与视觉反馈"
+add_section: file=0, after=s2, id=s2b, title="玩家反馈循环", desc="..."
+add_file: filename="数值平衡.md", title="数值平衡设计", sections=[{id: "sN1", ...}]
+```（结束标记）
+```
+
+**变更处理流程**：
+
+```
+主策划 summary 输出
+  │
+  ├─ 解析 ```doc_restructure 代码块
+  │
+  ├─ 校验变更合法性
+  │   ├─ 拆分：原章节未 completed
+  │   ├─ 合并：所有目标章节未 completed
+  │   ├─ 新增：section_id 不冲突
+  │   └─ 新文件：filename 不冲突
+  │
+  ├─ 执行 DocPlan 变更
+  │
+  ├─ 执行 DocWriter 文件变更
+  │
+  ├─ 更新 Agenda 映射（如有关联）
+  │
+  └─ 广播 doc_plan 事件 + section_update 事件
+```
+
+##### 3. 观众干预后的回溯审视
+
+**现状分析**：
+
+当前 `_inject_user_messages` 仅将消息记录到 memory 并广播，然后在下一轮正常讨论中作为上下文使用。不存在"影响评估"环节，也无法回溯已完成章节。
+
+**改造方案**：
+
+在 `_inject_user_messages` 之后、下一轮正常讨论之前，插入一个"影响评估"环节。
+
+**影响评估流程**：
+
+```
+观众消息注入
+  │
+  ├─ _inject_user_messages(injected)          # 已有
+  │
+  └─ [新增] _assess_intervention_impact(injected)
+      │
+      ├─ 调用 lead_planner 评估影响范围
+      │   输入：用户消息 + 当前 DocPlan + 当前章节内容 + 已完成章节列表
+      │
+      ├─ 解析评估结果
+      │   ├─ CURRENT_ONLY  → 仅在当前章节处理，无需回溯
+      │   ├─ REOPEN:[s1,s3] → 需要重开指定已完成章节
+      │   └─ NEW_TOPIC      → 需要新增议题和/或章节
+      │
+      ├─ 执行回溯操作（如需要）
+      │   ├─ section.status = "pending"（保留已有内容）
+      │   ├─ 更新 DocPlan.current_section_id（可选：优先回溯）
+      │   └─ 广播 section_reopened 事件
+      │
+      ├─ 执行新增操作（如需要）
+      │   ├─ 新增 Agenda item
+      │   ├─ 新增 DocPlan section
+      │   └─ DocWriter 追加 section marker
+      │
+      └─ 广播 intervention_assessment 事件
+          内容：评估结论、受影响章节、处理方案
+```
+
+**影响评估 Prompt**：
+
+```python
+# lead_planner.py 新增方法
+class LeadPlanner:
+    def create_intervention_assessment_prompt(
+        self,
+        user_messages: list[str],
+        current_section: str,
+        completed_sections: list[dict],  # [{id, title, content_summary}]
+        doc_plan_summary: str,
+    ) -> str:
+        """创建干预影响评估 prompt。"""
+```
+
+**评估结果格式**：
+
+```markdown
+### 干预影响评估
+```intervention_assessment
+impact_level: CURRENT_ONLY | REOPEN | NEW_TOPIC
+affected_sections: [s1, s3]  # 需要重开的章节 ID
+reason: "用户指出战斗系统需要考虑PvP场景，这影响了已完成的s1(系统概述)和当前的s3(战斗设计)"
+action_plan:
+  - reopen s1: "在系统概述中补充PvP模式说明"
+  - current s3: "在当前章节的讨论中纳入PvP战斗设计"
+  - add_agenda: "PvP 平衡性讨论" - "针对PvP模式的数值平衡专项讨论"
+```（结束标记）
+```
+
+**回溯修订的约束**：
+
+- 已完成章节标记回 `pending` 时，**保留已有内容**
+- DocWriter 的 `update_section` 已支持增量更新（"在其基础上增补和完善，不要推翻已有结论"），天然适配回溯修订
+- 回溯的章节在讨论队列中优先级低于当前章节（先完成当前，再回溯修订），除非用户明确要求立即回溯
+- 每次回溯最多重开 3 个章节，避免过度回溯导致讨论失控
+
+#### 数据模型变更
+
+##### AgendaItem 扩展
+
+```python
+class AgendaItem(BaseModel):
+    # ... 已有字段 ...
+    related_sections: list[str] = Field(default_factory=list)  # 关联的 section IDs
+    priority: int = Field(default=0)  # -1=low, 0=normal, 1=high
+    source: str = Field(default="initial")  # "initial" | "discovered" | "intervention"
+```
+
+##### SectionPlan 扩展
+
+```python
+@dataclass
+class SectionPlan:
+    # ... 已有字段 ...
+    related_agenda_items: list[str] = field(default_factory=list)  # 关联的 agenda item IDs
+    revision_count: int = 0  # 被回溯修订的次数
+    reopened_reason: str | None = None  # 重开原因（如有）
+```
+
+##### DocPlan 新增方法
+
+```python
+@dataclass
+class DocPlan:
+    # ... 已有字段和方法 ...
+
+    def split_section(self, section_id: str, new_sections: list["SectionPlan"]) -> bool:
+        """拆分章节。返回是否成功。"""
+
+    def merge_sections(self, section_ids: list[str], merged: "SectionPlan") -> bool:
+        """合并章节。返回是否成功。"""
+
+    def add_section(self, file_index: int, section: "SectionPlan",
+                    after_section_id: str | None = None) -> bool:
+        """新增章节。返回是否成功。"""
+
+    def add_file(self, file_plan: "FilePlan") -> None:
+        """新增文件。"""
+
+    def reopen_section(self, section_id: str, reason: str) -> bool:
+        """将已完成章节标记回 pending，保留内容。"""
+
+    def get_completed_sections(self) -> list[tuple["FilePlan", "SectionPlan"]]:
+        """获取所有已完成的章节。"""
+
+    def get_reopened_sections(self) -> list[tuple["FilePlan", "SectionPlan"]]:
+        """获取所有被回溯重开的章节。"""
+```
+
+#### WebSocket 新增事件
+
+```typescript
+// 议题初始化（已有，但需在 run_document_centric 中调用）
+{
+  type: "agenda",
+  data: {
+    event_type: "agenda_init",
+    agenda: Agenda
+  }
+}
+
+// 议题-章节映射更新
+{
+  type: "agenda",
+  data: {
+    event_type: "mapping_update",
+    mappings: Array<{
+      agenda_item_id: string,
+      section_ids: string[]
+    }>
+  }
+}
+
+// 文档结构变更
+{
+  type: "doc_restructure",
+  data: {
+    discussion_id: string,
+    operation: "split" | "merge" | "add_section" | "add_file",
+    details: object,  // 操作特定数据
+    updated_doc_plan: DocPlan  // 变更后的完整 DocPlan
+  }
+}
+
+// 章节重开（回溯）
+{
+  type: "section_reopened",
+  data: {
+    discussion_id: string,
+    section_id: string,
+    section_title: string,
+    filename: string,
+    reason: string
+  }
+}
+
+// 干预影响评估结果
+{
+  type: "intervention_assessment",
+  data: {
+    discussion_id: string,
+    impact_level: "CURRENT_ONLY" | "REOPEN" | "NEW_TOPIC",
+    affected_sections: string[],
+    reason: string,
+    action_plan: string[]
+  }
+}
+```
+
+#### API 接口变更
+
+##### 手动触发议题操作
+
+```
+POST /api/discussions/{discussion_id}/agenda/items/{item_id}/complete
+Response: { "status": "completed", "item": AgendaItem }
+
+POST /api/discussions/{discussion_id}/agenda/items/{item_id}/priority
+Request: { "priority": 1 }  // -1, 0, 1
+Response: { "status": "updated", "item": AgendaItem }
+```
+
+##### 手动触发文档重组（管理员/调试用）
+
+```
+POST /api/discussions/{discussion_id}/doc-plan/restructure
+Request: {
+  "operation": "add_section",
+  "params": {
+    "file_index": 0,
+    "section": { "id": "sN", "title": "...", "description": "..." },
+    "after_section_id": "s3"
+  }
+}
+Response: { "status": "success", "doc_plan": DocPlan }
+```
+
+#### 代码改动范围
+
+| 文件 | 改动类型 | 说明 |
+|------|----------|------|
+| `backend/src/models/agenda.py` | 扩展 | AgendaItem 新增 `related_sections`、`priority`、`source` |
+| `backend/src/models/doc_plan.py` | 扩展 | SectionPlan 新增字段; DocPlan 新增 `split_section`/`merge_sections`/`add_section`/`add_file`/`reopen_section` |
+| `backend/src/agents/lead_planner.py` | 扩展 | 新增 `create_intervention_assessment_prompt`; 修改 `create_section_summary_prompt` 加入议题和结构调整指令格式 |
+| `backend/src/agents/doc_writer.py` | 扩展 | 新增 `add_section_marker`/`split_section_content`/`merge_section_content`/`create_new_file` |
+| `backend/src/crew/discussion_crew.py` | 核心改动 | `run_document_centric` 主循环插入议题生成、议题管理、结构变更处理、干预评估步骤 |
+| `backend/src/api/routes/intervention.py` | 扩展 | 新增议题优先级调整、手动文档重组接口 |
+| `backend/src/api/websocket/events.py` | 扩展 | 新增 `doc_restructure`、`section_reopened`、`intervention_assessment` 事件 |
+| `frontend/src/composables/useDiscussion.ts` | 扩展 | 处理新 WebSocket 事件，更新本地 docPlan/agenda 状态 |
+| `frontend/src/types/index.ts` | 扩展 | 新增事件类型定义 |
+| `frontend/src/components/discussion/AgendaPanel.vue` | 扩展 | 展示议题-章节映射、议题来源标签 |
+
+#### `run_document_centric` 改造后伪代码
+
+```python
+def run_document_centric(self, topic, max_rounds, attachment, auto_pause_interval):
+    self._init_discussion(topic)
+
+    # Phase 0a: 生成文档计划
+    doc_plan = self._generate_doc_plan(topic, attachment)
+    self._doc_writer.create_skeleton(doc_plan)
+    self._broadcast_doc_plan_event(doc_plan)
+
+    # Phase 0b: [新增] 生成初始议程
+    agenda = self._generate_initial_agenda(topic, attachment)
+    self._establish_agenda_section_mapping(agenda, doc_plan)
+    self._broadcast_agenda_event("agenda_init", agenda.to_dict())
+
+    # Phase 1-N: 逐章节讨论
+    for round_num in range(1, max_rounds + 1):
+        file_plan, section = self._pick_next_section(doc_plan)
+        if file_plan is None:
+            break
+
+        # ... 已有的 section opening / agents discuss / section summary ...
+
+        opening = self._lead_planner_section_opening(section, ...)
+        round_responses = self._run_agents_parallel_sync(...)
+        summary = self._lead_planner_section_summary(...)
+
+        # [新增] 解析并执行议题管理指令
+        self._process_agenda_directives(summary, section)
+
+        # [新增] 解析并执行文档结构变更指令
+        self._process_doc_restructure(summary, doc_plan, section)
+
+        # DocWriter 更新章节
+        self._doc_writer.update_section(...)
+
+        # 检查暂停/干预
+        injected = self._check_pause_and_wait()
+        if injected:
+            self._inject_user_messages(injected)
+
+            # [新增] 干预影响评估
+            assessment = self._assess_intervention_impact(injected, doc_plan, section)
+            self._execute_assessment_actions(assessment, doc_plan)
+
+        # 广播更新后的状态
+        self._broadcast_doc_plan_event(doc_plan)
+```
+
+#### 验收标准
+
+- [ ] AC-40: 讨论启动时自动生成议程并展示在前端 AgendaPanel 中
+- [ ] AC-41: 每轮结束后，主策划可通过 summary 中的指令标记议题完结
+- [ ] AC-42: 讨论过程中发现的新议题能自动追加到议程
+- [ ] AC-43: 议题与文档章节的多对多映射在前端可视化展示
+- [ ] AC-44: 主策划可在讨论中途新增文档章节，DocWriter 正确追加 section marker
+- [ ] AC-45: 主策划可拆分章节，原内容正确分发到子章节
+- [ ] AC-46: 文档结构变更后，前端实时更新 DocPlan 展示
+- [ ] AC-47: 观众消息注入后，系统执行影响评估并展示评估结果
+- [ ] AC-48: 影响评估判定需要回溯时，已完成章节正确标记回 pending
+- [ ] AC-49: 回溯修订的章节保留已有内容，DocWriter 在已有内容基础上增量更新
+- [ ] AC-50: 每次回溯最多重开 3 个章节，超出时提示用户确认
+
+#### 暂不实现
+
+- 议题投票机制（Agent 对议题优先级投票）
+- 章节之间的依赖关系建模（如 s2 依赖 s1 的结论）
+- 多次回溯的冲突检测（同一章节被多次回溯）
+- 文档结构变更的撤销/回退
+- 前端拖拽调整文档结构
+
 ## 3. 技术约束
 
 ### 3.1 两层 Agent 架构
@@ -1102,7 +1620,16 @@ data/
 - 策划案汇总 (F-46)
 - 讨论进度追踪 (F-47)
 
-### Phase 6: 高级功能
+### Phase 6: 讨论流程动态化 (新增)
+- 议题自动生成与生命周期管理 (F-48, F-49)
+- 议题-章节多对多映射 (F-50)
+- 文档结构动态重组：拆分/合并/新增 (F-51, F-52, F-53)
+- DocWriter 动态追加 (F-54)
+- 干预影响评估 (F-55)
+- 章节回溯修订 (F-56)
+- 文档变更广播 (F-57)
+
+### Phase 7: 高级功能
 - 人工介入节点 (F-11)
 - 自动配图 (F-35)
 - 多项目并行
@@ -1128,6 +1655,11 @@ data/
 | 项目级记忆 | 跨模块共享的上下文记忆，保持讨论一致性 |
 | 断点恢复 | 中断后从上次位置继续讨论的能力 |
 | 策划案 | 纯策划内容的设计文档，不含技术规格 |
+| 议题驱动 | 讨论流程由议程(Agenda)中的议题项驱动推进 |
+| 文档重组 | 讨论过程中对 DocPlan 结构的动态调整（拆分/合并/新增） |
+| 干预回溯 | 观众注入消息后，评估影响范围并回溯修订已完成章节 |
+| 影响评估 | 主策划对观众干预的影响范围进行分析的环节 |
+| section marker | DocWriter 在 .md 文件中用 `<!-- section:sN -->` 标记的章节边界 |
 
 ### B. 文档版本历史
 
@@ -1137,3 +1669,4 @@ data/
 | 1.1 | 2026-02-04 | 补充"两层 Agent 架构"说明，修正存储上限约束 |
 | 1.2 | 2026-02-05 | 新增图像生成系统模块 (2.7)，更新里程碑规划 |
 | 1.3 | 2026-02-05 | 新增项目级策划讨论模块 (2.8)，支持 GDD 上传、批量模块讨论、策划案生成 |
+| 1.4 | 2026-02-10 | 新增讨论流程动态化改造模块 (2.9)，议题驱动、文档动态重组、干预回溯审视 |
