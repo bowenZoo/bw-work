@@ -234,7 +234,7 @@ class CreateCurrentDiscussionRequest(BaseModel):
     agents: list[str] = Field(default_factory=list, description="Agent role names to participate")
     agent_configs: dict = Field(default_factory=dict, description="Per-agent config overrides")
     discussion_style: str = Field(default="", description="Discussion style (socratic, directive, debate)")
-    password: str = Field(default="", description="Discussion password (empty string for no password)")
+    password: str = Field(default="123456", description="Discussion password (empty string for no password)")
 
 
 class CreateCurrentDiscussionResponse(BaseModel):

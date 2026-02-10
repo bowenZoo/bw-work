@@ -153,7 +153,7 @@ const collapsedSections = ref<Record<string, boolean>>({});
 const newFocusArea = ref('');
 
 // Password
-const password = ref('');
+const password = ref('123456');
 const showPassword = ref(false);
 
 // Error state
@@ -207,7 +207,7 @@ function openNewDialog() {
   selectedAgents.value = [];
   agentConfigs.value = {};
   selectedStyle.value = defaultStyleId.value;
-  password.value = '';
+  password.value = '123456';
   showPassword.value = false;
   collapsedSections.value = {};
   newFocusArea.value = '';
