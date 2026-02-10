@@ -23,7 +23,7 @@ export interface Message {
 }
 
 // Discussion status
-export type DiscussionStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type DiscussionStatus = 'pending' | 'queued' | 'running' | 'paused' | 'completed' | 'failed';
 
 // Discussion interface
 export interface Discussion {
@@ -94,6 +94,7 @@ export interface DiscussionStatusResponse {
   attachment?: AttachmentInfo | null;
   continued_from?: string | null;  // 原讨论 ID
   is_continuation?: boolean;  // 是否是续前讨论
+  discussion_style?: string;  // 讨论风格
 }
 
 // History API types

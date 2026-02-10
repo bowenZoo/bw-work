@@ -180,18 +180,28 @@ def load_role_config(role_name: str, settings: Settings | None = None) -> dict[s
         return yaml.safe_load(f)
 
 
+_discussion_styles_cache: dict[str, Any] | None = None
+
+
 def load_discussion_styles() -> dict[str, Any]:
-    """Load discussion style definitions from YAML.
+    """Load discussion style definitions from YAML (cached after first read).
 
     Returns:
         Dictionary with 'default' and 'styles' keys.
     """
+    global _discussion_styles_cache
+    if _discussion_styles_cache is not None:
+        return _discussion_styles_cache
+
+    _fallback = {"default": "socratic", "styles": {}}
     styles_path = Path(__file__).parent / "discussion_styles.yaml"
     if not styles_path.exists():
-        return {"default": "socratic", "styles": {}}
+        _discussion_styles_cache = _fallback
+        return _fallback
     with open(styles_path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    return data or {"default": "socratic", "styles": {}}
+    _discussion_styles_cache = data or _fallback
+    return _discussion_styles_cache
 
 
 def get_discussion_style_overrides(style_id: str) -> dict[str, Any] | None:

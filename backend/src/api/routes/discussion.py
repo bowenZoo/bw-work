@@ -102,6 +102,7 @@ class GetDiscussionResponse(BaseModel):
     attachment: AttachmentInfo | None = None
     continued_from: str | None = None  # 原讨论 ID
     is_continuation: bool = False  # 是否是续前讨论
+    discussion_style: str = ""  # 讨论风格
 
 
 class StartDiscussionResponse(BaseModel):
@@ -942,6 +943,7 @@ async def get_current_discussion_api() -> GetDiscussionResponse | None:
         attachment=discussion.attachment,
         continued_from=discussion.continued_from,
         is_continuation=discussion.continued_from is not None,
+        discussion_style=getattr(discussion, "discussion_style", ""),
     )
 
 
@@ -965,10 +967,14 @@ async def create_current_discussion(
         if request.discussion_style:
             from src.config.settings import get_discussion_style_overrides
             style_overrides = get_discussion_style_overrides(request.discussion_style)
-            if style_overrides:
-                lead_config = dict(agent_configs.get("lead_planner", {}))
-                lead_config.update(style_overrides)
-                agent_configs["lead_planner"] = lead_config
+            if style_overrides is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"未知的讨论风格: {request.discussion_style}",
+                )
+            lead_config = dict(agent_configs.get("lead_planner", {}))
+            lead_config.update(style_overrides)
+            agent_configs["lead_planner"] = lead_config
 
         discussion = DiscussionState(
             id=discussion_id,
@@ -1062,6 +1068,7 @@ async def join_current_discussion() -> JoinDiscussionResponse:
             attachment=discussion.attachment,
             continued_from=discussion.continued_from,
             is_continuation=discussion.continued_from is not None,
+            discussion_style=getattr(discussion, "discussion_style", ""),
         ),
         messages=messages,
     )
@@ -1207,6 +1214,7 @@ async def get_discussion(discussion_id: str) -> GetDiscussionResponse:
         attachment=discussion.attachment,
         continued_from=discussion.continued_from,
         is_continuation=discussion.continued_from is not None,
+        discussion_style=getattr(discussion, "discussion_style", ""),
     )
 
 
@@ -1540,13 +1548,17 @@ async def extend_discussion(
     if request.discussion_style:
         from src.config.settings import get_discussion_style_overrides
         style_overrides = get_discussion_style_overrides(request.discussion_style)
-        if style_overrides:
-            agent_configs = dict(discussion.agent_configs) if discussion.agent_configs else {}
-            lead_config = dict(agent_configs.get("lead_planner", {}))
-            lead_config.update(style_overrides)
-            agent_configs["lead_planner"] = lead_config
-            discussion.agent_configs = agent_configs
-            discussion.discussion_style = request.discussion_style
+        if style_overrides is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知的讨论风格: {request.discussion_style}",
+            )
+        agent_configs = dict(discussion.agent_configs) if discussion.agent_configs else {}
+        lead_config = dict(agent_configs.get("lead_planner", {}))
+        lead_config.update(style_overrides)
+        agent_configs["lead_planner"] = lead_config
+        discussion.agent_configs = agent_configs
+        discussion.discussion_style = request.discussion_style
 
     # Re-activate the discussion
     discussion.status = DiscussionStatus.RUNNING

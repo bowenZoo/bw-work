@@ -308,6 +308,21 @@ async function submitContinue() {
   }
 }
 
+// Open continue popup and fetch current discussion's style
+function openContinuePopup() {
+  showContinuePopup.value = true;
+  // Try to fetch the current discussion's style so the default matches
+  const discId = discussionId.value || discussion.value?.id;
+  if (discId) {
+    api.get(`/api/discussions/${discId}`).then((res: any) => {
+      const style = res.data?.discussion_style;
+      if (style && discussionStyles.value.some(s => s.id === style)) {
+        continueStyle.value = style;
+      }
+    }).catch(() => {});
+  }
+}
+
 // Load discussion styles for continue popup
 async function loadDiscussionStyles() {
   try {
@@ -547,7 +562,7 @@ onUnmounted(() => {
           <button
             v-if="!showContinuePopup"
             class="continue-trigger-btn"
-            @click="showContinuePopup = true"
+            @click="openContinuePopup"
           >
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
