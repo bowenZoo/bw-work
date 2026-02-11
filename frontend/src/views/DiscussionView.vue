@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch, onMounted, onUnmounted, computed, ref } from 'vue';
+import { watch, onMounted, onUnmounted, computed, ref, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ChatContainer, InputBox } from '@/components/chat';
 import { Header } from '@/components/layout';
@@ -18,6 +18,7 @@ import {
 import { usePlayback } from '@/composables/usePlayback';
 import { useDiscussion } from '@/composables/useDiscussion';
 import { useAgentsStore } from '@/stores/agents';
+import { useDiscussionStore } from '@/stores/discussion';
 import api from '@/api';
 import { getDiscussionStyles } from '@/api/discussion';
 import type { AgendaItem, AgentStatus, DiscussionStyle, DiscussionStyleFull, DiscussionStyleOverrides } from '@/types';
@@ -30,6 +31,7 @@ const props = defineProps<{
 const route = useRoute();
 const router = useRouter();
 const agentsStore = useAgentsStore();
+const discussionStore = useDiscussionStore();
 
 // Playback mode is no longer used — completed discussions show all messages directly
 const isPlaybackMode = computed(() => false);
@@ -98,10 +100,10 @@ const {
   holisticReviews,
 } = useDiscussion();
 
-const isRunning = computed(() => discussion.value?.status === 'running');
-const isFinished = computed(() => discussion.value?.status === 'completed' || discussion.value?.status === 'failed');
+const isRunning = computed(() => discussion.value?.status === 'running' || discussion.value?.status === 'queued');
+const isFinished = computed(() => discussion.value?.status === 'completed' || discussion.value?.status === 'stopped' || discussion.value?.status === 'failed');
 
-// Show round table layout when discussion has messages (running, completed, or failed)
+// Show round table layout when discussion has messages (running, queued, completed, or failed)
 const showRoundTableLayout = computed(() => {
   if (!discussion.value) return false;
   if (isRunning.value) return true;
@@ -167,18 +169,24 @@ const topicDisplay = computed(() => {
 const currentAttachment = computed(() => discussion.value?.attachment);
 
 // Discussion status for TopicCard
-const discussionStatus = computed<'pending' | 'running' | 'completed' | 'failed'>(() => {
+const discussionStatus = computed<'pending' | 'queued' | 'running' | 'paused' | 'completed' | 'stopped' | 'failed'>(() => {
   const status = discussion.value?.status;
+  if (status === 'queued') return 'queued';
+  if (status === 'running' && isPaused.value) return 'paused';
   if (status === 'running') return 'running';
   if (status === 'completed') return 'completed';
+  if (status === 'stopped') return 'stopped';
   if (status === 'failed') return 'failed';
   return 'pending';
 });
 
 const statusLabel = computed(() => {
   switch (discussionStatus.value) {
+    case 'queued': return '排队中';
     case 'running': return '进行中';
+    case 'paused': return '已暂停';
     case 'completed': return '已完成';
+    case 'stopped': return '已停止';
     case 'failed': return '已中断';
     default: return '待开始';
   }
@@ -210,26 +218,21 @@ watch(
     }
 
     // Check password before loading data
-    const verified = JSON.parse(sessionStorage.getItem('verified_discussions') || '{}');
-    if (verified[newId]) {
-      passwordVerified.value = true;
-    } else {
-      // Lightweight request to check if password is needed
-      try {
-        const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
-        const res = await fetch(`${API_BASE_URL}/api/discussions/${newId}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.has_password) {
-            needsPassword.value = true;
-            return; // Don't load data, wait for password verification
-          }
+    // Lightweight request to check if password is needed
+    try {
+      const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
+      const res = await fetch(`${API_BASE_URL}/api/discussions/${newId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.has_password) {
+          needsPassword.value = true;
+          return; // Don't load data, wait for password verification
         }
-      } catch {
-        // Don't block on error
       }
-      passwordVerified.value = true;
+    } catch {
+      // Don't block on error
     }
+    passwordVerified.value = true;
 
     // Password verified or not needed — load data
     loadLiveDiscussion(newId);
@@ -305,11 +308,56 @@ async function handleResume() {
 }
 
 function handleUserMessageSent(content: string) {
-  console.log('User message sent:', content);
+  // Optimistic update: immediately show user message in chat
+  discussionStore.addMessage({
+    id: `user-${Date.now()}`,
+    agentId: 'user',
+    agentRole: '观众',
+    content,
+    timestamp: new Date().toISOString(),
+  });
 }
 
 function handleUserInputError(message: string) {
   setError(message);
+}
+
+// ---- Resizable split panel ----
+const splitPercent = ref(45); // left panel percentage
+const isDragging = ref(false);
+
+const leftPanelStyle = computed(() => ({
+  flex: `0 0 ${splitPercent.value}%`,
+}));
+const rightPanelStyle = computed(() => ({
+  flex: `0 0 ${100 - splitPercent.value - 0.5}%`, // 0.5% for divider
+}));
+
+function startDrag(e: MouseEvent) {
+  e.preventDefault();
+  isDragging.value = true;
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+  document.addEventListener('mousemove', onDrag);
+  document.addEventListener('mouseup', stopDrag);
+}
+
+function onDrag(e: MouseEvent) {
+  const main = document.querySelector('.discussion-main') as HTMLElement;
+  if (!main) return;
+  const rect = main.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  let pct = (x / rect.width) * 100;
+  pct = Math.max(25, Math.min(75, pct)); // clamp 25%-75%
+  splitPercent.value = Math.round(pct * 10) / 10;
+}
+
+function stopDrag() {
+  isDragging.value = false;
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+  document.removeEventListener('mousemove', onDrag);
+  document.removeEventListener('mouseup', stopDrag);
 }
 
 function handleInterventionError(message: string) {
@@ -395,11 +443,29 @@ function loadOverridesForStyle(styleId: string) {
   }
 }
 
+// Textarea 自适应高度
+function autoResize(event: Event) {
+  const el = event.target as HTMLTextAreaElement;
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+
 // Handle style change in continue popup
 function handleContinueStyleChange(styleId: string) {
   continueStyle.value = styleId;
   loadOverridesForStyle(styleId);
 }
+
+// Auto-resize prompt textareas when overrides change or editor is toggled
+watch([showPromptEditor, continueOverrides], () => {
+  nextTick(() => {
+    document.querySelectorAll('.prompt-editor .prompt-field-input').forEach(el => {
+      const ta = el as HTMLTextAreaElement;
+      ta.style.height = 'auto';
+      ta.style.height = ta.scrollHeight + 'px';
+    });
+  });
+}, { deep: false });
 
 // Reset overrides to the style default
 function resetContinueOverrides() {
@@ -574,7 +640,7 @@ onUnmounted(() => {
     <!-- Main content area -->
     <main v-if="showRoundTableLayout && !isPlaybackMode" class="discussion-main">
       <!-- Left Panel: Agent Bar + Message Feed -->
-      <div class="left-panel">
+      <div class="left-panel" :style="leftPanelStyle">
         <!-- Compact Agent Bar -->
         <CompactAgentBar
           :agents="agentsStore.agents"
@@ -611,8 +677,20 @@ onUnmounted(() => {
           :reviews="holisticReviews"
         />
 
+        <!-- Queued hint when waiting for concurrency slot -->
+        <div v-if="discussion?.status === 'queued'" class="waiting-placeholder">
+          <div class="queued-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+          </div>
+          <p class="waiting-text">正在排队等待...</p>
+          <p class="waiting-subtext">其他讨论进行中，稍后自动开始</p>
+        </div>
+
         <!-- Waiting hint when discussion just started, no messages yet -->
-        <div v-if="isRunning && displayMessages.length === 0" class="waiting-placeholder">
+        <div v-else-if="isRunning && displayMessages.length === 0" class="waiting-placeholder">
           <div class="thinking-dots">
             <span class="dot" />
             <span class="dot" />
@@ -631,8 +709,16 @@ onUnmounted(() => {
         />
       </div>
 
+      <!-- Resizable divider -->
+      <div
+        class="panel-divider"
+        @mousedown="startDrag"
+      >
+        <div class="divider-handle" />
+      </div>
+
       <!-- Right Panel: Tabs (Round Summaries / Design Docs) + Input -->
-      <section class="right-panel">
+      <section class="right-panel" :style="rightPanelStyle">
         <RightPanel
           :round-summaries="roundSummaries"
           :discussion-id="discussion?.id ?? ''"
@@ -742,33 +828,30 @@ onUnmounted(() => {
                 </button>
               </div>
               <div class="prompt-field">
-                <label class="prompt-field-label">目标 (Goal)</label>
+                <label class="prompt-field-label">目标</label>
                 <textarea
-                  class="prompt-textarea"
-                  rows="2"
+                  class="prompt-field-input"
                   :value="continueOverrides.goal || ''"
                   placeholder="主策划的目标..."
-                  @input="continueOverrides!.goal = ($event.target as HTMLTextAreaElement).value; overridesModified = true"
+                  @input="continueOverrides!.goal = ($event.target as HTMLTextAreaElement).value; overridesModified = true; autoResize($event)"
                 />
               </div>
               <div class="prompt-field">
-                <label class="prompt-field-label">背景 (Backstory)</label>
+                <label class="prompt-field-label">背景设定</label>
                 <textarea
-                  class="prompt-textarea"
-                  rows="3"
+                  class="prompt-field-input"
                   :value="continueOverrides.backstory || ''"
                   placeholder="主策划的背景设定..."
-                  @input="continueOverrides!.backstory = ($event.target as HTMLTextAreaElement).value; overridesModified = true"
+                  @input="continueOverrides!.backstory = ($event.target as HTMLTextAreaElement).value; overridesModified = true; autoResize($event)"
                 />
               </div>
               <div class="prompt-field">
-                <label class="prompt-field-label">沟通风格 (Communication Style)</label>
+                <label class="prompt-field-label">沟通风格</label>
                 <textarea
-                  class="prompt-textarea"
-                  rows="2"
+                  class="prompt-field-input"
                   :value="continueOverrides.communication_style || ''"
                   placeholder="沟通和表达方式..."
-                  @input="continueOverrides!.communication_style = ($event.target as HTMLTextAreaElement).value; overridesModified = true"
+                  @input="continueOverrides!.communication_style = ($event.target as HTMLTextAreaElement).value; overridesModified = true; autoResize($event)"
                 />
               </div>
             </div>
@@ -909,6 +992,11 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+.status-queued {
+  background: rgba(168, 85, 247, 0.1);
+  color: #9333ea;
+}
+
 .status-running {
   background: rgba(59, 130, 246, 0.1);
   color: #3b82f6;
@@ -917,6 +1005,16 @@ onUnmounted(() => {
 .status-completed {
   background: rgba(16, 185, 129, 0.1);
   color: #059669;
+}
+
+.status-paused {
+  background: rgba(245, 158, 11, 0.1);
+  color: #d97706;
+}
+
+.status-stopped {
+  background: rgba(245, 158, 11, 0.1);
+  color: #d97706;
 }
 
 .status-failed {
@@ -1003,9 +1101,8 @@ onUnmounted(() => {
 /* Main content - Two Column Layout */
 .discussion-main {
   flex: 1;
-  display: grid;
-  grid-template-columns: 55% 45%;
-  gap: 12px;
+  display: flex;
+  gap: 0;
   padding: 12px;
   overflow: hidden;
 }
@@ -1015,7 +1112,42 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 8px;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
+}
+
+/* Resizable divider between panels */
+.panel-divider {
+  flex: 0 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  position: relative;
+  z-index: 10;
+}
+
+.panel-divider:hover .divider-handle,
+.panel-divider:active .divider-handle {
+  background: var(--primary-color, #6366f1);
+  opacity: 0.6;
+}
+
+.divider-handle {
+  width: 3px;
+  height: 40px;
+  border-radius: 2px;
+  background: var(--border-color, #e5e7eb);
+  transition: background 0.15s, opacity 0.15s, height 0.15s;
+}
+
+.panel-divider:hover .divider-handle {
+  height: 56px;
+}
+
+.panel-divider:active .divider-handle {
+  opacity: 0.9;
+  height: 56px;
 }
 
 .message-feed {
@@ -1052,6 +1184,7 @@ onUnmounted(() => {
 .right-panel {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -1404,30 +1537,38 @@ onUnmounted(() => {
 
 .prompt-field-label {
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-secondary);
+  letter-spacing: 0.3px;
 }
 
-.prompt-textarea {
-  padding: 6px 10px;
-  border: 1px solid var(--border-color);
+.prompt-field-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid transparent;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-primary);
-  background: var(--bg-secondary);
-  resize: vertical;
+  background: #f8f9fb;
+  resize: none;
+  overflow: hidden;
   font-family: inherit;
-  line-height: 1.5;
-  transition: border-color 0.2s;
+  line-height: 1.8;
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
 }
 
-.prompt-textarea:focus {
+.prompt-field-input:hover {
+  border-color: var(--border-color);
+}
+
+.prompt-field-input:focus {
   outline: none;
   border-color: var(--primary-color, #0A0A0A);
+  background: white;
   box-shadow: 0 0 0 2px rgba(10, 10, 10, 0.06);
 }
 
-.prompt-textarea::placeholder {
+.prompt-field-input::placeholder {
   color: var(--text-weak);
 }
 
@@ -1497,11 +1638,32 @@ onUnmounted(() => {
   color: var(--text-weak);
 }
 
+.queued-icon {
+  width: 36px;
+  height: 36px;
+  color: #9333ea;
+  opacity: 0.6;
+  animation: queued-pulse 2s ease-in-out infinite;
+}
+
+@keyframes queued-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+
 /* Responsive layout */
 @media (max-width: 1024px) {
   .discussion-main {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr auto;
+    flex-direction: column;
+  }
+
+  .left-panel,
+  .right-panel {
+    flex: 1 1 auto !important;
+  }
+
+  .panel-divider {
+    display: none;
   }
 
   .right-panel {
@@ -1517,7 +1679,6 @@ onUnmounted(() => {
 @media (max-width: 768px) {
   .discussion-main {
     padding: 8px;
-    gap: 8px;
   }
 
   .right-panel {

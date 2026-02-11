@@ -141,7 +141,7 @@ async def inject_message(
         event = create_message_event(
             discussion_id=discussion_id,
             agent_id="user",
-            agent_role="用户",
+            agent_role="观众",
             content=request.content,
         )
         import asyncio

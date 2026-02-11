@@ -5,6 +5,7 @@ import leadAvatar from '@/assets/avatars/lead_planner.svg';
 import systemAvatar from '@/assets/avatars/system_designer.svg';
 import numberAvatar from '@/assets/avatars/number_designer.svg';
 import playerAvatar from '@/assets/avatars/player_advocate.svg';
+import operationsAvatar from '@/assets/avatars/operations_analyst.svg';
 import visualAvatar from '@/assets/avatars/visual_concept.svg';
 
 const leadAvatarUrl =
@@ -15,6 +16,8 @@ const numberAvatarUrl =
   (import.meta.env.VITE_AVATAR_NUMBER_DESIGNER as string | undefined) || numberAvatar;
 const playerAvatarUrl =
   (import.meta.env.VITE_AVATAR_PLAYER_ADVOCATE as string | undefined) || playerAvatar;
+const operationsAvatarUrl =
+  (import.meta.env.VITE_AVATAR_OPERATIONS_ANALYST as string | undefined) || operationsAvatar;
 const visualAvatarUrl =
   (import.meta.env.VITE_AVATAR_VISUAL_CONCEPT as string | undefined) || visualAvatar;
 
@@ -48,6 +51,13 @@ export const useAgentsStore = defineStore('agents', () => {
       role: 'player_advocate',
       status: 'idle',
       avatarUrl: playerAvatarUrl,
+    },
+    {
+      id: 'operations_analyst',
+      name: '运营策划',
+      role: 'operations_analyst',
+      status: 'idle',
+      avatarUrl: operationsAvatarUrl,
     },
     {
       id: 'visual_concept',

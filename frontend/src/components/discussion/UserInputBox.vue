@@ -75,6 +75,11 @@ async function handleSend() {
 
   isSending.value = true;
 
+  // Optimistic update: show message immediately, before API calls
+  lastSentTimes.value.push(Date.now());
+  emit('send', content);
+  inputContent.value = '';
+
   try {
     // Step 1: Pause the discussion
     await pauseDiscussion(props.discussionId);
@@ -84,10 +89,6 @@ async function handleSend() {
 
     // Step 3: Resume the discussion
     await resumeDiscussion(props.discussionId);
-
-    lastSentTimes.value.push(Date.now());
-    emit('send', content);
-    inputContent.value = '';
   } catch (error) {
     emit('error', error instanceof Error ? error.message : '发送消息失败');
   } finally {

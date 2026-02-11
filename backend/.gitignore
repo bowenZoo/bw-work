@@ -25,6 +25,9 @@ dist/
 build/
 *.egg-info/
 
+# Logs
+logs/
+
 # Environment
 .env
 .env.local

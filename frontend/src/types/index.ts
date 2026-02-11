@@ -1,7 +1,7 @@
 // Agent status types
 export type AgentStatus = 'thinking' | 'speaking' | 'idle' | 'writing';
 
-export type AgentRole = 'lead_planner' | 'system_designer' | 'number_designer' | 'player_advocate' | 'visual_concept';
+export type AgentRole = 'lead_planner' | 'system_designer' | 'number_designer' | 'player_advocate' | 'operations_analyst' | 'visual_concept';
 
 // Agent interface
 export interface Agent {

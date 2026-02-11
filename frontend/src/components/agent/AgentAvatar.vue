@@ -40,6 +40,8 @@ const bgColorClass = computed(() => {
       return 'bg-green-500';
     case 'player_advocate':
       return 'bg-orange-500';
+    case 'operations_analyst':
+      return 'bg-purple-500';
     default:
       return 'bg-gray-500';
   }

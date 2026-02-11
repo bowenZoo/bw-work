@@ -83,6 +83,12 @@ class DocPlan:
         return None, None
 
     def get_next_pending_section(self) -> tuple["FilePlan | None", "SectionPlan | None"]:
+        # 优先返回 in_progress 的章节（上轮未完成，需继续讨论）
+        for f in self.files:
+            for s in f.sections:
+                if s.status == "in_progress":
+                    return f, s
+        # 其次返回 pending 的章节
         for f in self.files:
             for s in f.sections:
                 if s.status == "pending":
@@ -187,3 +193,30 @@ class DocPlan:
                 if s.reopened_reason is not None:
                     result.append((f, s))
         return result
+
+    def remove_section(self, section_id: str) -> tuple[bool, str | None]:
+        """删除章节。如果文件变空也一并删除。返回 (success, filename)。"""
+        for f in self.files:
+            for i, s in enumerate(f.sections):
+                if s.id == section_id:
+                    filename = f.filename
+                    del f.sections[i]
+                    if not f.sections:
+                        self.files.remove(f)
+                    return True, filename
+        return False, None
+
+    def remove_file(self, filename: str) -> bool:
+        """删除整个文件。"""
+        for i, f in enumerate(self.files):
+            if f.filename == filename:
+                del self.files[i]
+                return True
+        return False
+
+    def replace_plan(self, new_files: list["FilePlan"]) -> list["FilePlan"]:
+        """整体替换文件结构，保留 discussion_id/topic。返回旧 files 供参考。"""
+        old_files = self.files
+        self.files = new_files
+        self.current_section_id = None
+        return old_files

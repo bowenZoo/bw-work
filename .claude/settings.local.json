@@ -86,6 +86,8 @@
       "Bash(grep:*)",
       "Skill(restart)",
       "Skill(restart:*)",
+      "Skill(deploy)",
+      "Skill(deploy:*)",
       "Bash(brew install:*)",
       "Bash(du:*)",
       "Bash(done)",
@@ -97,7 +99,9 @@
       "Bash(/Users/bowen/workspace/claude/bw-work/backend/.venv/bin/pip show:*)",
       "Bash(ssh-add:*)",
       "WebFetch(domain:118.89.16.95)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(find:*)",
+      "Bash(perl -ne:*)"
     ]
   }
 }

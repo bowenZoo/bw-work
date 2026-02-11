@@ -5,6 +5,7 @@ from src.agents.doc_organizer import DocOrganizer, OrganizeResult
 from src.agents.document_generator import DocumentGenerator, PlanningDocument
 from src.agents.lead_planner import LeadPlanner
 from src.agents.number_designer import NumberDesigner
+from src.agents.operations_analyst import OperationsAnalyst
 from src.agents.player_advocate import PlayerAdvocate
 from src.agents.summarizer import DiscussionSummary, Summarizer
 from src.agents.system_designer import SystemDesigner
@@ -15,6 +16,7 @@ __all__ = [
     "LeadPlanner",
     "SystemDesigner",
     "NumberDesigner",
+    "OperationsAnalyst",
     "PlayerAdvocate",
     "Summarizer",
     "DiscussionSummary",

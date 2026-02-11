@@ -3,7 +3,7 @@ import { computed } from 'vue';
 
 export interface TopicCardProps {
   topic: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'stopped' | 'failed';
   attachment?: {
     filename: string;
     content: string;
@@ -35,6 +35,12 @@ const statusConfig = computed(() => {
         icon: '✅',
         text: '已完成',
         class: 'text-green-600',
+      };
+    case 'stopped':
+      return {
+        icon: '⏸️',
+        text: '已停止',
+        class: 'text-amber-600',
       };
     case 'failed':
       return {

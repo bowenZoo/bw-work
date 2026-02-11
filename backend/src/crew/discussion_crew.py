@@ -17,7 +17,7 @@ from uuid import uuid4
 from crewai import Crew, Process, Task
 from crewai.tasks.task_output import TaskOutput
 
-from src.agents import LeadPlanner, NumberDesigner, PlayerAdvocate, SystemDesigner, VisualConceptAgent
+from src.agents import LeadPlanner, NumberDesigner, OperationsAnalyst, PlayerAdvocate, SystemDesigner, VisualConceptAgent
 import asyncio
 
 from src.agents.lead_planner import (
@@ -208,6 +208,15 @@ class DiscussionCrew:
     contributes their expertise to analyze and design game features.
     """
 
+    # Available discussion agents (excluding lead planner).
+    # Class-level so external code can query available roles.
+    AVAILABLE_AGENTS: dict[str, type] = {
+        "system_designer": SystemDesigner,
+        "number_designer": NumberDesigner,
+        "player_advocate": PlayerAdvocate,
+        "operations_analyst": OperationsAnalyst,
+    }
+
     _TOOL_CALL_RE = re.compile(
         r"ChatCompletionMessageFunctionToolCall|no_tool_available|Function\(arguments=",
         re.IGNORECASE,
@@ -257,16 +266,9 @@ class DiscussionCrew:
         lead_overrides = (agent_configs or {}).get("lead_planner")
         self._lead_planner = LeadPlanner(llm=llm, config_overrides=lead_overrides)
 
-        # Available discussion agents (excluding lead planner)
-        AVAILABLE: dict[str, type] = {
-            "system_designer": SystemDesigner,
-            "number_designer": NumberDesigner,
-            "player_advocate": PlayerAdvocate,
-        }
-
         # Build discussion agents based on agent_roles selection
         self._discussion_agents = []
-        for role, cls in AVAILABLE.items():
+        for role, cls in self.AVAILABLE_AGENTS.items():
             if agent_roles is None or role in agent_roles:
                 overrides = (agent_configs or {}).get(role)
                 agent = cls(llm=llm, config_overrides=overrides)
@@ -588,6 +590,7 @@ class DiscussionCrew:
 - 系统策划：...
 - 数值策划：...
 - 玩家代言人：...
+- 运营策划：...
 
 ## 遗留问题
 - 问题1（如有）
@@ -1211,6 +1214,8 @@ class DiscussionCrew:
 1. 回应主策划提出的关键问题
 2. 从你的专业角度提出设计建议
 3. 指出你认为需要关注的风险或挑战
+
+**严格控制在 200 字以内。直击要点，不说废话和客套话，不重复他人已说过的内容。**
 """
                 else:
                     # Subsequent rounds: respond based on lead planner's summary and new questions
@@ -1224,9 +1229,11 @@ class DiscussionCrew:
 1. 回应主策划提出的新问题或需要深入的点
 2. 针对存在分歧的地方，给出你的论据
 3. 如果同意某个观点，说明原因；如果有补充，具体说明
+
+**严格控制在 200 字以内。直击要点，不说废话和客套话，不重复他人已说过的内容。**
 """
 
-                expected_output = f"{agent.role}对'{topic}'第{round_num}轮的专业分析"
+                expected_output = f"{agent.role}对'{topic}'第{round_num}轮的简短专业分析（200字以内）"
 
                 task = Task(
                     name=f"round-{round_num}-{agent.role}",
@@ -2245,6 +2252,251 @@ class DiscussionCrew:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
             raise
 
+    def extend_document_centric(
+        self,
+        topic: str,
+        follow_up: str = "",
+        additional_rounds: int = 10,
+    ) -> str:
+        """Extend a document-centric discussion with additional rounds.
+
+        Restores saved doc_plan and continues discussing pending sections.
+
+        Args:
+            topic: The original discussion topic.
+            follow_up: Optional user follow-up direction.
+            additional_rounds: Number of additional rounds.
+
+        Returns:
+            Result string (may start with "STOPPED:" if rounds exhausted again).
+        """
+        from src.models.doc_plan import DocPlan
+        from src.agents.doc_writer import DocWriter
+        from src.crew.mention_parser import parse_next_speakers
+
+        # Load existing discussion from memory
+        stored = self._discussion_memory.load(self._discussion_id)
+        if stored is None:
+            raise ValueError(f"Discussion {self._discussion_id} not found in memory")
+
+        # Restore state
+        self._current_discussion = stored
+        self._messages = list(stored.messages)
+        self._message_sequence = len(self._messages)
+        self._unsaved_message_count = 0
+
+        # Restore doc_plan
+        if not stored.doc_plan:
+            raise ValueError(f"Discussion {self._discussion_id} has no doc_plan, cannot extend as document-centric")
+        doc_plan = DocPlan.from_dict(stored.doc_plan)
+        self._doc_plan = doc_plan
+
+        # Restore DocWriter
+        docs_dir = Path(self._data_dir) / self._project_id / self._discussion_id / "docs"
+        self._doc_writer = DocWriter(llm=self._llm, docs_dir=docs_dir)
+
+        # Set up state
+        self._auto_pause_interval = 0
+        self._total_rounds = additional_rounds
+        set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
+        self._abort_reason = None
+
+        # Inject follow-up if provided
+        if follow_up:
+            self._record_message("User", follow_up)
+            self._broadcast_message("User", follow_up)
+            self._broadcast_discussion_event(f"用户追加方向：{follow_up[:100]}")
+
+        trace_metadata = self._prepare_trace_metadata(topic, additional_rounds)
+        trace_span: Any | None = None
+
+        try:
+            with start_trace_context(
+                name="discussion_extend_document_centric",
+                session_id=self._discussion_id,
+                metadata=trace_metadata,
+            ) as span:
+                trace_span = span
+
+                self._broadcast_doc_plan_event(doc_plan)
+
+                # Main loop: section-by-section
+                for round_num in range(1, additional_rounds + 1):
+                    self._current_round = round_num
+
+                    # Pick next section
+                    file_plan, section = self._pick_next_section(doc_plan)
+                    if file_plan is None or section is None:
+                        logger.info("All sections completed at extend round %d", round_num)
+                        break
+
+                    section.status = "in_progress"
+                    doc_plan.current_section_id = section.id
+                    self._broadcast_section_focus(section.id, section.title, file_plan.filename)
+                    self._broadcast_discussion_event(
+                        f"追加第{round_num}轮：聚焦章节「{section.title}」({file_plan.filename})"
+                    )
+
+                    # Read current section content
+                    section_content = self._doc_writer.read_section(file_plan.filename, section.id)
+
+                    # Lead Planner opens section discussion
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                    opening = self._lead_planner_section_opening(section, section_content, round_num)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                    self._broadcast_message(self._lead_planner.role, opening)
+                    self._record_message(self._lead_planner.role, opening)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                    # Determine speakers
+                    next_speakers = parse_next_speakers(opening)
+                    agents_to_call = (
+                        [a for a in self._discussion_agents if a.role in next_speakers]
+                        if next_speakers else list(self._discussion_agents)
+                    )
+                    if not agents_to_call:
+                        agents_to_call = list(self._discussion_agents)
+
+                    # Agents discuss in parallel
+                    context = self._build_section_context(topic, doc_plan, section, section_content, opening)
+                    round_responses = self._run_agents_parallel_sync(agents_to_call, context)
+
+                    discussion_content = f"主策划：{opening}\n\n"
+                    for role, resp in round_responses:
+                        discussion_content += f"{role}：{resp}\n\n"
+
+                    # Lead Planner summarizes
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                    summary = self._lead_planner_section_summary(section.title, round_num, discussion_content)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                    self._broadcast_message(self._lead_planner.role, summary)
+                    self._record_message(self._lead_planner.role, summary)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                    # Update sliding window of summaries
+                    self._section_summaries.append(f"追加第{round_num}轮({section.title}): {summary[:500]}")
+                    if len(self._section_summaries) > 2:
+                        self._section_summaries.pop(0)
+
+                    # Process agenda directives from summary
+                    self._process_agenda_directives(summary, section)
+                    self._process_doc_restructure(summary, doc_plan, section)
+
+                    # Check section still exists after possible restructure
+                    f_check, s_check = doc_plan.get_section(section.id)
+                    if f_check is None:
+                        logger.info("Section %s removed after restructure, skipping update", section.id)
+                        if self._current_discussion:
+                            self._current_discussion.doc_plan = doc_plan.to_dict()
+                            self._incremental_save()
+                        self._broadcast_doc_plan_event(doc_plan)
+                        continue
+
+                    if "章节完成" in summary:
+                        section.status = "completed"
+
+                    # DocWriter updates the section
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.WRITING, f"正在更新「{section.title}」")
+                    updated = self._doc_writer.update_section(
+                        file_plan.filename, section.id, discussion_content, section.title,
+                    )
+                    self._broadcast_section_update(file_plan.filename, section.id, updated)
+                    self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                    # Round summary
+                    round_summary = self._generate_round_summary(round_num, summary)
+                    self._save_round_summary(round_summary)
+                    self._broadcast_round_summary(round_summary)
+
+                    # Pause/intervention check
+                    injected = self._check_pause_and_wait()
+                    if self._abort_reason:
+                        raise DiscussionTimeoutError(self._abort_reason)
+                    if injected:
+                        self._inject_user_messages(injected)
+                        for msg in injected:
+                            content = msg.get("content", "")
+                            if content.startswith("focus:"):
+                                sid = content.split(":", 1)[1].strip()
+                                doc_plan.current_section_id = sid
+                        digest = self._lead_planner_digest_intervention(injected, section)
+                        assessment = self._assess_intervention_impact(digest, doc_plan, section)
+                        self._execute_assessment_actions(assessment, doc_plan)
+                        self._lead_planner_post_intervention_guidance(digest, assessment)
+
+                    self._broadcast_discussion_event(f"追加第{round_num}轮讨论完成")
+
+                    # Save doc_plan state
+                    if self._current_discussion:
+                        self._current_discussion.doc_plan = doc_plan.to_dict()
+                        self._incremental_save()
+                    self._broadcast_doc_plan_event(doc_plan)
+
+                # Check result
+                all_done = doc_plan.all_sections_completed()
+
+                if all_done:
+                    # Run holistic review
+                    for review_round in range(2):
+                        review = self._lead_planner_holistic_review(doc_plan, self._agenda)
+                        conclusion = review.get("conclusion", "APPROVED")
+                        if conclusion == "APPROVED":
+                            break
+                        if conclusion in ("NEEDS_REVISION", "NEEDS_NEW_TOPIC", "NEEDS_RESTRUCTURE"):
+                            self._execute_review_actions(review, doc_plan, self._agenda)
+                        else:
+                            break
+
+                # Save doc_plan final state
+                if self._current_discussion:
+                    self._current_discussion.doc_plan = doc_plan.to_dict()
+
+                if all_done:
+                    self._finalize_trace(trace_span, result="文档驱动讨论完成")
+                else:
+                    pending = sum(1 for f in doc_plan.files for s in f.sections if s.status != "completed")
+                    completed = sum(1 for f in doc_plan.files for s in f.sections if s.status == "completed")
+                    self._finalize_trace(trace_span, result=f"轮次耗尽：已完成{completed}，待讨论{pending}")
+
+            # Save discussion
+            if all_done:
+                self._save_discussion(summary="文档驱动讨论完成")
+            else:
+                pending = sum(1 for f in doc_plan.files for s in f.sections if s.status != "completed")
+                completed = sum(1 for f in doc_plan.files for s in f.sections if s.status == "completed")
+                stop_msg = f"已完成 {completed} 个章节的讨论，仍有 {pending} 个章节待讨论。可继续讨论以完成剩余章节。"
+                self._broadcast_discussion_event(stop_msg)
+                self._save_discussion(summary=stop_msg)
+
+            set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
+            cleanup_discussion_state(self._discussion_id)
+
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+            self._broadcast_discussion_event("discussion_completed")
+
+            if all_done:
+                return "文档驱动讨论完成"
+            else:
+                return f"STOPPED:{stop_msg}"
+
+        except DiscussionTimeoutError:
+            self._save_discussion()
+            cleanup_discussion_state(self._discussion_id)
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+            self._broadcast_discussion_event("discussion_completed")
+            return "讨论因暂停超时结束"
+        except Exception as exc:
+            self._finalize_trace(trace_span, error=exc)
+            self._broadcast_error(str(exc))
+            self._broadcast_discussion_event("discussion_failed")
+            self._save_discussion()
+            cleanup_discussion_state(self._discussion_id)
+            for agent in self._agents:
+                self._broadcast_status(agent.role, AgentStatus.IDLE)
+            raise
+
     async def run_async(
         self,
         topic: str,
@@ -2931,6 +3183,203 @@ class DiscussionCrew:
                         logger.info("Agenda directive: set item %s priority to %s", item_id, level)
 
     # ------------------------------------------------------------------
+    # DYN-2.4: 文档结构重规划 (Replan)
+    # ------------------------------------------------------------------
+
+    def _replan_doc_structure(self, doc_plan, reason: str) -> bool:
+        """对文档结构进行完整重规划，保留已讨论的内容。
+
+        流程：快照现有内容 → LLM 生成新规划 → 内容迁移 → 文件操作 → 状态更新
+
+        Args:
+            doc_plan: 当前 DocPlan。
+            reason: 重规划原因。
+
+        Returns:
+            是否成功完成重规划。
+        """
+        from src.models.doc_plan import FilePlan, SectionPlan
+
+        self._broadcast_discussion_event("正在执行文档结构重规划...")
+
+        # Step 1: 快照现有内容
+        old_contents: dict[str, dict] = {}  # {section_id: {title, content, filename}}
+        all_file_contents: list[dict] = []
+        for f in doc_plan.files:
+            sections_data = {}
+            if self._doc_writer:
+                file_sections = self._doc_writer.read_all_sections(f.filename)
+                for s in f.sections:
+                    content = file_sections.get(s.id, "")
+                    old_contents[s.id] = {
+                        "title": s.title,
+                        "content": content,
+                        "filename": f.filename,
+                    }
+                    sections_data[s.id] = {"title": s.title, "content": content}
+            all_file_contents.append({
+                "filename": f.filename,
+                "title": f.title,
+                "sections": sections_data,
+            })
+
+        # Build current plan summary
+        current_plan_summary = ", ".join(
+            f"{f.filename}: [{', '.join(s.title for s in f.sections)}]"
+            for f in doc_plan.files
+        )
+
+        # Step 2: LLM 生成新规划
+        self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+        prompt = self._lead_planner.create_replan_prompt(
+            doc_plan.topic, all_file_contents, current_plan_summary, reason,
+        )
+
+        task = Task(
+            description=prompt,
+            expected_output="JSON 格式的新文档规划",
+            agent=self._lead_planner.build_agent(),
+        )
+        crew = Crew(
+            agents=[self._lead_planner.build_agent()],
+            tasks=[task],
+            process=Process.sequential,
+        )
+        result = crew.kickoff()
+        raw = str(result)
+        self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+        # Parse JSON
+        json_match = re.search(r"```json\s*\n(.*?)\n```", raw, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+            json_str = json_match.group(0) if json_match else raw
+
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError:
+            logger.warning("Replan: failed to parse JSON, aborting replan")
+            self._broadcast_discussion_event("重规划失败：无法解析 LLM 输出，保持原结构")
+            return False
+
+        # Step 3: 构建新文件结构并迁移内容
+        section_counter = 0
+        new_files: list[FilePlan] = []
+        new_file_write_data: list[dict] = []  # 用于写入文件
+
+        for f_data in data.get("files", []):
+            sections: list[SectionPlan] = []
+            file_sections_write: list[dict] = []
+
+            for s_data in f_data.get("sections", []):
+                section_counter += 1
+                sid = s_data.get("id", f"s{section_counter}")
+                title = s_data.get("title", f"章节{section_counter}")
+                description = s_data.get("description", "")
+                source_sids = s_data.get("source_sections", [])
+
+                sections.append(SectionPlan(id=sid, title=title, description=description))
+
+                # 内容迁移
+                migrated_content = ""
+                valid_sources = [s for s in source_sids if s in old_contents]
+
+                if not valid_sources:
+                    # 无来源 → 空骨架
+                    migrated_content = f"*{description}*"
+                elif len(valid_sources) == 1:
+                    # 单一来源 → 直接复制
+                    migrated_content = old_contents[valid_sources[0]]["content"]
+                else:
+                    # 多来源 → LLM 重组
+                    source_data = [
+                        {"title": old_contents[s]["title"], "content": old_contents[s]["content"]}
+                        for s in valid_sources
+                    ]
+                    try:
+                        migration_prompt = self._lead_planner.create_content_migration_prompt(
+                            title, description, source_data,
+                        )
+                        migration_task = Task(
+                            description=migration_prompt,
+                            expected_output="重组后的章节内容",
+                            agent=self._lead_planner.build_agent(),
+                        )
+                        migration_crew = Crew(
+                            agents=[self._lead_planner.build_agent()],
+                            tasks=[migration_task],
+                            process=Process.sequential,
+                        )
+                        migration_result = migration_crew.kickoff()
+                        migrated_content = str(migration_result).strip()
+                    except Exception as e:
+                        logger.warning("Replan: migration failed for %s, using concatenation: %s", sid, e)
+                        # 回退：拼接原内容
+                        migrated_content = "\n\n".join(
+                            old_contents[s]["content"] for s in valid_sources if old_contents[s]["content"]
+                        )
+
+                file_sections_write.append({
+                    "id": sid,
+                    "title": title,
+                    "content": migrated_content,
+                })
+
+            new_files.append(FilePlan(
+                filename=f_data.get("filename", f"文档{len(new_files) + 1}.md"),
+                title=f_data.get("title", "未命名文档"),
+                sections=sections,
+            ))
+            new_file_write_data.append({
+                "filename": f_data.get("filename", f"文档{len(new_files)}.md"),
+                "title": f_data.get("title", "未命名文档"),
+                "sections": file_sections_write,
+            })
+
+        if not new_files:
+            logger.warning("Replan: LLM output has no files, aborting")
+            self._broadcast_discussion_event("重规划失败：LLM 未输出有效文件结构")
+            return False
+
+        # Step 4: 文件操作
+        if self._doc_writer:
+            # 删除所有旧文件
+            for f in doc_plan.files:
+                self._doc_writer.remove_file(f.filename)
+
+            # 写入新文件
+            for fw in new_file_write_data:
+                self._doc_writer.write_full_file(
+                    fw["filename"], fw["title"], fw["sections"],
+                )
+
+        # Step 5: 状态更新
+        old_files = doc_plan.replace_plan(new_files)
+
+        # 重建 agenda-section 映射
+        if self._agenda:
+            # 清除旧映射
+            for item in self._agenda.items:
+                item.related_sections.clear()
+            self._establish_agenda_section_mapping(self._agenda.items, doc_plan)
+
+        # 广播更新
+        self._broadcast_doc_plan_event(doc_plan)
+        self._broadcast_discussion_event(
+            f"文档结构重规划完成：{len(old_files)} 个旧文件 → {len(new_files)} 个新文件"
+        )
+
+        # 持久化
+        if self._current_discussion:
+            self._current_discussion.doc_plan = doc_plan.to_dict()
+            self._incremental_save()
+
+        logger.info("Replan complete: %d old files -> %d new files", len(old_files), len(new_files))
+        return True
+
+    # ------------------------------------------------------------------
     # DYN-2.3: 文档结构变更指令解析
     # ------------------------------------------------------------------
 
@@ -2962,6 +3411,14 @@ class DiscussionCrew:
                 continue
 
             try:
+                if line.startswith("replan:"):
+                    reason = line.split(":", 1)[1].strip()
+                    if reason:
+                        self._broadcast_discussion_event(f"文档结构重规划：{reason}")
+                        logger.info("Doc restructure: replan triggered — %s", reason)
+                        self._replan_doc_structure(doc_plan, reason)
+                    continue
+
                 if line.startswith("split:"):
                     # split: <section_id> -> [新标题1](新描述1), [新标题2](新描述2)
                     rest = line.split(":", 1)[1].strip()
@@ -3365,6 +3822,7 @@ class DiscussionCrew:
             "summary": "",
             "revision_actions": [],
             "new_topics": [],
+            "restructure_reason": "",
         }
 
         match = HOLISTIC_REVIEW_PATTERN.search(raw)
@@ -3400,6 +3858,10 @@ class DiscussionCrew:
                     "title": title.strip(),
                     "reason": reason.strip(),
                 })
+            # Parse restructure_reason
+            restructure_match = re.search(r"restructure_reason:\s*(.+)", block)
+            if restructure_match:
+                review["restructure_reason"] = restructure_match.group(1).strip()
 
         self._broadcast_discussion_event(
             f"整体审视结论：{review['conclusion']}（质量分 {review['quality_score']}/10）"
@@ -3407,17 +3869,26 @@ class DiscussionCrew:
         logger.info("Holistic review: %s (score=%d)", review["conclusion"], review["quality_score"])
         return review
 
-    def _execute_review_actions(self, review: dict, doc_plan, agenda) -> None:
+    def _execute_review_actions(self, review: dict, doc_plan, agenda) -> bool:
         """Execute actions from a holistic review.
 
         NEEDS_REVISION: reopen sections. NEEDS_NEW_TOPIC: add agenda items.
+        NEEDS_RESTRUCTURE: replan document structure.
 
         Args:
             review: The review dict from _lead_planner_holistic_review.
             doc_plan: The current DocPlan.
             agenda: The current Agenda (may be None).
+
+        Returns:
+            True if a restructure was performed (caller should re-enter section loop).
         """
         conclusion = review.get("conclusion", "APPROVED")
+
+        if conclusion == "NEEDS_RESTRUCTURE":
+            reason = review.get("restructure_reason") or review.get("summary", "整体审视要求重规划")
+            self._replan_doc_structure(doc_plan, reason)
+            return True
 
         if conclusion == "NEEDS_REVISION":
             for action in review.get("revision_actions", []):
@@ -3447,6 +3918,8 @@ class DiscussionCrew:
                         "item": new_item.to_dict(),
                     })
                     logger.info("Review: added topic '%s'", topic_info["title"])
+
+        return False
 
     def _force_complete_with_notes(self, review: dict) -> None:
         """Force complete the discussion with review notes appended.
@@ -3602,6 +4075,17 @@ class DiscussionCrew:
                     # Process document restructure directives from summary
                     self._process_doc_restructure(summary, doc_plan, section)
 
+                    # After replan, current section may no longer exist — skip update
+                    f_check, s_check = doc_plan.get_section(section.id)
+                    if f_check is None:
+                        logger.info("Section %s no longer exists after restructure, skipping update", section.id)
+                        self._broadcast_discussion_event(f"第{round_num}轮讨论完成（结构已重规划）")
+                        if self._current_discussion:
+                            self._current_discussion.doc_plan = doc_plan.to_dict()
+                            self._incremental_save()
+                        self._broadcast_doc_plan_event(doc_plan)
+                        continue
+
                     # Check if section is done
                     if "章节完成" in summary:
                         section.status = "completed"
@@ -3670,83 +4154,98 @@ class DiscussionCrew:
                     # Broadcast updated doc_plan so frontend sees section status changes
                     self._broadcast_doc_plan_event(doc_plan)
 
-                # Holistic review loop (max 2 iterations)
-                for review_round in range(2):
-                    review = self._lead_planner_holistic_review(doc_plan, self._agenda)
-                    conclusion = review.get("conclusion", "APPROVED")
+                # Check if all sections are done or rounds exhausted
+                all_done = doc_plan.all_sections_completed()
 
-                    if conclusion == "APPROVED":
-                        logger.info("Holistic review approved on round %d", review_round + 1)
-                        break
+                if all_done:
+                    # All sections completed — run holistic review
+                    for review_round in range(2):
+                        review = self._lead_planner_holistic_review(doc_plan, self._agenda)
+                        conclusion = review.get("conclusion", "APPROVED")
 
-                    if conclusion in ("NEEDS_REVISION", "NEEDS_NEW_TOPIC"):
-                        self._execute_review_actions(review, doc_plan, self._agenda)
-                        # Run additional rounds for reopened sections
-                        extra_round = 0
-                        while extra_round < 3:
-                            file_plan, sect = self._pick_next_section(doc_plan)
-                            if file_plan is None or sect is None:
-                                break
-                            extra_round += 1
-                            self._current_round += 1
-                            sect.status = "in_progress"
-                            doc_plan.current_section_id = sect.id
-                            self._broadcast_section_focus(sect.id, sect.title, file_plan.filename)
-                            self._broadcast_discussion_event(
-                                f"审视修订轮：聚焦章节「{sect.title}」({file_plan.filename})"
-                            )
-                            sect_content = self._doc_writer.read_section(file_plan.filename, sect.id)
-                            self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
-                            opening = self._lead_planner_section_opening(sect, sect_content, self._current_round)
-                            self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
-                            self._broadcast_message(self._lead_planner.role, opening)
-                            self._record_message(self._lead_planner.role, opening)
-                            self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+                        if conclusion == "APPROVED":
+                            logger.info("Holistic review approved on round %d", review_round + 1)
+                            break
 
-                            next_speakers = parse_next_speakers(opening)
-                            agents_to_call = (
-                                [a for a in self._discussion_agents if a.role in next_speakers]
-                                if next_speakers else list(self._discussion_agents)
-                            )
-                            if not agents_to_call:
-                                agents_to_call = list(self._discussion_agents)
+                        if conclusion in ("NEEDS_REVISION", "NEEDS_NEW_TOPIC", "NEEDS_RESTRUCTURE"):
+                            did_restructure = self._execute_review_actions(review, doc_plan, self._agenda)
+                            extra_round = 0
+                            while extra_round < 3:
+                                file_plan, sect = self._pick_next_section(doc_plan)
+                                if file_plan is None or sect is None:
+                                    break
+                                extra_round += 1
+                                self._current_round += 1
+                                sect.status = "in_progress"
+                                doc_plan.current_section_id = sect.id
+                                self._broadcast_section_focus(sect.id, sect.title, file_plan.filename)
+                                self._broadcast_discussion_event(
+                                    f"审视修订轮：聚焦章节「{sect.title}」({file_plan.filename})"
+                                )
+                                sect_content = self._doc_writer.read_section(file_plan.filename, sect.id)
+                                self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                                opening = self._lead_planner_section_opening(sect, sect_content, self._current_round)
+                                self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                                self._broadcast_message(self._lead_planner.role, opening)
+                                self._record_message(self._lead_planner.role, opening)
+                                self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
-                            ctx = self._build_section_context(topic, doc_plan, sect, sect_content, opening)
-                            rr = self._run_agents_parallel_sync(agents_to_call, ctx)
-                            disc_content = f"主策划：{opening}\n\n"
-                            for role, resp in rr:
-                                disc_content += f"{role}：{resp}\n\n"
+                                next_speakers = parse_next_speakers(opening)
+                                agents_to_call = (
+                                    [a for a in self._discussion_agents if a.role in next_speakers]
+                                    if next_speakers else list(self._discussion_agents)
+                                )
+                                if not agents_to_call:
+                                    agents_to_call = list(self._discussion_agents)
 
-                            self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
-                            rev_summary = self._lead_planner_section_summary(sect.title, self._current_round, disc_content)
-                            self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
-                            self._broadcast_message(self._lead_planner.role, rev_summary)
-                            self._record_message(self._lead_planner.role, rev_summary)
-                            self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+                                ctx = self._build_section_context(topic, doc_plan, sect, sect_content, opening)
+                                rr = self._run_agents_parallel_sync(agents_to_call, ctx)
+                                disc_content = f"主策划：{opening}\n\n"
+                                for role, resp in rr:
+                                    disc_content += f"{role}：{resp}\n\n"
 
-                            if "章节完成" in rev_summary:
-                                sect.status = "completed"
+                                self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                                rev_summary = self._lead_planner_section_summary(sect.title, self._current_round, disc_content)
+                                self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                                self._broadcast_message(self._lead_planner.role, rev_summary)
+                                self._record_message(self._lead_planner.role, rev_summary)
+                                self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
-                            self._broadcast_status(self._lead_planner.role, AgentStatus.WRITING, f"正在更新「{sect.title}」")
-                            updated = self._doc_writer.update_section(
-                                file_plan.filename, sect.id, disc_content, sect.title,
-                            )
-                            self._broadcast_section_update(file_plan.filename, sect.id, updated)
-                            self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+                                if "章节完成" in rev_summary:
+                                    sect.status = "completed"
+
+                                self._broadcast_status(self._lead_planner.role, AgentStatus.WRITING, f"正在更新「{sect.title}」")
+                                updated = self._doc_writer.update_section(
+                                    file_plan.filename, sect.id, disc_content, sect.title,
+                                )
+                                self._broadcast_section_update(file_plan.filename, sect.id, updated)
+                                self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+                        else:
+                            break
                     else:
-                        break
-                else:
-                    # Reached max review iterations without APPROVED
-                    self._force_complete_with_notes(review)
+                        # Reached max review iterations without APPROVED
+                        self._force_complete_with_notes(review)
 
                 # Save doc_plan final state
                 if self._current_discussion:
                     self._current_discussion.doc_plan = doc_plan.to_dict()
 
-                self._finalize_trace(trace_span, result="文档驱动讨论完成")
+                if all_done:
+                    self._finalize_trace(trace_span, result="文档驱动讨论完成")
+                else:
+                    pending = sum(1 for f in doc_plan.files for s in f.sections if s.status != "completed")
+                    completed = sum(1 for f in doc_plan.files for s in f.sections if s.status == "completed")
+                    self._finalize_trace(trace_span, result=f"轮次耗尽：已完成{completed}，待讨论{pending}")
 
             # Save discussion
-            self._save_discussion(summary="文档驱动讨论完成")
+            if all_done:
+                self._save_discussion(summary="文档驱动讨论完成")
+            else:
+                pending = sum(1 for f in doc_plan.files for s in f.sections if s.status != "completed")
+                completed = sum(1 for f in doc_plan.files for s in f.sections if s.status == "completed")
+                stop_msg = f"已完成 {completed} 个章节的讨论，仍有 {pending} 个章节待讨论。可继续讨论以完成剩余章节。"
+                self._broadcast_discussion_event(stop_msg)
+                self._save_discussion(summary=stop_msg)
 
             # Cleanup
             set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
@@ -3756,7 +4255,10 @@ class DiscussionCrew:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)
             self._broadcast_discussion_event("discussion_completed")
 
-            return "文档驱动讨论完成"
+            if all_done:
+                return "文档驱动讨论完成"
+            else:
+                return f"STOPPED:{stop_msg}"
 
         except DiscussionTimeoutError:
             self._save_discussion()

@@ -42,6 +42,7 @@ class DiscussionStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
+    STOPPED = "stopped"  # 轮次用完但仍有未讨论 section
     FAILED = "failed"
 
 
@@ -691,8 +692,12 @@ def _run_discussion_sync(discussion_id: str) -> None:
                 auto_pause_interval=discussion.auto_pause_interval,
             )
 
-            discussion.result = result
-            discussion.status = DiscussionStatus.COMPLETED
+            if result.startswith("STOPPED:"):
+                discussion.result = result[len("STOPPED:"):]
+                discussion.status = DiscussionStatus.STOPPED
+            else:
+                discussion.result = result
+                discussion.status = DiscussionStatus.COMPLETED
             discussion.completed_at = datetime.utcnow().isoformat()
             save_discussion_state(discussion)
 
@@ -755,7 +760,11 @@ def _run_discussion_extend_sync(
     follow_up: str,
     additional_rounds: int,
 ) -> None:
-    """Run discussion extension synchronously (for background task)."""
+    """Run discussion extension synchronously (for background task).
+
+    Acquires the concurrency semaphore before running.  While waiting,
+    the discussion is in QUEUED state.
+    """
     logger.info("Extending discussion %s (+%d rounds)", discussion_id, additional_rounds)
     discussion = get_discussion_state(discussion_id)
     if discussion is None:
@@ -763,29 +772,102 @@ def _run_discussion_extend_sync(
         return
 
     semaphore = _get_discussion_semaphore()
+
+    # Mark as queued while waiting for a slot
+    discussion.status = DiscussionStatus.QUEUED
+    save_discussion_state(discussion)
+    current = get_current_discussion()
+    if current and current.id == discussion_id:
+        set_current_discussion(discussion)
+    broadcast_sync(
+        {
+            "type": "status",
+            "data": {
+                "discussion_id": discussion_id,
+                "agent_id": "discussion",
+                "agent_role": "discussion",
+                "content": "discussion_queued",
+                "status": "queued",
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+        },
+        discussion_id=discussion_id,
+        lobby_event=True,
+    )
+
+    # Block until a concurrency slot is available
     semaphore.acquire()
     try:
+        # Re-read state in case it was cancelled while queued
+        discussion = get_discussion_state(discussion_id)
+        if discussion is None:
+            return
+
+        # Transition from queued to running
+        discussion.status = DiscussionStatus.RUNNING
+        save_discussion_state(discussion)
+        current = get_current_discussion()
+        if current and current.id == discussion_id:
+            set_current_discussion(discussion)
+        broadcast_sync(
+            {
+                "type": "status",
+                "data": {
+                    "discussion_id": discussion_id,
+                    "agent_id": "discussion",
+                    "agent_role": "discussion",
+                    "content": "discussion_running",
+                    "status": "running",
+                    "timestamp": datetime.utcnow().isoformat(),
+                },
+            },
+            discussion_id=discussion_id,
+            lobby_event=True,
+        )
+
         try:
             llm = _get_llm_from_config()
             if llm is None:
                 raise RuntimeError("LLM not configured.")
 
+            # Merge old agent list with any newly added agents so that
+            # continuing old discussions automatically includes new roles
+            # (e.g. operations_analyst added after the discussion was created).
+            extend_roles = discussion.agents or None
+            if extend_roles is not None:
+                all_available = set(DiscussionCrew.AVAILABLE_AGENTS.keys())
+                extend_roles = list(set(extend_roles) | all_available)
+
             crew = DiscussionCrew(
                 discussion_id=discussion_id,
                 llm=llm,
                 enable_visual_concept=True,
-                agent_roles=discussion.agents or None,
+                agent_roles=extend_roles,
                 agent_configs=discussion.agent_configs or None,
             )
             _running_crews[discussion_id] = crew
-            result = crew.extend_orchestrated(
-                topic=discussion.topic,
-                follow_up=follow_up,
-                additional_rounds=additional_rounds,
-            )
 
-            discussion.result = result
-            discussion.status = DiscussionStatus.COMPLETED
+            # Choose extend method based on whether discussion has a doc_plan
+            stored = _discussion_memory.load(discussion_id)
+            if stored and stored.doc_plan:
+                result = crew.extend_document_centric(
+                    topic=discussion.topic,
+                    follow_up=follow_up,
+                    additional_rounds=additional_rounds,
+                )
+            else:
+                result = crew.extend_orchestrated(
+                    topic=discussion.topic,
+                    follow_up=follow_up,
+                    additional_rounds=additional_rounds,
+                )
+
+            if result.startswith("STOPPED:"):
+                discussion.result = result[len("STOPPED:"):]
+                discussion.status = DiscussionStatus.STOPPED
+            else:
+                discussion.result = result
+                discussion.status = DiscussionStatus.COMPLETED
             discussion.completed_at = datetime.utcnow().isoformat()
             save_discussion_state(discussion)
 
@@ -1517,10 +1599,10 @@ async def continue_discussion(
     if original is None:
         raise HTTPException(status_code=404, detail="Original discussion not found")
 
-    if original.status != DiscussionStatus.COMPLETED:
+    if original.status not in (DiscussionStatus.COMPLETED, DiscussionStatus.STOPPED):
         raise HTTPException(
             status_code=400,
-            detail=f"Can only continue completed discussions. Current status: {original.status}",
+            detail=f"Can only continue completed or stopped discussions. Current status: {original.status}",
         )
 
     # Load the original discussion from memory to get full context
@@ -1602,10 +1684,10 @@ async def extend_discussion(
     if discussion is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
-    if discussion.status not in (DiscussionStatus.COMPLETED, DiscussionStatus.FAILED):
+    if discussion.status not in (DiscussionStatus.COMPLETED, DiscussionStatus.STOPPED, DiscussionStatus.FAILED):
         raise HTTPException(
             status_code=400,
-            detail=f"Only completed or failed discussions can be extended. Current: {discussion.status}",
+            detail=f"Only completed, stopped, or failed discussions can be extended. Current: {discussion.status}",
         )
 
     # Merge request agent_configs into existing discussion agent_configs
@@ -1629,8 +1711,8 @@ async def extend_discussion(
 
     discussion.agent_configs = agent_configs
 
-    # Re-activate the discussion
-    discussion.status = DiscussionStatus.RUNNING
+    # Re-activate the discussion (queued until semaphore slot available)
+    discussion.status = DiscussionStatus.QUEUED
     discussion.completed_at = None
     discussion.error = None
     discussion.rounds += request.additional_rounds
@@ -1640,17 +1722,7 @@ async def extend_discussion(
     with _current_discussion_lock:
         set_current_discussion(discussion)
 
-    # Broadcast status change so connected clients update immediately
-    status_event = create_status_event(
-        discussion_id=discussion_id,
-        agent_id="discussion",
-        agent_role="discussion",
-        status=AgentStatus.IDLE,
-        content="discussion_resumed",
-    )
-    broadcast_sync(status_event.to_dict(), discussion_id=discussion_id)
-
-    # Run in background
+    # Run in background (sync function handles queued→running transition)
     task = asyncio.create_task(
         _run_discussion_extend_async(
             discussion_id, request.follow_up, request.additional_rounds
@@ -1662,8 +1734,8 @@ async def extend_discussion(
     return ExtendDiscussionResponse(
         id=discussion_id,
         topic=discussion.topic,
-        status=DiscussionStatus.RUNNING,
-        message=f"讨论已继续，将进行 {request.additional_rounds} 轮追加讨论。",
+        status=DiscussionStatus.QUEUED,
+        message=f"讨论已加入队列，将进行 {request.additional_rounds} 轮追加讨论。",
     )
 
 

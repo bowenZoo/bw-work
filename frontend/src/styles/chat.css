@@ -144,6 +144,11 @@
   color: #f97316;
 }
 
+.chat-avatar.operations_analyst {
+  background: rgba(139, 92, 246, 0.15);
+  color: #8b5cf6;
+}
+
 .chat-avatar.other {
   background: var(--chat-secondary);
   color: var(--chat-muted);
@@ -220,6 +225,11 @@ img.chat-avatar {
 .chat-group.player_advocate .chat-bubble {
   background: rgba(249, 115, 22, 0.08);
   border-color: rgba(249, 115, 22, 0.2);
+}
+
+.chat-group.operations_analyst .chat-bubble {
+  background: rgba(139, 92, 246, 0.08);
+  border-color: rgba(139, 92, 246, 0.2);
 }
 
 /* Copy button */

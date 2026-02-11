@@ -27,9 +27,6 @@ async function verify() {
   try {
     const result = await verifyDiscussionPassword(props.discussionId, password.value)
     if (result.verified) {
-      const verified = JSON.parse(sessionStorage.getItem('verified_discussions') || '{}')
-      verified[props.discussionId] = true
-      sessionStorage.setItem('verified_discussions', JSON.stringify(verified))
       emit('verified')
     } else {
       error.value = '密码错误，请重试'

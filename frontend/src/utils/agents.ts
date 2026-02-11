@@ -3,6 +3,7 @@ import leadAvatar from '@/assets/avatars/lead_planner.svg';
 import systemAvatar from '@/assets/avatars/system_designer.svg';
 import numberAvatar from '@/assets/avatars/number_designer.svg';
 import playerAvatar from '@/assets/avatars/player_advocate.svg';
+import operationsAvatar from '@/assets/avatars/operations_analyst.svg';
 import visualAvatar from '@/assets/avatars/visual_concept.svg';
 
 const ROLE_DISPLAY_NAMES: Record<AgentRole, string> = {
@@ -10,6 +11,7 @@ const ROLE_DISPLAY_NAMES: Record<AgentRole, string> = {
   system_designer: '系统策划',
   number_designer: '数值策划',
   player_advocate: '玩家代言人',
+  operations_analyst: '运营策划',
   visual_concept: '视觉概念',
 };
 
@@ -18,6 +20,7 @@ const ROLE_AVATARS: Record<AgentRole, string> = {
   system_designer: systemAvatar,
   number_designer: numberAvatar,
   player_advocate: playerAvatar,
+  operations_analyst: operationsAvatar,
   visual_concept: visualAvatar,
 };
 
@@ -34,6 +37,9 @@ const ROLE_ALIASES: Record<string, AgentRole> = {
   player_advocate: 'player_advocate',
   'player advocate': 'player_advocate',
   '玩家代言人': 'player_advocate',
+  operations_analyst: 'operations_analyst',
+  'operations analyst': 'operations_analyst',
+  '运营策划': 'operations_analyst',
   visual_concept: 'visual_concept',
   'visual concept': 'visual_concept',
   '视觉概念': 'visual_concept',

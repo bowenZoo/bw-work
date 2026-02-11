@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch, nextTick, toRaw } from 'vue';
 import { useRouter } from 'vue-router';
-import { Plus, Search, X, Paperclip, MessageSquare, FileText, Eye, EyeOff, RotateCcw, ChevronDown, ChevronUp } from 'lucide-vue-next';
+import { Plus, Search, X, Paperclip, MessageSquare, FileText, Eye, EyeOff, RotateCcw } from 'lucide-vue-next';
 import { getDiscussionHistory, getDiscussionStyles } from '@/api/discussion';
 import { useLobby } from '@/composables/useLobby';
 import { AgentConfigEditor } from '@/components/discussion';
@@ -149,7 +149,6 @@ const selectedStyle = ref('socratic');
 
 // Prompt overrides (right panel)
 const customOverrides = ref<DiscussionStyleOverrides | null>(null);
-const collapsedSections = ref<Record<string, boolean>>({});
 const newFocusArea = ref('');
 
 // Password
@@ -209,7 +208,6 @@ function openNewDialog() {
   selectedStyle.value = defaultStyleId.value;
   password.value = '123456';
   showPassword.value = false;
-  collapsedSections.value = {};
   newFocusArea.value = '';
   onStyleSelect(defaultStyleId.value);
 }
@@ -291,20 +289,41 @@ function onStyleSelect(styleId: string) {
   selectedStyle.value = styleId;
   const style = discussionStylesFull.value.find(s => s.id === styleId);
   if (style) {
-    customOverrides.value = structuredClone(style.overrides);
+    customOverrides.value = structuredClone(toRaw(style.overrides));
   }
 }
 
 function resetToPreset() {
   const style = discussionStylesFull.value.find(s => s.id === selectedStyle.value);
   if (style) {
-    customOverrides.value = structuredClone(style.overrides);
+    customOverrides.value = structuredClone(toRaw(style.overrides));
   }
 }
 
-function toggleSection(section: string) {
-  collapsedSections.value[section] = !collapsedSections.value[section];
+// Textarea 自适应高度
+function autoResize(event: Event) {
+  const el = event.target as HTMLTextAreaElement;
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
 }
+
+// customOverrides 变化时（如切换风格），重新计算所有 textarea 高度
+watch(customOverrides, () => {
+  nextTick(() => {
+    document.querySelectorAll('.prompt-field-input').forEach(el => {
+      const ta = el as HTMLTextAreaElement;
+      ta.style.height = 'auto';
+      ta.style.height = ta.scrollHeight + 'px';
+    });
+  });
+}, { deep: false });
+
+// 修复：styles 异步加载完成后，确保 customOverrides 被正确设置
+watch(discussionStylesFull, (styles) => {
+  if (styles.length > 0 && customOverrides.value === null && selectedStyle.value) {
+    onStyleSelect(selectedStyle.value);
+  }
+});
 
 function removeFocusArea(index: number) {
   if (customOverrides.value) {
@@ -379,6 +398,7 @@ function getStatusLabel(status: string | null): string {
     case 'queued': return '排队中';
     case 'running': return '进行中';
     case 'paused': return '已暂停';
+    case 'stopped': return '已停止';
     case 'failed': return '已中断';
     default: return '已完成';
   }
@@ -389,6 +409,7 @@ function getStatusClass(status: string | null): string {
     case 'queued': return 'badge-queued';
     case 'running': return 'badge-running';
     case 'paused': return 'badge-paused';
+    case 'stopped': return 'badge-stopped';
     case 'failed': return 'badge-failed';
     default: return 'badge-completed';
   }
@@ -640,109 +661,92 @@ onMounted(() => {
                       <span>添加参考文档（.md）</span>
                     </button>
                   </div>
+
+                  <!-- Discussion Style -->
+                  <div v-if="discussionStylesFull.length > 0" class="form-section">
+                    <label class="input-label">讨论风格</label>
+                    <div class="style-pills">
+                      <button
+                        v-for="style in discussionStylesFull"
+                        :key="style.id"
+                        class="style-pill"
+                        :class="{ 'style-pill-active': selectedStyle === style.id }"
+                        @click="onStyleSelect(style.id)"
+                        :title="style.description"
+                      >
+                        {{ style.name }}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
               <!-- Right Column: Prompt Preview & Edit (60%) -->
               <div class="panel-right">
-                <!-- Style pills/tabs at top -->
-                <div v-if="discussionStylesFull.length > 0" class="style-pills">
-                  <button
-                    v-for="style in discussionStylesFull"
-                    :key="style.id"
-                    class="style-pill"
-                    :class="{ 'style-pill-active': selectedStyle === style.id }"
-                    @click="onStyleSelect(style.id)"
-                    :title="style.description"
-                  >
-                    {{ style.name }}
-                  </button>
-                </div>
-
                 <!-- Prompt content area (scrollable) -->
                 <div class="prompt-scroll">
                   <template v-if="customOverrides">
-                    <!-- Goal section -->
-                    <div class="prompt-section">
-                      <button class="prompt-section-header" @click="toggleSection('goal')">
-                        <span class="prompt-section-title">目标 (goal)</span>
-                        <component :is="collapsedSections['goal'] ? ChevronDown : ChevronUp" class="icon-sm" />
-                      </button>
-                      <div v-if="!collapsedSections['goal']" class="prompt-section-body">
-                        <textarea
-                          v-model="customOverrides.goal"
-                          class="prompt-textarea prompt-textarea-sm"
-                          rows="3"
-                          placeholder="主策划的目标..."
-                        />
-                      </div>
+                    <!-- Goal -->
+                    <div class="prompt-field">
+                      <label class="prompt-field-label">目标</label>
+                      <textarea
+                        v-model="customOverrides.goal"
+                        class="prompt-field-input"
+                        placeholder="主策划的目标..."
+                        @input="autoResize"
+                      />
                     </div>
 
-                    <!-- Backstory section -->
-                    <div class="prompt-section">
-                      <button class="prompt-section-header" @click="toggleSection('backstory')">
-                        <span class="prompt-section-title">背景设定 (backstory)</span>
-                        <component :is="collapsedSections['backstory'] ? ChevronDown : ChevronUp" class="icon-sm" />
-                      </button>
-                      <div v-if="!collapsedSections['backstory']" class="prompt-section-body">
-                        <textarea
-                          v-model="customOverrides.backstory"
-                          class="prompt-textarea prompt-textarea-lg"
-                          rows="10"
-                          placeholder="主策划的背景设定..."
-                        />
-                      </div>
+                    <!-- Backstory -->
+                    <div class="prompt-field">
+                      <label class="prompt-field-label">背景设定</label>
+                      <textarea
+                        v-model="customOverrides.backstory"
+                        class="prompt-field-input"
+                        placeholder="主策划的背景设定..."
+                        @input="autoResize"
+                      />
                     </div>
 
-                    <!-- Communication style section -->
-                    <div class="prompt-section">
-                      <button class="prompt-section-header" @click="toggleSection('communication_style')">
-                        <span class="prompt-section-title">沟通风格 (communication_style)</span>
-                        <component :is="collapsedSections['communication_style'] ? ChevronDown : ChevronUp" class="icon-sm" />
-                      </button>
-                      <div v-if="!collapsedSections['communication_style']" class="prompt-section-body">
-                        <textarea
-                          v-model="customOverrides.communication_style"
-                          class="prompt-textarea prompt-textarea-md"
-                          rows="4"
-                          placeholder="沟通风格描述..."
-                        />
-                      </div>
+                    <!-- Communication style -->
+                    <div class="prompt-field">
+                      <label class="prompt-field-label">沟通风格</label>
+                      <textarea
+                        v-model="customOverrides.communication_style"
+                        class="prompt-field-input"
+                        placeholder="沟通风格描述..."
+                        @input="autoResize"
+                      />
                     </div>
 
-                    <!-- Focus areas section -->
-                    <div class="prompt-section">
-                      <button class="prompt-section-header" @click="toggleSection('focus_areas')">
-                        <span class="prompt-section-title">关注领域 (focus_areas)</span>
-                        <component :is="collapsedSections['focus_areas'] ? ChevronDown : ChevronUp" class="icon-sm" />
-                      </button>
-                      <div v-if="!collapsedSections['focus_areas']" class="prompt-section-body">
-                        <div class="focus-areas-chips">
-                          <span
-                            v-for="(area, idx) in customOverrides.focus_areas"
-                            :key="idx"
-                            class="focus-chip"
+                    <!-- Focus areas -->
+                    <div class="prompt-field">
+                      <label class="prompt-field-label">关注领域</label>
+                      <div class="focus-areas-chips">
+                        <span
+                          v-for="(area, idx) in customOverrides.focus_areas"
+                          :key="idx"
+                          class="focus-chip"
+                        >
+                          <span class="focus-chip-text">{{ area }}</span>
+                          <button class="focus-chip-remove" @click="removeFocusArea(idx)">
+                            <X class="icon-xs" />
+                          </button>
+                        </span>
+                        <div class="focus-add-wrapper">
+                          <input
+                            v-model="newFocusArea"
+                            class="focus-add-input"
+                            placeholder="添加领域..."
+                            @keydown="handleFocusAreaKeydown"
+                          />
+                          <button
+                            v-if="newFocusArea.trim()"
+                            class="focus-add-btn"
+                            @click="addFocusArea"
                           >
-                            <span class="focus-chip-text">{{ area }}</span>
-                            <button class="focus-chip-remove" @click="removeFocusArea(idx)">
-                              <X class="icon-xs" />
-                            </button>
-                          </span>
-                          <div class="focus-add-wrapper">
-                            <input
-                              v-model="newFocusArea"
-                              class="focus-add-input"
-                              placeholder="添加领域..."
-                              @keydown="handleFocusAreaKeydown"
-                            />
-                            <button
-                              v-if="newFocusArea.trim()"
-                              class="focus-add-btn"
-                              @click="addFocusArea"
-                            >
-                              <Plus class="icon-xs" />
-                            </button>
-                          </div>
+                            <Plus class="icon-xs" />
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -753,18 +757,15 @@ onMounted(() => {
                   </div>
                 </div>
 
-                <!-- Reset button at bottom -->
-                <div class="prompt-footer">
-                  <button class="reset-preset-btn" @click="resetToPreset">
-                    <RotateCcw class="icon-sm" />
-                    <span>恢复预设</span>
-                  </button>
-                </div>
               </div>
             </div>
 
             <!-- Panel Footer -->
             <div class="panel-footer">
+              <button class="reset-preset-btn" @click="resetToPreset">
+                <RotateCcw class="icon-sm" />
+                <span>恢复预设</span>
+              </button>
               <p v-if="createError" class="create-error">{{ createError }}</p>
               <button class="btn-cancel" @click="closeNewDialog">取消</button>
               <button
@@ -1030,6 +1031,11 @@ onMounted(() => {
 .badge-paused {
   background: #fefce8;
   color: #ca8a04;
+}
+
+.badge-stopped {
+  background: #fffbeb;
+  color: #d97706;
 }
 
 .badge-failed {
@@ -1303,9 +1309,6 @@ onMounted(() => {
 .style-pills {
   display: flex;
   gap: 8px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color, #e5e7eb);
-  flex-shrink: 0;
   flex-wrap: wrap;
 }
 
@@ -1342,10 +1345,10 @@ onMounted(() => {
 .prompt-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 20px;
+  padding: 20px 24px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 
 .prompt-empty {
@@ -1357,74 +1360,48 @@ onMounted(() => {
   font-size: 14px;
 }
 
-/* ===== Prompt Sections (collapsible) ===== */
-.prompt-section {
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 8px;
-  overflow: hidden;
+/* ===== Prompt Fields (flat layout) ===== */
+.prompt-field {
+  margin-bottom: 20px;
 }
 
-.prompt-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.prompt-field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #6b7280);
+  margin-bottom: 6px;
+  letter-spacing: 0.3px;
+}
+
+.prompt-field-input {
   width: 100%;
   padding: 10px 14px;
-  background: var(--bg-secondary, #fafafa);
-  border: none;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.prompt-section-header:hover {
-  background: #f3f4f6;
-}
-
-.prompt-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary, #374151);
-}
-
-.prompt-section-body {
-  padding: 12px 14px;
-  border-top: 1px solid var(--border-color, #e5e7eb);
-}
-
-/* ===== Prompt Textareas ===== */
-.prompt-textarea {
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 6px;
-  font-size: 13px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 14px;
   font-family: inherit;
-  line-height: 1.6;
+  line-height: 1.8;
   color: var(--text-primary, #111827);
-  resize: vertical;
-  transition: border-color 0.2s;
+  background: #f8f9fb;
+  resize: none;
+  overflow: hidden;
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
 }
 
-.prompt-textarea:focus {
+.prompt-field-input:hover {
+  border-color: var(--border-color, #e5e7eb);
+}
+
+.prompt-field-input:focus {
   outline: none;
   border-color: var(--primary-color, #3b82f6);
+  background: white;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
 }
 
-.prompt-textarea::placeholder {
+.prompt-field-input::placeholder {
   color: var(--text-weak, #d1d5db);
-}
-
-.prompt-textarea-sm {
-  min-height: 72px;
-}
-
-.prompt-textarea-md {
-  min-height: 100px;
-}
-
-.prompt-textarea-lg {
-  min-height: 200px;
 }
 
 /* ===== Focus Areas Chips ===== */
@@ -1448,10 +1425,7 @@ onMounted(() => {
 }
 
 .focus-chip-text {
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
 }
 
 .focus-chip-remove {
@@ -1517,15 +1491,6 @@ onMounted(() => {
   background: rgba(59, 130, 246, 0.1);
 }
 
-/* ===== Prompt Footer ===== */
-.prompt-footer {
-  padding: 10px 20px;
-  border-top: 1px solid var(--border-color, #e5e7eb);
-  flex-shrink: 0;
-  display: flex;
-  justify-content: flex-end;
-}
-
 .reset-preset-btn {
   display: inline-flex;
   align-items: center;
@@ -1538,6 +1503,7 @@ onMounted(() => {
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s;
+  margin-right: auto;
 }
 
 .reset-preset-btn:hover {

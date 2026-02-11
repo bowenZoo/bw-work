@@ -342,3 +342,65 @@ class DocWriter:
         filepath = self._docs_dir / file_plan.filename
         filepath.write_text("\n".join(lines), encoding="utf-8")
         logger.info("Created new file: %s", filepath)
+
+    # ------------------------------------------------------------------
+    # Replan 相关操作方法
+    # ------------------------------------------------------------------
+
+    def remove_section_from_file(self, filename: str, section_id: str) -> str:
+        """从文件中移除指定 section marker 及其内容。返回更新后的全文。"""
+        content = self.read_file(filename)
+        if content is None:
+            return ""
+        pattern = rf"\n*<!-- section:{re.escape(section_id)} -->.*?<!-- /section:{re.escape(section_id)} -->\n*"
+        updated = re.sub(pattern, "\n", content, flags=re.DOTALL)
+        filepath = self._docs_dir / filename
+        filepath.write_text(updated, encoding="utf-8")
+        logger.info("Removed section %s from %s", section_id, filename)
+        return updated
+
+    def remove_file(self, filename: str) -> bool:
+        """删除指定的 .md 文件。"""
+        filepath = self._docs_dir / filename
+        if filepath.exists():
+            filepath.unlink()
+            logger.info("Removed file: %s", filepath)
+            return True
+        return False
+
+    def read_all_sections(self, filename: str) -> dict[str, str]:
+        """读取文件中所有 section 的内容。返回 {section_id: content}。"""
+        content = self.read_file(filename)
+        if content is None:
+            return {}
+        result = {}
+        pattern = r"<!-- section:(\S+?) -->(.*?)<!-- /section:\1 -->"
+        for match in re.finditer(pattern, content, re.DOTALL):
+            section_id = match.group(1)
+            section_content = match.group(2).strip()
+            result[section_id] = section_content
+        return result
+
+    def write_full_file(self, filename: str, title: str,
+                        sections: list[dict[str, str]]) -> None:
+        """写入完整文件，包含标题和所有 section。
+
+        Args:
+            filename: 文件名。
+            title: 文件标题（# 一级标题）。
+            sections: section 列表，每项包含 "id", "title", "content"。
+        """
+        lines = [f"# {title}\n"]
+        for sec in sections:
+            lines.append(f"\n<!-- section:{sec['id']} -->\n")
+            lines.append(f"## {sec['title']}\n")
+            content = sec.get("content", "").strip()
+            if content:
+                lines.append(f"\n{content}\n")
+            else:
+                lines.append(f"\n*待填充*\n")
+            lines.append(f"\n<!-- /section:{sec['id']} -->\n")
+
+        filepath = self._docs_dir / filename
+        filepath.write_text("\n".join(lines), encoding="utf-8")
+        logger.info("Wrote full file: %s (%d sections)", filepath, len(sections))

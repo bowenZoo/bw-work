@@ -14,6 +14,7 @@ services:
       - WEBSOCKET_ALLOWED_ORIGINS=["http://localhost","http://127.0.0.1","http://118.89.16.95"]
     volumes:
       - ./backend/data:/app/data
+      - ./backend/logs:/app/logs
       - ./data/admin:/data/admin
       - ./backend/src/config/roles:/app/src/config/roles
     ports:

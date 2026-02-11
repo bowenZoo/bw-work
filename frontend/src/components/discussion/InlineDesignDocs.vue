@@ -285,7 +285,7 @@ const renderedContent = computed(() => {
 .content-area {
   flex: 1;
   overflow-y: auto;
-  padding: 14px;
+  padding: 24px 32px;
 }
 
 .content-toolbar {
@@ -392,8 +392,8 @@ const renderedContent = computed(() => {
 /* Markdown styles */
 .markdown-body {
   color: var(--text-primary);
-  line-height: 1.7;
-  font-size: 13px;
+  line-height: 1.8;
+  font-size: 14px;
 }
 
 .markdown-body :deep(h1) {

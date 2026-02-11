@@ -224,9 +224,9 @@ function triggerDownload(filename: string, content: string) {
 }
 
 .doc-preview-modal {
-  width: 80vw;
-  max-width: 900px;
-  height: 80vh;
+  width: 92vw;
+  max-width: 1400px;
+  height: 90vh;
   background: var(--bg-primary, #fff);
   border-radius: 10px;
   display: flex;

@@ -292,6 +292,17 @@ export function useDiscussion() {
 
       case 'message':
         if (message.data?.agent_id && message.data?.content) {
+          // Deduplicate user messages: if we already have an optimistic
+          // user message with same content (within 30s), skip the WS echo
+          if (message.data.agent_id === 'user') {
+            const recent = discussionStore.messages.find(
+              m => m.agentId === 'user' &&
+                   m.content === message.data!.content &&
+                   Date.now() - new Date(m.timestamp).getTime() < 30000
+            );
+            if (recent) break;
+          }
+
           const normalizedRole =
             normalizeAgentRole(message.data.agent_id) ??
             normalizeAgentRole(message.data.agent_role);
@@ -328,6 +339,10 @@ export function useDiscussion() {
           } else if (content === 'discussion_resumed') {
             isPaused.value = false;
             autoPauseMessage.value = '';
+            discussionStore.setStatus('running');
+          } else if (content === 'discussion_queued') {
+            discussionStore.setStatus('queued');
+          } else if (content === 'discussion_running') {
             discussionStore.setStatus('running');
           }
           break;

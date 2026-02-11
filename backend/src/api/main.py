@@ -11,6 +11,13 @@ os.environ["OTEL_SDK_DISABLED"] = "true"
 os.environ["CREWAI_TESTING"] = "true"
 from contextlib import asynccontextmanager
 
+from src.config.logging_config import setup_logging, cleanup_old_logs
+
+# Set up file + console logging before anything else logs
+_log_dir = os.environ.get("LOG_DIR", "logs")
+_log_level = os.environ.get("LOG_LEVEL", "INFO")
+setup_logging(log_dir=_log_dir, level=_log_level)
+
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -59,6 +66,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     audit_logger.cleanup_old_logs()
     # Cleanup expired refresh tokens
     admin_db.cleanup_expired_tokens()
+    # Cleanup old log directories
+    _keep_days = int(os.environ.get("LOG_KEEP_DAYS", "30"))
+    removed = cleanup_old_logs(log_dir=_log_dir, keep_days=_keep_days)
+    if removed:
+        logger.info("Cleaned up %d old log director(ies)", removed)
     # Cleanup stale "running" discussions from previous server session
     cleaned = cleanup_stale_discussions()
     if cleaned:

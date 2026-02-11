@@ -24,6 +24,7 @@ const filterOptions = [
   { key: 'system_designer', label: '系统' },
   { key: 'number_designer', label: '数值' },
   { key: 'player_advocate', label: '玩家' },
+  { key: 'operations_analyst', label: '运营' },
 ]
 
 const activeFilter = ref(props.filter)
