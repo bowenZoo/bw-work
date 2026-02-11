@@ -1709,7 +1709,7 @@ class CreateCurrentDiscussionRequest(BaseModel):
     topic: str = Field(..., min_length=1, description="讨论标题（一句话总结）")
     briefing: str = Field(default="", description="讨论简报：背景、约束、期望产出")
     rounds: int = Field(default=10, ge=1, le=50)
-    auto_pause_interval: int = Field(default=0, ge=0, le=50)  # 默认改为 0（禁用固定暂停）
+    auto_pause_interval: int = Field(default=5, ge=0, le=50)  # 保持默认 5，与 Checkpoint 共存
     attachment: AttachmentInfo | None = None
     agents: list[str] = Field(default_factory=list)
     agent_configs: dict = Field(default_factory=dict)
@@ -2072,11 +2072,17 @@ class PendingProducerMessage:
 
 **改造方案**：
 
-将"轮次总结"Tab 替换为"决策日志"Tab。决策日志只记录有意义的节点：
+新增"决策日志"Tab，保留"轮次总结"Tab。三个 Tab 并存，根据讨论数据智能选择默认 Tab：
+
+- 有 `checkpoints` 数据 → 默认显示"决策日志"
+- 只有 `round_summaries`（老讨论） → 默认显示"轮次总结"
+- 两者都有 → 默认显示"决策日志"
+
+决策日志只记录有意义的节点：
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  [文档大纲]   [决策日志]                             │
+│  [文档大纲]   [决策日志]   [轮次总结]                │
 ├──────────────────────────────────────────────────┤
 │                                                   │
 │  ⚠️ 待决策 (置顶)                                  │
@@ -2136,12 +2142,12 @@ interface DecisionLogEntry {
 
 | 组件 | 变更类型 | 说明 |
 |------|----------|------|
-| `RightPanel.vue` | 改造 | "轮次总结" Tab 替换为 "决策日志" Tab |
+| `RightPanel.vue` | 改造 | 新增"决策日志" Tab（三 Tab 并存），智能默认 Tab 选择 |
 | `DecisionLogPanel.vue` | 新建 | 决策日志面板组件 |
 | `DecisionCard.vue` | 新建 | 聊天流中的决策请求卡片（类 Claude 交互风格） |
 | `ProgressNotice.vue` | 新建 | 聊天流中的进展通报气泡 |
 | `ProducerInput.vue` | 新建 | 制作人输入框（替代 UserInputBox） |
-| `StageSummaryPanel.vue` | 保留 | 保留组件但从 RightPanel 默认 Tab 移除，可从设置中恢复 |
+| `StageSummaryPanel.vue` | 保留 | 保留原有功能，老讨论仍可正常查看轮次总结 |
 
 ##### 5. 制作人通道 (F-68)
 
@@ -2474,7 +2480,7 @@ Response:
 | `backend/src/memory/discussion_memory.py` | 扩展 | Discussion 模型新增 checkpoints 字段; 持久化 Checkpoint 数据 |
 | `frontend/src/types/index.ts` | 扩展 | Checkpoint/DecisionOption/DecisionLogEntry/CheckpointType 类型定义 |
 | `frontend/src/views/HomeView.vue` | 改造 | 新建讨论表单增加 briefing 多行文本框 |
-| `frontend/src/components/discussion/RightPanel.vue` | 改造 | "轮次总结" Tab 替换为 "决策日志" Tab |
+| `frontend/src/components/discussion/RightPanel.vue` | 改造 | 新增"决策日志" Tab（三 Tab 并存），智能默认 Tab 选择 |
 | `frontend/src/components/discussion/DecisionLogPanel.vue` | 新建 | 决策日志面板 |
 | `frontend/src/components/discussion/DecisionCard.vue` | 新建 | 聊天流中的决策卡片组件 |
 | `frontend/src/components/discussion/ProgressNotice.vue` | 新建 | 聊天流中的进展通报组件 |
@@ -2488,11 +2494,12 @@ Response:
 
 | 现有模块 | 兼容方案 |
 |----------|----------|
-| 轮次总结 (round_summaries) | 保留数据结构但不再主动生成，由 PROGRESS checkpoint 替代 |
+| 轮次总结 (round_summaries) | 保留数据结构，新讨论不再主动生成（由 PROGRESS checkpoint 替代），老讨论数据照常显示 |
 | section summary | 被 checkpoint 生成替代，但 DocWriter 的 section 内容更新机制保持不变 |
 | pause/inject/resume API | 保留但标记为 deprecated，新功能使用 producer-message API |
-| auto_pause_interval | 默认值从 5 改为 0（禁用），由 DECISION checkpoint 替代固定暂停 |
-| StageSummaryPanel | 组件保留但从 RightPanel 默认 Tab 移除 |
+| auto_pause_interval | **保持默认值 5 不变**，与 Checkpoint 机制共存。自动暂停和 DECISION checkpoint 是两个独立机制 |
+| StageSummaryPanel | 组件完整保留，作为 RightPanel 第三个 Tab（"轮次总结"），老讨论默认显示此 Tab |
+| RightPanel Tab 选择 | 三 Tab 并存（文档大纲/决策日志/轮次总结），根据讨论数据智能选择默认 Tab |
 | InterventionDigestCard | 与 producer_digest 事件合并，复用展示逻辑 |
 | HolisticReviewCard | 保留，整体审视可通过 PROGRESS checkpoint 展示 |
 
@@ -2507,13 +2514,15 @@ Response:
 - [ ] AC-62: 决策卡片回答后主策划公开宣布决策内容，讨论自动恢复
 - [ ] AC-63: 用户可随时通过制作人输入框发送消息，无需手动暂停/恢复
 - [ ] AC-64: 制作人消息发送后，当前 agent 发言完毕后自动暂停，主策划优先消化
-- [ ] AC-65: 右侧面板的"轮次总结" Tab 替换为"决策日志" Tab
+- [ ] AC-65: 右侧面板新增"决策日志" Tab（三 Tab 并存：文档大纲/决策日志/轮次总结），根据讨论数据智能选择默认 Tab
 - [ ] AC-66: 决策日志按时间线展示所有 PROGRESS 和 DECISION 类型的 Checkpoint
 - [ ] AC-67: 未回答的 DECISION checkpoint 在决策日志面板中置顶显示
 - [ ] AC-68: 讨论状态 WAITING_DECISION 正确广播并在前端 UI 中反映
 - [ ] AC-69: Checkpoint 数据持久化到讨论记录，支持讨论回溯查看
 - [ ] AC-70: 制作人通道消息仅主策划消化处理，不直接暴露给其他 Agent
 - [ ] AC-71: 兼容：旧的 pause/inject/resume API 仍然可用（deprecated）
+- [ ] AC-72: 兼容：老讨论（无 checkpoints 数据）打开后右侧面板默认显示"轮次总结" Tab，内容正常展示
+- [ ] AC-73: 兼容：auto_pause_interval 保持默认值 5，与 Checkpoint 机制独立共存
 
 #### 暂不实现
 
