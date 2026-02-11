@@ -1,8 +1,8 @@
 # 游戏策划 AI 团队 规格文档
 
-> **版本**: 1.4
+> **版本**: 2.0
 > **创建时间**: 2026-02-04
-> **更新时间**: 2026-02-10
+> **更新时间**: 2026-02-11
 
 ## 1. 项目概述
 
@@ -1618,6 +1618,912 @@ def run_document_centric(self, topic, max_rounds, attachment, auto_pause_interva
 - 文档结构变更的撤销/回退
 - 前端拖拽调整文档结构
 
+### 2.10 Checkpoint 驱动交互重设计
+
+#### 概述
+
+当前系统的交互模型存在几个核心问题：
+
+1. **用户输入过于简单**：新建讨论仅有一个 topic 单行文本框，无法提供足够的讨论背景和约束
+2. **固定轮次总结造成干扰**：每轮都生成 section summary，打断了讨论节奏，很多总结是噪音
+3. **用户介入流程笨重**：手动暂停 → 输入 → 恢复 的三步操作过于繁琐
+4. **右侧面板信息杂乱**：轮次总结面板堆积大量低价值信息，真正重要的决策节点被淹没
+5. **缺乏双向对话通道**：用户（制作人）与主策划之间缺少结构化的对话机制
+
+本模块通过引入 **Checkpoint 驱动模型**，将讨论控制权交给主策划（Lead Planner），让其根据讨论进展按需生成不同级别的 Checkpoint，替代固定周期的轮次总结。同时重设计用户交互界面和右侧面板，建立制作人与主策划的双向通道。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              Checkpoint 驱动交互模型                                │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Layer 1: 讨论简报 (Briefing)                            │   │
+│  │  新建讨论时用户提供详细背景、约束、期望产出                     │   │
+│  │  替代原有的单行 topic 输入                                  │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                           ↓                                     │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Layer 2: Checkpoint 驱动 (Checkpoint-Driven)            │   │
+│  │  主策划按需生成三种 Checkpoint：                              │   │
+│  │  • 静默继续 (SILENT)：不打扰用户                             │   │
+│  │  • 进展通报 (PROGRESS)：非阻塞通知                           │   │
+│  │  • 决策请求 (DECISION)：阻塞等待用户回答                      │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                           ↕                                     │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Layer 3: 制作人通道 (Producer Channel)                   │   │
+│  │  用户随时发消息 → 当前 agent 说完后暂停                       │   │
+│  │  主策划消化用户意见 → 决定调整方向或追问                       │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                           ↓                                     │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Layer 4: 决策日志面板 (Decision Log)                     │   │
+│  │  右侧面板从"轮次总结"改为"决策日志"                           │   │
+│  │  只记录有意义的节点：共识、决策、里程碑                        │   │
+│  │  待决策项置顶显示                                           │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 用户故事
+
+- US-34: 作为制作人，我希望新建讨论时能提供详细的讨论简报（背景、约束、期望产出），以便策划团队有足够上下文
+- US-35: 作为制作人，我希望讨论过程中只在关键节点被通知，而不是每轮都收到总结
+- US-36: 作为制作人，我希望在核心分歧出现时收到结构化的选择题（带选项），以便快速做出决策
+- US-37: 作为制作人，我希望决策回答后主策划公开宣布并继续讨论，确保团队知晓
+- US-38: 作为制作人，我希望随时可以在聊天框发送消息，不需要手动暂停流程
+- US-39: 作为制作人，我希望右侧面板展示决策日志而非轮次总结，让关键信息一目了然
+- US-40: 作为制作人，我希望待决策的 Checkpoint 始终置顶显示，不会被淹没
+
+#### 功能点
+
+| ID | 功能 | 优先级 | 描述 |
+|----|------|--------|------|
+| F-60 | 讨论简报输入 | P0 | 新建讨论时的多行文本框，支持背景、约束、期望产出三段式输入 |
+| F-61 | Checkpoint 生成引擎 | P0 | 主策划在每轮结束后生成 Checkpoint，类型为 SILENT/PROGRESS/DECISION |
+| F-62 | 进展通报卡片 | P0 | 非阻塞的里程碑/共识通知，展示在决策日志和聊天流中 |
+| F-63 | 决策请求卡片 | P0 | 阻塞式决策卡片，带 2-4 个选项 + 自由输入，必须回答才能继续 |
+| F-64 | 决策宣布机制 | P0 | 用户回答后主策划公开宣布决策内容并继续讨论 |
+| F-65 | 用户即时发言 | P0 | 用户随时发消息，当前 agent 说完后自动暂停，主策划消化后恢复 |
+| F-66 | 决策日志面板 | P0 | 右侧面板重设计，展示决策时间线（共识/决策/里程碑） |
+| F-67 | 待决策项置顶 | P0 | 未回答的决策请求在右侧面板和聊天流中置顶/高亮 |
+| F-68 | 制作人-主策划通道 | P1 | 制作人与主策划之间的双向结构化对话 |
+| F-69 | Checkpoint 历史记录 | P1 | 所有 Checkpoint 持久化存储，支持讨论回溯查看 |
+
+#### 详细设计
+
+##### 1. 讨论简报输入 (F-60)
+
+**现状分析**：
+
+当前 `CreateCurrentDiscussionRequest` 只有 `topic: str` 字段（单行文本），以及可选的 `attachment`（文件附件）。用户无法在创建讨论时提供结构化的讨论背景信息。
+
+**改造方案**：
+
+在新建讨论的创建表单中增加 `briefing` 字段，替代原有的简单 topic 输入。`topic` 字段保留作为简短标题（一句话总结），新增 `briefing` 作为详细的讨论简报。
+
+**API 变更**：
+
+```python
+class CreateCurrentDiscussionRequest(BaseModel):
+    topic: str = Field(..., min_length=1, description="讨论标题（一句话总结）")
+    briefing: str = Field(default="", description="讨论简报：背景、约束、期望产出")
+    rounds: int = Field(default=10, ge=1, le=50)
+    auto_pause_interval: int = Field(default=0, ge=0, le=50)  # 默认改为 0（禁用固定暂停）
+    attachment: AttachmentInfo | None = None
+    agents: list[str] = Field(default_factory=list)
+    agent_configs: dict = Field(default_factory=dict)
+    discussion_style: str = Field(default="")
+    password: str = Field(default="123456")
+```
+
+**DiscussionState 扩展**：
+
+```python
+class DiscussionState(BaseModel):
+    # ... 已有字段 ...
+    briefing: str = ""  # 讨论简报
+```
+
+**前端变更（HomeView.vue）**：
+
+在创建讨论的表单中，将 topic 输入框拆分为两部分：
+
+```
+┌──────────────────────────────────────────────┐
+│  讨论标题                                       │
+│  ┌──────────────────────────────────────────┐ │
+│  │ [单行文本框: 简短标题]                     │ │
+│  └──────────────────────────────────────────┘ │
+│                                                │
+│  讨论简报                                       │
+│  ┌──────────────────────────────────────────┐ │
+│  │ [多行文本框]                               │ │
+│  │                                            │ │
+│  │ 请提供以下信息：                             │ │
+│  │ • 讨论背景和上下文                           │ │
+│  │ • 已知的约束条件                             │ │
+│  │ • 期望的讨论产出                             │ │
+│  │                                            │ │
+│  └──────────────────────────────────────────┘ │
+└──────────────────────────────────────────────┘
+```
+
+**Briefing 注入方式**：
+
+Briefing 内容将作为主策划 system prompt 的一部分注入，使所有 Agent 在讨论全程都能引用制作人提供的背景信息。
+
+```python
+# discussion_crew.py 中的 briefing 注入
+def _build_briefing_context(self, topic: str, briefing: str, attachment: str | None) -> str:
+    """构建包含 briefing 的讨论上下文。"""
+    parts = [f"## 讨论主题\n{topic}"]
+    if briefing:
+        parts.append(f"\n## 制作人简报\n{briefing}")
+    if attachment:
+        parts.append(f"\n## 附件内容\n{attachment}")
+    return "\n".join(parts)
+```
+
+##### 2. Checkpoint 驱动模型 (F-61 ~ F-64)
+
+**核心理念**：
+
+取消固定的每轮 section summary + round summary 机制。改为由主策划在每轮讨论结束后自主判断，生成三种 Checkpoint 之一：
+
+| 类型 | 名称 | 行为 | 触发场景 |
+|------|------|------|----------|
+| `SILENT` | 静默继续 | 讨论正常推进，不产出任何通知 | 常规讨论进展，无重大节点 |
+| `PROGRESS` | 进展通报 | 非阻塞通知，前端展示但不中断讨论 | 达成共识、完成里程碑、发现重要分歧 |
+| `DECISION` | 决策请求 | 阻塞式等待用户回答后才继续 | 核心分歧无法自行解决、方向不明需制作人定夺 |
+
+**Checkpoint 数据模型**：
+
+```python
+# backend/src/models/checkpoint.py (新建)
+
+from enum import Enum
+from datetime import datetime
+from pydantic import BaseModel, Field
+
+
+class CheckpointType(str, Enum):
+    SILENT = "silent"
+    PROGRESS = "progress"
+    DECISION = "decision"
+
+
+class DecisionOption(BaseModel):
+    """决策选项。"""
+    id: str                    # 选项 ID (A/B/C/D)
+    label: str                 # 选项标题
+    description: str           # 选项说明
+
+
+class Checkpoint(BaseModel):
+    """Checkpoint 数据模型。"""
+    id: str                    # checkpoint ID (e.g., "cp_001")
+    discussion_id: str
+    type: CheckpointType
+    round_num: int             # 产出此 checkpoint 的轮次
+    section_id: str | None = None  # 关联的章节 ID
+
+    # PROGRESS 专用
+    title: str = ""            # 进展标题（如"达成战斗系统核心循环共识"）
+    summary: str = ""          # 进展摘要
+    key_points: list[str] = Field(default_factory=list)
+
+    # DECISION 专用
+    question: str = ""         # 需要回答的问题
+    context: str = ""          # 决策背景（为何需要制作人决策）
+    options: list[DecisionOption] = Field(default_factory=list)  # 2-4 个选项
+    allow_free_input: bool = True  # 是否允许自由输入
+
+    # 决策响应
+    response: str | None = None          # 用户选择的选项 ID 或自由输入
+    response_text: str | None = None     # 用户的补充说明
+    responded_at: str | None = None
+
+    # 元数据
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    announced: bool = False    # 决策是否已被主策划公开宣布
+```
+
+**Checkpoint 生成 Prompt（主策划）**：
+
+在每轮讨论结束后（替代原有 section summary 的位置），主策划根据当前讨论进展判断 Checkpoint 类型：
+
+```python
+# lead_planner.py 新增方法
+class LeadPlanner:
+    def create_checkpoint_prompt(
+        self,
+        round_num: int,
+        section: "SectionPlan",
+        recent_messages: list[str],     # 本轮所有 agent 的发言
+        discussion_context: str,         # 已有讨论摘要
+        briefing: str,                   # 制作人的 briefing
+        pending_decisions: list[str],    # 已有未回答的决策
+    ) -> str:
+        """创建 Checkpoint 生成 prompt。
+
+        主策划在每轮结束后调用，自主判断是否需要通知制作人。
+
+        输出格式:
+        ```checkpoint
+        type: SILENT | PROGRESS | DECISION
+        # PROGRESS 时:
+        title: "进展标题"
+        summary: "进展摘要"
+        key_points:
+          - "关键点 1"
+          - "关键点 2"
+        # DECISION 时:
+        question: "需要制作人回答的问题"
+        context: "为何需要此决策的背景说明"
+        options:
+          - id: A
+            label: "选项标题"
+            description: "选项说明"
+          - id: B
+            label: "选项标题"
+            description: "选项说明"
+        allow_free_input: true
+        ```
+        """
+```
+
+**Checkpoint 处理流程**：
+
+```
+每轮讨论结束
+  │
+  ├─ 调用 _generate_checkpoint(round_num, section, messages)
+  │
+  ├─ 解析 Checkpoint 类型
+  │   │
+  │   ├─ SILENT → 不产出任何事件，继续下一轮
+  │   │
+  │   ├─ PROGRESS → 广播 checkpoint_progress 事件
+  │   │   ├─ 前端在决策日志中显示进展卡片
+  │   │   ├─ 前端在聊天流中显示非阻塞通知气泡
+  │   │   └─ 持久化到讨论记录
+  │   │   └─ 继续下一轮（不阻塞）
+  │   │
+  │   └─ DECISION → 广播 checkpoint_decision 事件
+  │       ├─ 前端在决策日志中显示决策卡片（置顶）
+  │       ├─ 前端在聊天流中显示阻塞式决策卡片
+  │       ├─ 讨论进入 WAITING_DECISION 状态
+  │       ├─ 等待用户回答...
+  │       │
+  │       ├─ [用户回答] → API: POST /{discussion_id}/checkpoint/{cp_id}/respond
+  │       │   ├─ 记录用户响应
+  │       │   ├─ 广播 checkpoint_responded 事件
+  │       │   │
+  │       │   └─ 主策划公开宣布决策
+  │       │       ├─ 生成宣布消息（作为 lead_planner 的发言出现在聊天流）
+  │       │       ├─ 广播宣布消息
+  │       │       └─ 讨论恢复为 RUNNING 状态，继续下一轮
+  │       │
+  │       └─ 持久化到讨论记录
+```
+
+**讨论状态扩展**：
+
+```python
+class DiscussionStatus(str, Enum):
+    PENDING = "pending"
+    QUEUED = "queued"
+    RUNNING = "running"
+    WAITING_DECISION = "waiting_decision"  # [新增] 等待用户决策
+    COMPLETED = "completed"
+    STOPPED = "stopped"
+    FAILED = "failed"
+```
+
+**决策卡片前端交互（类 Claude 风格）**：
+
+```
+┌──────────────────────────────────────────────────────┐
+│  ⚡ 需要你的决策                                       │
+│                                                       │
+│  战斗系统是走技能导向还是走装备导向？                        │
+│                                                       │
+│  团队讨论中出现了两种截然不同的设计思路，                    │
+│  系统策划倾向技能导向，数值策划倾向装备导向。                 │
+│  需要制作人定夺核心方向。                                  │
+│                                                       │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │ (A) 技能导向                                      │  │
+│  │     以技能搭配为核心，装备提供基础属性               │  │
+│  └─────────────────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │ (B) 装备导向                                      │  │
+│  │     以装备搭配为核心，技能作为辅助手段               │  │
+│  └─────────────────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │ (C) 混合模式                                      │  │
+│  │     技能和装备同等重要，互相增强                     │  │
+│  └─────────────────────────────────────────────────┘  │
+│                                                       │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │ 或者输入你的想法...                                 │  │
+│  └─────────────────────────────────────────────────┘  │
+│                                                       │
+│                                    [提交决策]          │
+└──────────────────────────────────────────────────────┘
+```
+
+**决策响应 API**：
+
+```
+POST /api/discussions/{discussion_id}/checkpoint/{checkpoint_id}/respond
+
+Request:
+{
+  "option_id": "A",           // 选中的选项 ID（可选）
+  "free_input": "补充说明...", // 自由输入（可选）
+}
+
+Response:
+{
+  "checkpoint_id": "cp_001",
+  "status": "responded",
+  "message": "决策已记录，主策划将宣布并继续讨论"
+}
+```
+
+**决策宣布 Prompt**：
+
+```python
+class LeadPlanner:
+    def create_decision_announcement_prompt(
+        self,
+        checkpoint: "Checkpoint",
+        user_response: str,
+    ) -> str:
+        """创建决策宣布 prompt。
+
+        主策划需要：
+        1. 公开宣布制作人的决策
+        2. 解释决策对后续讨论的影响
+        3. 给出下一步讨论方向
+        """
+```
+
+##### 3. 用户即时发言简化 (F-65)
+
+**现状分析**：
+
+当前用户发言需要：(1) 手动点击暂停按钮 → (2) 在输入框输入消息 → (3) 发送后手动恢复。`UserInputBox` 组件通过 `/api/discussions/{id}/pause` → `/inject` → `/resume` 三步完成。这个流程过于繁琐。
+
+**改造方案**：
+
+简化为单步操作：用户直接在聊天框输入消息发送。系统自动处理暂停和恢复：
+
+```
+用户发送消息
+  │
+  ├─ 前端立即在聊天流显示用户消息（乐观更新）
+  │
+  ├─ API: POST /{discussion_id}/producer-message
+  │   │
+  │   ├─ 标记 pending_producer_message = true
+  │   ├─ 等待当前 agent 发言完毕（不中断正在说话的 agent）
+  │   ├─ 自动暂停讨论
+  │   │
+  │   ├─ 主策划消化用户消息
+  │   │   ├─ 调用 _lead_planner_digest_producer_message()
+  │   │   ├─ 输出：(1) 理解确认 (2) 方向调整建议 或 (3) 追问
+  │   │   └─ 广播 producer_digest 事件
+  │   │
+  │   └─ 根据消化结果：
+  │       ├─ 直接调整方向 → 自动恢复讨论，主策划引导新方向
+  │       └─ 需要追问 → 生成 DECISION checkpoint 追问制作人
+  │
+  └─ 前端展示主策划的消化结果
+```
+
+**API 变更**：
+
+```
+POST /api/discussions/{discussion_id}/producer-message
+
+Request:
+{
+  "content": "用户消息内容"
+}
+
+Response:
+{
+  "status": "received",
+  "message": "消息已收到，主策划将在当前发言结束后处理"
+}
+```
+
+**前端变更（UserInputBox.vue → ProducerInput.vue）**：
+
+将 `UserInputBox` 重命名为 `ProducerInput`（制作人输入），简化交互：
+
+- 移除暂停/恢复按钮
+- 输入框始终可用（讨论进行中时）
+- 发送消息即触发完整的暂停-消化-恢复流程
+- placeholder 改为 "制作人发言..."
+
+**讨论状态扩展**：
+
+```python
+# discussion_crew.py 中新增状态
+class PendingProducerMessage:
+    """制作人待处理消息队列。"""
+    messages: list[dict]  # [{content, timestamp}]
+    pending: bool = False
+```
+
+##### 4. 决策日志面板 (F-66 ~ F-67)
+
+**现状分析**：
+
+当前右侧面板 `RightPanel.vue` 包含两个 Tab：
+- **文档大纲** (`DocOutline`): 展示 DocPlan 结构
+- **轮次总结** (`StageSummaryPanel`): 展示每轮的 round summary
+
+轮次总结面板问题：每轮都生成总结，大量低价值信息堆积，真正重要的决策和共识被淹没。
+
+**改造方案**：
+
+将"轮次总结"Tab 替换为"决策日志"Tab。决策日志只记录有意义的节点：
+
+```
+┌──────────────────────────────────────────────────┐
+│  [文档大纲]   [决策日志]                             │
+├──────────────────────────────────────────────────┤
+│                                                   │
+│  ⚠️ 待决策 (置顶)                                  │
+│  ┌────────────────────────────────────────────┐   │
+│  │ 决策 #3: 付费模式选择                        │   │
+│  │ 战斗通行证 vs 抽卡 vs 买断制                 │   │
+│  │ 3 个选项 · 等待回答                          │   │
+│  │                              [去回答 →]      │   │
+│  └────────────────────────────────────────────┘   │
+│                                                   │
+│  ─── 决策时间线 ───                                │
+│                                                   │
+│  ✅ 决策 #2: 战斗系统方向        轮次 8            │
+│     → 选择 A: 技能导向                             │
+│     "以技能搭配为核心..."                           │
+│                                                   │
+│  📌 共识: 核心战斗循环确认       轮次 5            │
+│     "技能释放→冷却→资源管理→连招"                   │
+│                                                   │
+│  🎯 里程碑: 系统概述完成        轮次 3             │
+│     "系统策划和数值策划达成一致..."                  │
+│                                                   │
+│  ✅ 决策 #1: 战斗节奏偏好        轮次 2            │
+│     → 选择 B: 中速回合制                           │
+│     "制作人倾向于有策略深度的..."                    │
+│                                                   │
+└──────────────────────────────────────────────────┘
+```
+
+**决策日志数据模型**：
+
+```typescript
+// frontend/src/types/index.ts 新增
+
+type DecisionLogEntryType = 'decision' | 'consensus' | 'milestone';
+
+interface DecisionLogEntry {
+  id: string;
+  type: DecisionLogEntryType;
+  checkpoint_id: string;       // 关联的 Checkpoint ID
+  round_num: number;           // 产出轮次
+  title: string;               // 标题
+  summary: string;             // 摘要
+  // decision 特有
+  question?: string;           // 决策问题
+  options?: DecisionOption[];  // 选项列表
+  response?: string;           // 用户选择
+  response_text?: string;      // 补充说明
+  announced?: boolean;         // 是否已宣布
+  // 元数据
+  created_at: string;
+  responded_at?: string;
+}
+```
+
+**前端组件变更**：
+
+| 组件 | 变更类型 | 说明 |
+|------|----------|------|
+| `RightPanel.vue` | 改造 | "轮次总结" Tab 替换为 "决策日志" Tab |
+| `DecisionLogPanel.vue` | 新建 | 决策日志面板组件 |
+| `DecisionCard.vue` | 新建 | 聊天流中的决策请求卡片（类 Claude 交互风格） |
+| `ProgressNotice.vue` | 新建 | 聊天流中的进展通报气泡 |
+| `ProducerInput.vue` | 新建 | 制作人输入框（替代 UserInputBox） |
+| `StageSummaryPanel.vue` | 保留 | 保留组件但从 RightPanel 默认 Tab 移除，可从设置中恢复 |
+
+##### 5. 制作人通道 (F-68)
+
+**概述**：
+
+建立制作人（用户）与主策划之间的双向对话通道。不同于普通的观众发言（被所有 Agent 看到），制作人通道是一个**私密通道**，仅主策划可见。主策划消化后决定哪些信息需要公开给团队。
+
+**通道消息类型**：
+
+| 方向 | 消息类型 | 示例 |
+|------|----------|------|
+| 制作人 → 主策划 | 指令 | "这个方向不对，请转向轻量化设计" |
+| 制作人 → 主策划 | 反馈 | "数值策划的观点很好，请深入展开" |
+| 制作人 → 主策划 | 追问 | "为什么不考虑 PvP 模式？" |
+| 主策划 → 制作人 | 确认 | "收到，将调整讨论方向" |
+| 主策划 → 制作人 | 追问 | "轻量化设计的边界是什么？" |
+| 主策划 → 制作人 | 通报 | "团队已达成初步共识，但有一点分歧..." |
+
+**通道实现方式**：
+
+制作人通道复用 `ProducerInput` 组件和 `producer-message` API。主策划的回复通过 Checkpoint（PROGRESS 或 DECISION）传达。
+
+```
+制作人消息 ─→ producer-message API ─→ 主策划消化
+                                        │
+                                        ├→ 直接调整 → PROGRESS checkpoint + 继续讨论
+                                        ├→ 需确认   → DECISION checkpoint（追问制作人）
+                                        └→ 已理解   → SILENT（直接融入后续讨论）
+```
+
+##### 6. run_document_centric 改造
+
+**与 2.9 的关系**：
+
+本模块的 Checkpoint 驱动模型需要与 2.9 中的议题驱动、干预消化等机制协调。核心变更点：
+
+1. **替代 section summary**：原有的 `_lead_planner_section_summary` 调用替换为 `_generate_checkpoint`
+2. **保留 DocWriter 更新**：Checkpoint 生成不影响 DocWriter 的 section 内容更新机制
+3. **融合干预消化**：用户即时发言的消化流程与 2.9 的 `_lead_planner_digest_intervention` 合并为统一的 `_lead_planner_digest_producer_message`
+
+**改造后主循环伪代码（增量变更）**：
+
+```python
+def run_document_centric(self, topic, max_rounds, attachment, auto_pause_interval,
+                          briefing=""):
+    self._init_discussion(topic)
+
+    # 构建完整上下文（含 briefing）
+    context = self._build_briefing_context(topic, briefing, attachment)
+
+    # Phase 0a: 生成文档计划（已有）
+    doc_plan = self._generate_doc_plan(topic, context)
+    self._doc_writer.create_skeleton(doc_plan)
+    self._broadcast_doc_plan_event(doc_plan)
+
+    # Phase 0b: 生成初始议程（来自 2.9）
+    agenda = self._generate_initial_agenda(topic, context)
+    self._broadcast_agenda_event("agenda_init", agenda.to_dict())
+
+    # Phase 1-N: 逐章节讨论
+    for round_num in range(1, max_rounds + 1):
+        file_plan, section = self._pick_next_section(doc_plan)
+        if file_plan is None:
+            break
+
+        opening = self._lead_planner_section_opening(section, ...)
+        round_responses = self._run_agents_parallel_sync(...)
+
+        # [变更] 替代 section summary → 生成 Checkpoint
+        checkpoint = self._generate_checkpoint(
+            round_num, section, round_responses,
+            briefing=briefing,
+        )
+
+        if checkpoint.type == CheckpointType.SILENT:
+            # 静默继续，不做任何通知
+            pass
+        elif checkpoint.type == CheckpointType.PROGRESS:
+            # 非阻塞进展通报
+            self._broadcast_checkpoint_event(checkpoint)
+            self._persist_checkpoint(checkpoint)
+        elif checkpoint.type == CheckpointType.DECISION:
+            # 阻塞式决策请求
+            self._broadcast_checkpoint_event(checkpoint)
+            self._persist_checkpoint(checkpoint)
+            self._set_discussion_status(DiscussionStatus.WAITING_DECISION)
+
+            # 等待用户回答
+            response = self._wait_for_decision_response(checkpoint.id)
+            checkpoint.response = response.option_id
+            checkpoint.response_text = response.free_input
+            checkpoint.responded_at = datetime.utcnow().isoformat()
+
+            # 主策划宣布决策
+            announcement = self._lead_planner_announce_decision(checkpoint)
+            self._broadcast_announcement(announcement)
+            checkpoint.announced = True
+            self._persist_checkpoint(checkpoint)
+
+            self._set_discussion_status(DiscussionStatus.RUNNING)
+
+        # DocWriter 更新章节内容（保留已有机制）
+        self._doc_writer.update_section(...)
+
+        # [来自 2.9] 解析议题/结构变更指令
+        self._process_agenda_directives(checkpoint, section)
+        self._process_doc_restructure(checkpoint, doc_plan, section)
+
+        # 检查制作人消息（替代原有的 pause-inject-resume 机制）
+        producer_messages = self._check_producer_messages()
+        if producer_messages:
+            # 主策划消化制作人消息
+            digest = self._lead_planner_digest_producer_message(
+                producer_messages, section, doc_plan
+            )
+            self._broadcast_event("producer_digest", digest)
+
+            # 根据消化结果：可能生成追加的 DECISION checkpoint
+            if digest.needs_decision:
+                follow_up_cp = self._generate_follow_up_decision(digest)
+                self._broadcast_checkpoint_event(follow_up_cp)
+                # ... 等待回答流程同上 ...
+
+        # 广播更新后的状态
+        self._broadcast_doc_plan_event(doc_plan)
+
+    # [来自 2.9] Phase Final: 整体审视
+    self._lead_planner_holistic_review(doc_plan, agenda)
+    self._finalize_discussion(doc_plan, agenda)
+```
+
+#### WebSocket 新增事件
+
+```typescript
+// Checkpoint 进展通报
+{
+  type: "checkpoint",
+  data: {
+    event_type: "progress",
+    checkpoint: {
+      id: string,
+      discussion_id: string,
+      type: "progress",
+      round_num: number,
+      section_id: string | null,
+      title: string,
+      summary: string,
+      key_points: string[],
+      created_at: string
+    }
+  }
+}
+
+// Checkpoint 决策请求
+{
+  type: "checkpoint",
+  data: {
+    event_type: "decision_request",
+    checkpoint: {
+      id: string,
+      discussion_id: string,
+      type: "decision",
+      round_num: number,
+      section_id: string | null,
+      question: string,
+      context: string,
+      options: Array<{id: string, label: string, description: string}>,
+      allow_free_input: boolean,
+      created_at: string
+    }
+  }
+}
+
+// Checkpoint 决策响应（用户已回答）
+{
+  type: "checkpoint",
+  data: {
+    event_type: "decision_responded",
+    checkpoint_id: string,
+    response: string | null,      // 选项 ID
+    response_text: string | null, // 自由输入
+    responded_at: string
+  }
+}
+
+// 决策宣布（主策划公开宣布决策）
+{
+  type: "checkpoint",
+  data: {
+    event_type: "decision_announced",
+    checkpoint_id: string,
+    announcement: string          // 主策划的宣布内容
+  }
+}
+
+// 讨论状态变更为 waiting_decision
+{
+  type: "status",
+  data: {
+    discussion_id: string,
+    status: "waiting_decision",
+    checkpoint_id: string         // 等待回答的 checkpoint
+  }
+}
+
+// 制作人消息消化结果
+{
+  type: "producer_digest",
+  data: {
+    discussion_id: string,
+    digest_summary: string,
+    action: "adjust" | "follow_up_decision" | "acknowledged",
+    guidance: string              // 后续讨论引导
+  }
+}
+```
+
+#### API 接口变更
+
+##### 获取讨论的 Checkpoint 列表
+
+```
+GET /api/discussions/{discussion_id}/checkpoints
+
+Response:
+{
+  "checkpoints": [
+    {
+      "id": "cp_003",
+      "type": "decision",
+      "round_num": 8,
+      "question": "付费模式选择",
+      "options": [...],
+      "response": null,
+      "created_at": "..."
+    },
+    {
+      "id": "cp_002",
+      "type": "progress",
+      "round_num": 5,
+      "title": "核心战斗循环确认",
+      "summary": "...",
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+##### 回答决策 Checkpoint
+
+```
+POST /api/discussions/{discussion_id}/checkpoint/{checkpoint_id}/respond
+
+Request:
+{
+  "option_id": "A",
+  "free_input": "补充说明..."
+}
+
+Response:
+{
+  "checkpoint_id": "cp_003",
+  "status": "responded",
+  "message": "决策已记录"
+}
+```
+
+##### 发送制作人消息
+
+```
+POST /api/discussions/{discussion_id}/producer-message
+
+Request:
+{
+  "content": "制作人消息内容"
+}
+
+Response:
+{
+  "status": "received",
+  "message": "消息已收到，等待主策划处理"
+}
+```
+
+##### 获取决策日志
+
+```
+GET /api/discussions/{discussion_id}/decision-log
+
+Response:
+{
+  "entries": [
+    {
+      "id": "dl_001",
+      "type": "decision",
+      "checkpoint_id": "cp_003",
+      "round_num": 8,
+      "title": "付费模式选择",
+      "question": "...",
+      "response": "A",
+      "response_text": "...",
+      "announced": true,
+      "created_at": "..."
+    },
+    {
+      "id": "dl_002",
+      "type": "consensus",
+      "checkpoint_id": "cp_002",
+      "round_num": 5,
+      "title": "核心战斗循环确认",
+      "summary": "...",
+      "created_at": "..."
+    }
+  ],
+  "pending_decisions": [...]  // 待回答的决策（置顶）
+}
+```
+
+#### 代码改动范围
+
+| 文件 | 改动类型 | 说明 |
+|------|----------|------|
+| `backend/src/models/checkpoint.py` | 新建 | Checkpoint/DecisionOption/CheckpointType 数据模型 |
+| `backend/src/api/routes/discussion.py` | 扩展 | CreateCurrentDiscussionRequest 新增 briefing 字段; DiscussionState 新增 briefing; DiscussionStatus 新增 WAITING_DECISION |
+| `backend/src/api/routes/checkpoint.py` | 新建 | Checkpoint CRUD API: 获取列表、响应决策、获取决策日志 |
+| `backend/src/api/routes/producer.py` | 新建 | 制作人消息 API: POST producer-message |
+| `backend/src/agents/lead_planner.py` | 扩展 | 新增 create_checkpoint_prompt、create_decision_announcement_prompt、create_producer_digest_prompt |
+| `backend/src/crew/discussion_crew.py` | 核心改动 | _generate_checkpoint 替代 section summary; _wait_for_decision_response 阻塞等待; _lead_planner_announce_decision; _check_producer_messages; _lead_planner_digest_producer_message |
+| `backend/src/api/websocket/events.py` | 扩展 | 新增 checkpoint_progress/checkpoint_decision/checkpoint_responded/decision_announced/producer_digest 事件 |
+| `backend/src/memory/discussion_memory.py` | 扩展 | Discussion 模型新增 checkpoints 字段; 持久化 Checkpoint 数据 |
+| `frontend/src/types/index.ts` | 扩展 | Checkpoint/DecisionOption/DecisionLogEntry/CheckpointType 类型定义 |
+| `frontend/src/views/HomeView.vue` | 改造 | 新建讨论表单增加 briefing 多行文本框 |
+| `frontend/src/components/discussion/RightPanel.vue` | 改造 | "轮次总结" Tab 替换为 "决策日志" Tab |
+| `frontend/src/components/discussion/DecisionLogPanel.vue` | 新建 | 决策日志面板 |
+| `frontend/src/components/discussion/DecisionCard.vue` | 新建 | 聊天流中的决策卡片组件 |
+| `frontend/src/components/discussion/ProgressNotice.vue` | 新建 | 聊天流中的进展通报组件 |
+| `frontend/src/components/discussion/ProducerInput.vue` | 新建 | 制作人输入框（替代 UserInputBox） |
+| `frontend/src/composables/useDiscussion.ts` | 扩展 | 处理 checkpoint WebSocket 事件; 决策响应 API 调用; 制作人消息发送 |
+| `frontend/src/stores/discussion.ts` | 扩展 | checkpoints/decisionLog/pendingDecisions 状态管理 |
+| `frontend/src/views/DiscussionView.vue` | 改造 | 集成 DecisionCard/ProgressNotice/ProducerInput; 移除旧的暂停/恢复 UI |
+| `frontend/src/components/chat/ChatContainer.vue` | 扩展 | 支持渲染 DecisionCard 和 ProgressNotice 消息类型 |
+
+#### 与现有模块的兼容策略
+
+| 现有模块 | 兼容方案 |
+|----------|----------|
+| 轮次总结 (round_summaries) | 保留数据结构但不再主动生成，由 PROGRESS checkpoint 替代 |
+| section summary | 被 checkpoint 生成替代，但 DocWriter 的 section 内容更新机制保持不变 |
+| pause/inject/resume API | 保留但标记为 deprecated，新功能使用 producer-message API |
+| auto_pause_interval | 默认值从 5 改为 0（禁用），由 DECISION checkpoint 替代固定暂停 |
+| StageSummaryPanel | 组件保留但从 RightPanel 默认 Tab 移除 |
+| InterventionDigestCard | 与 producer_digest 事件合并，复用展示逻辑 |
+| HolisticReviewCard | 保留，整体审视可通过 PROGRESS checkpoint 展示 |
+
+#### 验收标准
+
+- [ ] AC-56: 新建讨论表单包含 topic（标题）和 briefing（多行简报）两个输入区域
+- [ ] AC-57: briefing 内容正确注入到主策划的 system prompt 和讨论上下文中
+- [ ] AC-58: 每轮讨论结束后主策划生成 Checkpoint（SILENT/PROGRESS/DECISION 三选一）
+- [ ] AC-59: SILENT checkpoint 不产生任何前端通知或事件
+- [ ] AC-60: PROGRESS checkpoint 在决策日志面板和聊天流中正确展示为非阻塞通知
+- [ ] AC-61: DECISION checkpoint 阻塞讨论，前端展示决策卡片（2-4 个选项 + 自由输入）
+- [ ] AC-62: 决策卡片回答后主策划公开宣布决策内容，讨论自动恢复
+- [ ] AC-63: 用户可随时通过制作人输入框发送消息，无需手动暂停/恢复
+- [ ] AC-64: 制作人消息发送后，当前 agent 发言完毕后自动暂停，主策划优先消化
+- [ ] AC-65: 右侧面板的"轮次总结" Tab 替换为"决策日志" Tab
+- [ ] AC-66: 决策日志按时间线展示所有 PROGRESS 和 DECISION 类型的 Checkpoint
+- [ ] AC-67: 未回答的 DECISION checkpoint 在决策日志面板中置顶显示
+- [ ] AC-68: 讨论状态 WAITING_DECISION 正确广播并在前端 UI 中反映
+- [ ] AC-69: Checkpoint 数据持久化到讨论记录，支持讨论回溯查看
+- [ ] AC-70: 制作人通道消息仅主策划消化处理，不直接暴露给其他 Agent
+- [ ] AC-71: 兼容：旧的 pause/inject/resume API 仍然可用（deprecated）
+
+#### 暂不实现
+
+- Checkpoint 类型的自动学习（根据用户行为调整 SILENT/PROGRESS/DECISION 的阈值）
+- 决策投票功能（多个用户对同一决策投票）
+- 制作人消息的优先级标记（紧急/普通）
+- Checkpoint 模板（预定义的常见决策类型）
+- 决策回溯/撤销（修改已做出的决策）
+- 移动端适配的决策卡片交互
+
 ## 3. 技术约束
 
 ### 3.1 两层 Agent 架构
@@ -1810,7 +2716,19 @@ data/
 - 干预后主策划优先消化 (F-58)
 - 讨论完成前整体审视 (F-59)
 
-### Phase 7: 高级功能
+### Phase 8: Checkpoint 驱动交互重设计 (新增)
+- 讨论简报输入 (F-60)
+- Checkpoint 生成引擎 (F-61)
+- 进展通报卡片 (F-62)
+- 决策请求卡片 (F-63)
+- 决策宣布机制 (F-64)
+- 用户即时发言简化 (F-65)
+- 决策日志面板 (F-66)
+- 待决策项置顶 (F-67)
+- 制作人-主策划通道 (F-68)
+- Checkpoint 历史记录 (F-69)
+
+### Phase 9: 高级功能
 - 人工介入节点 (F-11)
 - 自动配图 (F-35)
 - 多项目并行
@@ -1843,6 +2761,16 @@ data/
 | 干预消化 | 观众干预后主策划先独立思考消化，提取关键诉求并规划处理方案 |
 | 整体审视 | 所有章节完成后主策划对全部策划案的全局审视，检查一致性和完整性 |
 | section marker | DocWriter 在 .md 文件中用 `<!-- section:sN -->` 标记的章节边界 |
+| Checkpoint | 主策划在讨论过程中按需生成的控制节点，分为 SILENT/PROGRESS/DECISION 三种类型 |
+| 静默继续 (SILENT) | Checkpoint 类型之一，讨论正常推进，不产出任何通知 |
+| 进展通报 (PROGRESS) | Checkpoint 类型之一，非阻塞通知，用于告知制作人达成共识或里程碑 |
+| 决策请求 (DECISION) | Checkpoint 类型之一，阻塞式等待制作人回答，用于核心分歧或方向不明时 |
+| 决策卡片 | DECISION Checkpoint 在前端的展现形式，带 2-4 个选项和自由输入，类 Claude 交互风格 |
+| 决策日志 | 右侧面板中仅记录有意义节点的时间线，替代原有的轮次总结 |
+| 制作人 (Producer) | 使用系统的用户角色，拥有最终决策权，通过制作人通道与主策划交互 |
+| 制作人通道 | 制作人与主策划之间的双向对话通道，消息仅主策划可见 |
+| 讨论简报 (Briefing) | 新建讨论时用户提供的详细背景信息，包含背景、约束、期望产出 |
+| 决策宣布 | 用户做出决策后，主策划公开宣布决策内容并指导后续讨论方向 |
 
 ### B. 文档版本历史
 
@@ -1854,3 +2782,4 @@ data/
 | 1.3 | 2026-02-05 | 新增项目级策划讨论模块 (2.8)，支持 GDD 上传、批量模块讨论、策划案生成 |
 | 1.4 | 2026-02-10 | 新增讨论流程动态化改造模块 (2.9)，议题驱动、文档动态重组、干预回溯审视 |
 | 1.5 | 2026-02-10 | 补充干预后主策划优先消化机制 (F-58)、讨论完成前整体审视 (F-59)，新增 AC-51~AC-55 |
+| 2.0 | 2026-02-11 | 新增 Checkpoint 驱动交互重设计模块 (2.10)：讨论简报输入 (F-60)、Checkpoint 三级模型 (F-61~F-64)、用户即时发言简化 (F-65)、决策日志面板 (F-66~F-67)、制作人通道 (F-68~F-69)，新增 AC-56~AC-71 |
