@@ -967,6 +967,185 @@ new_topics:
 
 直接输出内容："""
 
+    # ------------------------------------------------------------------
+    # Checkpoint 相关 Prompt 方法
+    # ------------------------------------------------------------------
+
+    def create_checkpoint_prompt(
+        self,
+        round_num: int,
+        section_title: str,
+        section_description: str,
+        recent_messages: list[str],
+        discussion_context: str,
+        briefing: str,
+        pending_decisions: list[str],
+    ) -> str:
+        """创建 Checkpoint 生成 prompt。
+
+        主策划在每轮结束后调用，自主判断是否需要通知制作人。
+
+        Args:
+            round_num: 当前轮次。
+            section_title: 当前章节标题。
+            section_description: 当前章节描述。
+            recent_messages: 本轮所有 agent 的发言。
+            discussion_context: 已有讨论摘要。
+            briefing: 制作人的 briefing。
+            pending_decisions: 已有未回答的决策问题列表。
+        """
+        messages_block = "\n".join(
+            f"- {msg}" for msg in recent_messages[-10:]
+        )
+        pending_block = "\n".join(
+            f"- {d}" for d in pending_decisions
+        ) if pending_decisions else "(无)"
+
+        briefing_block = f"\n**制作人简报**: {briefing}" if briefing else ""
+
+        return f"""作为主策划，第{round_num}轮关于「{section_title}」的讨论刚刚结束。请判断是否需要通知制作人。
+{briefing_block}
+
+**章节目标**: {section_description}
+
+**本轮讨论记录**:
+{messages_block}
+
+**已有讨论摘要**:
+{discussion_context}
+
+**已有未回答的决策**:
+{pending_block}
+
+请判断当前讨论进展，选择以下三种 Checkpoint 之一：
+
+1. **SILENT** — 讨论正常推进，无需通知制作人。常规讨论、尚在探索阶段。
+2. **PROGRESS** — 达成共识、完成里程碑、发现重要分歧。通知制作人但不阻塞讨论。
+3. **DECISION** — 核心分歧无法自行解决，需制作人定夺方向。阻塞讨论等待回答。
+
+**判断原则**:
+- 大部分轮次应该是 SILENT，只有真正有意义的节点才产出 PROGRESS 或 DECISION
+- DECISION 仅在团队无法自行解决分歧时使用，不要滥用
+- 如果已有未回答的决策，不要产生新的 DECISION（避免堆积）
+- PROGRESS 用于记录重要的共识和里程碑
+
+严格按以下格式输出（用代码块包裹）：
+
+```checkpoint
+type: SILENT
+```
+
+或：
+
+```checkpoint
+type: PROGRESS
+title: "进展标题"
+summary: "进展摘要"
+key_points:
+  - "关键点 1"
+  - "关键点 2"
+```
+
+或：
+
+```checkpoint
+type: DECISION
+question: "需要制作人回答的问题"
+context: "为何需要此决策的背景说明"
+options:
+  - id: A
+    label: "选项标题"
+    description: "选项说明"
+  - id: B
+    label: "选项标题"
+    description: "选项说明"
+allow_free_input: true
+```"""
+
+    def create_decision_announcement_prompt(
+        self,
+        question: str,
+        user_response: str,
+        user_response_text: str,
+        options_summary: str,
+    ) -> str:
+        """创建决策宣布 prompt。
+
+        主策划公开宣布制作人的决策，并引导后续讨论。
+
+        Args:
+            question: 原始决策问题。
+            user_response: 用户选择的选项 ID（或自由输入）。
+            user_response_text: 用户的补充说明。
+            options_summary: 选项概要文本。
+        """
+        response_block = ""
+        if user_response:
+            response_block += f"选择的选项: {user_response}"
+        if user_response_text:
+            response_block += f"\n补充说明: {user_response_text}"
+
+        return f"""作为主策划，制作人已经对以下问题做出了决策。请向团队公开宣布并引导后续讨论。
+
+**决策问题**: {question}
+
+**选项概要**:
+{options_summary}
+
+**制作人的回答**:
+{response_block}
+
+请完成以下任务：
+1. 以主持人身份公开宣布制作人的决策
+2. 简要解释这个决策对后续讨论的影响
+3. 给出团队下一步的讨论方向
+
+语气要正式但友好，确保团队理解决策内容和原因。"""
+
+    def create_producer_digest_prompt(
+        self,
+        user_messages: list[str],
+        current_section: str,
+        discussion_context: str,
+    ) -> str:
+        """创建制作人消息消化 prompt。
+
+        主策划独立消化制作人的即时消息并给出后续引导。
+
+        Args:
+            user_messages: 制作人发送的消息列表。
+            current_section: 当前讨论章节标题。
+            discussion_context: 当前讨论上下文。
+        """
+        messages_block = "\n".join(
+            f"- 制作人消息 {i+1}: {msg}" for i, msg in enumerate(user_messages)
+        )
+
+        return f"""作为主策划，你收到了制作人（用户）的实时消息。请消化并给出后续引导。
+
+**当前讨论章节**: {current_section}
+
+**讨论上下文**:
+{discussion_context}
+
+**制作人消息**:
+{messages_block}
+
+请按以下格式输出你的分析和引导：
+
+### 理解确认
+- 用你自己的话复述制作人的核心意图
+
+### 行动判断
+选择以下之一：
+- **adjust** — 可以直接调整讨论方向，无需追问
+- **follow_up_decision** — 需要向制作人追问确认（将生成 DECISION checkpoint）
+- **acknowledged** — 已知悉，无需特别调整
+
+### 后续引导
+- 具体说明如何将制作人的意见融入后续讨论
+- 如果选择 adjust，说明新的讨论方向"""
+
     def __repr__(self) -> str:
         """Return string representation of the agent."""
         return f"<LeadPlanner(role='{self.role}')>"

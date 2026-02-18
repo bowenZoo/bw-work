@@ -5,13 +5,16 @@ import AgentAvatar from './AgentAvatar.vue';
 
 const agentsStore = useAgentsStore();
 
-// Status text mapping
-function getStatusText(status: string): string {
+// Status text mapping (with optional tool activity content)
+function getStatusText(agentId: string, status: string): string {
+  if (status === 'thinking') {
+    const content = agentsStore.getStatusContent(agentId);
+    if (content) return content;
+    return '思考中...';
+  }
   switch (status) {
     case 'speaking':
       return '发言中';
-    case 'thinking':
-      return '思考中...';
     case 'writing':
       return '更新文档中';
     default:
@@ -60,7 +63,7 @@ const speakingAgent = computed(() => agentsStore.speakingAgent);
         <div class="flex-1 min-w-0">
           <p class="font-medium text-gray-900 text-sm truncate">{{ agent.name }}</p>
           <p :class="['text-xs', getStatusTextClass(agent.status)]">
-            {{ getStatusText(agent.status) }}
+            {{ getStatusText(agent.id, agent.status) }}
           </p>
         </div>
       </div>

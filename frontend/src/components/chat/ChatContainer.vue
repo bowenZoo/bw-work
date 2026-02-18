@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue';
-import type { Message } from '@/types';
+import type { Message, Checkpoint } from '@/types';
 import MessageBubble from './MessageBubble.vue';
+import DecisionCard from './DecisionCard.vue';
+import ProgressNotice from './ProgressNotice.vue';
 
 const props = defineProps<{
   messages: Message[];
+  checkpoints?: Checkpoint[];
   isLoading?: boolean;
   maxMessages?: number;
+}>();
+
+const emit = defineEmits<{
+  'respond-checkpoint': [checkpointId: string, optionId: string | null, freeInput: string]
 }>();
 
 const containerRef = ref<HTMLElement | null>(null);
@@ -50,9 +57,43 @@ const hiddenCount = computed(() =>
   isTruncated.value ? props.messages.length - renderedMessages.value.length : 0
 );
 
+// Merged timeline: messages + non-silent checkpoints, sorted by time
+type TimelineItem =
+  | { kind: 'message'; data: Message }
+  | { kind: 'checkpoint'; data: Checkpoint }
+
+const timelineItems = computed<TimelineItem[]>(() => {
+  const items: TimelineItem[] = []
+
+  for (const msg of renderedMessages.value) {
+    items.push({ kind: 'message', data: msg })
+  }
+
+  if (props.checkpoints) {
+    for (const cp of props.checkpoints) {
+      if (cp.type === 'silent') continue
+      items.push({ kind: 'checkpoint', data: cp })
+    }
+  }
+
+  items.sort((a, b) => {
+    const ta = a.kind === 'message' ? a.data.timestamp : a.data.created_at
+    const tb = b.kind === 'message' ? b.data.timestamp : b.data.created_at
+    return new Date(ta).getTime() - new Date(tb).getTime()
+  })
+
+  return items
+})
+
+const hasCheckpoints = computed(() => (props.checkpoints?.length ?? 0) > 0)
+
+function handleRespondCheckpoint(checkpointId: string, optionId: string | null, freeInput: string) {
+  emit('respond-checkpoint', checkpointId, optionId, freeInput)
+}
+
 // Auto-scroll only when user is near bottom
 watch(
-  () => props.messages.length,
+  () => props.messages.length + (props.checkpoints?.length ?? 0),
   async () => {
     await nextTick();
     if (!showAll.value && isNearBottom.value) {
@@ -68,7 +109,7 @@ function scrollToBottom() {
   }
 }
 
-const isEmpty = computed(() => renderedMessages.value.length === 0 && !props.isLoading);
+const isEmpty = computed(() => timelineItems.value.length === 0 && !props.isLoading);
 
 // Show "scroll to bottom" button when not near bottom and has messages
 const showScrollBtn = computed(() => !isNearBottom.value && renderedMessages.value.length > 0);
@@ -109,7 +150,7 @@ const showScrollBtn = computed(() => !isNearBottom.value && renderedMessages.val
       </div>
     </div>
 
-    <!-- Messages list -->
+    <!-- Messages + Checkpoints timeline -->
     <div v-else class="divide-y divide-gray-100">
       <div
         v-if="hiddenCount > 0"
@@ -123,11 +164,22 @@ const showScrollBtn = computed(() => !isNearBottom.value && renderedMessages.val
           显示全部
         </button>
       </div>
-      <MessageBubble
-        v-for="message in renderedMessages"
-        :key="message.id"
-        :message="message"
-      />
+      <template v-for="item in timelineItems" :key="item.kind === 'message' ? item.data.id : item.data.id">
+        <MessageBubble
+          v-if="item.kind === 'message'"
+          :message="item.data"
+        />
+        <div v-else-if="item.kind === 'checkpoint' && item.data.type === 'decision'" class="checkpoint-item" :data-checkpoint-id="item.data.id">
+          <DecisionCard
+            :checkpoint="item.data"
+            :discussion-id="item.data.discussion_id"
+            @respond="handleRespondCheckpoint"
+          />
+        </div>
+        <div v-else-if="item.kind === 'checkpoint' && item.data.type === 'progress'" class="checkpoint-item">
+          <ProgressNotice :checkpoint="item.data" />
+        </div>
+      </template>
     </div>
 
     <!-- Loading indicator at bottom -->
@@ -180,5 +232,10 @@ const showScrollBtn = computed(() => !isNearBottom.value && renderedMessages.val
 .scroll-bottom-btn:hover {
   background: var(--bg-tertiary, #e5e7eb);
   color: var(--text-primary, #111827);
+}
+
+.checkpoint-item {
+  padding: 8px 16px;
+  margin: 4px 0;
 }
 </style>

@@ -89,25 +89,53 @@ export const useAgentsStore = defineStore('agents', () => {
     agents.value.find(agent => agent.role === role)
   );
 
+  // Status content (e.g. "正在搜索网页..." shown alongside "思考中")
+  const statusContents = ref<Record<string, string>>({});
+
+  // When each agent entered their current active status (ISO timestamp from backend)
+  const statusStartedAt = ref<Record<string, string>>({});
+
   // Actions
-  function setAgentStatus(agentId: string, status: AgentStatus) {
+  function setAgentStatus(agentId: string, status: AgentStatus, content?: string, startedAt?: string) {
     const agent = agents.value.find(a => a.id === agentId);
     if (agent) {
       agent.status = status;
+      if (content) {
+        statusContents.value[agentId] = content;
+      } else if (status !== 'thinking') {
+        delete statusContents.value[agentId];
+      }
+      const isActive = status === 'thinking' || status === 'speaking' || status === 'writing';
+      if (isActive && startedAt) {
+        statusStartedAt.value[agentId] = startedAt;
+      } else if (!isActive) {
+        delete statusStartedAt.value[agentId];
+      }
     }
   }
 
-  function setAgentStatusByRole(role: string, status: AgentStatus) {
+  function setAgentStatusByRole(role: string, status: AgentStatus, content?: string) {
     const agent = agents.value.find(a => a.role === role);
     if (agent) {
       agent.status = status;
+      if (content) {
+        statusContents.value[agent.id] = content;
+      } else if (status !== 'thinking') {
+        delete statusContents.value[agent.id];
+      }
     }
+  }
+
+  function getStatusContent(agentId: string): string | undefined {
+    return statusContents.value[agentId];
   }
 
   function resetAllAgentsStatus() {
     agents.value.forEach(agent => {
       agent.status = 'idle';
     });
+    statusContents.value = {};
+    statusStartedAt.value = {};
   }
 
   /**
@@ -132,10 +160,13 @@ export const useAgentsStore = defineStore('agents', () => {
   /**
    * Bulk set agent statuses (from sync message).
    */
-  function setDiscussionAgentStatuses(statuses: Record<string, AgentStatus>) {
+  function setDiscussionAgentStatuses(
+    statuses: Record<string, AgentStatus>,
+    startedAt?: Record<string, string>,
+  ) {
     resetAllAgentsStatus();
     for (const [agentId, status] of Object.entries(statuses)) {
-      setAgentStatus(agentId, status);
+      setAgentStatus(agentId, status, undefined, startedAt?.[agentId]);
     }
   }
 
@@ -143,6 +174,8 @@ export const useAgentsStore = defineStore('agents', () => {
     // State
     agents,
     activeAgentIds,
+    statusContents,
+    statusStartedAt,
     // Getters
     speakingAgent,
     thinkingAgents,
@@ -153,6 +186,7 @@ export const useAgentsStore = defineStore('agents', () => {
     // Actions
     setAgentStatus,
     setAgentStatusByRole,
+    getStatusContent,
     resetAllAgentsStatus,
     setDiscussionAgents,
     clearDiscussionAgents,

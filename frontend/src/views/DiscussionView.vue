@@ -6,7 +6,6 @@ import { Header } from '@/components/layout';
 import { PlaybackControl } from '@/components/history';
 import {
   AttachmentPreview,
-  UserInputBox,
   AgendaPanel,
   CompactAgentBar,
   AgendaSummaryModal,
@@ -14,6 +13,7 @@ import {
   InterventionDigestCard,
   HolisticReviewCard,
   PasswordVerifyModal,
+  ProducerInput,
 } from '@/components/discussion';
 import { usePlayback } from '@/composables/usePlayback';
 import { useDiscussion } from '@/composables/useDiscussion';
@@ -98,9 +98,13 @@ const {
   leadPlannerDigests,
   interventionAssessments,
   holisticReviews,
+  checkpoints,
+  isWaitingDecision,
+  respondToCheckpoint,
+  sendProducerMessage,
 } = useDiscussion();
 
-const isRunning = computed(() => discussion.value?.status === 'running' || discussion.value?.status === 'queued');
+const isRunning = computed(() => discussion.value?.status === 'running' || discussion.value?.status === 'queued' || discussion.value?.status === 'waiting_decision');
 const isFinished = computed(() => discussion.value?.status === 'completed' || discussion.value?.status === 'stopped' || discussion.value?.status === 'failed');
 
 // Show round table layout when discussion has messages (running, queued, completed, or failed)
@@ -169,9 +173,10 @@ const topicDisplay = computed(() => {
 const currentAttachment = computed(() => discussion.value?.attachment);
 
 // Discussion status for TopicCard
-const discussionStatus = computed<'pending' | 'queued' | 'running' | 'paused' | 'completed' | 'stopped' | 'failed'>(() => {
+const discussionStatus = computed<'pending' | 'queued' | 'running' | 'paused' | 'waiting_decision' | 'completed' | 'stopped' | 'failed'>(() => {
   const status = discussion.value?.status;
   if (status === 'queued') return 'queued';
+  if (status === 'waiting_decision') return 'waiting_decision';
   if (status === 'running' && isPaused.value) return 'paused';
   if (status === 'running') return 'running';
   if (status === 'completed') return 'completed';
@@ -184,6 +189,7 @@ const statusLabel = computed(() => {
   switch (discussionStatus.value) {
     case 'queued': return '排队中';
     case 'running': return '进行中';
+    case 'waiting_decision': return '等待决策';
     case 'paused': return '已暂停';
     case 'completed': return '已完成';
     case 'stopped': return '已停止';
@@ -307,23 +313,41 @@ async function handleResume() {
   }
 }
 
-function handleUserMessageSent(content: string) {
-  // Optimistic update: immediately show user message in chat
+
+// Checkpoint handlers
+async function handleRespondCheckpoint(checkpointId: string, optionId: string | null, freeInput: string) {
+  const success = await respondToCheckpoint(checkpointId, optionId, freeInput);
+  if (!success) {
+    setError('提交决策失败，请重试');
+  }
+}
+
+async function handleProducerSend(content: string) {
+  // Optimistic update: show producer message in chat
   discussionStore.addMessage({
-    id: `user-${Date.now()}`,
-    agentId: 'user',
-    agentRole: '观众',
+    id: `producer-${Date.now()}`,
+    agentId: 'producer',
+    agentRole: '制作人',
     content,
     timestamp: new Date().toISOString(),
   });
+  // Send to backend via composable
+  const ok = await sendProducerMessage(content);
+  if (!ok) {
+    setError('发送消息失败，请重试');
+  }
 }
 
-function handleUserInputError(message: string) {
-  setError(message);
+// Scroll to checkpoint in chat (from right panel)
+function handleScrollToCheckpoint(checkpointId: string) {
+  const el = document.querySelector(`[data-checkpoint-id="${checkpointId}"]`);
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 }
 
 // ---- Resizable split panel ----
-const splitPercent = ref(45); // left panel percentage
+const splitPercent = ref(65); // left panel percentage (right = ~35%)
 const isDragging = ref(false);
 
 const leftPanelStyle = computed(() => ({
@@ -561,34 +585,11 @@ onUnmounted(() => {
       @cancel="onPasswordCancel"
     />
 
-    <!-- Header -->
+    <!-- Header (with topic integrated) -->
     <Header :connection-status="connectionStatus">
-      <template #extra>
-        <div class="flex items-center gap-2">
-          <button
-            class="flex items-center gap-1 text-gray-600 hover:text-gray-800"
-            @click="goBackToHome"
-          >
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-            </svg>
-            <span>返回主页</span>
-          </button>
-          <!-- Completed badge -->
-          <span v-if="discussion?.status === 'completed'" class="px-2 py-1 bg-green-50 text-green-700 text-sm rounded">
-            已完成
-          </span>
-        </div>
-      </template>
-    </Header>
-
-    <!-- Compact Topic Bar -->
-    <div v-if="topicDisplay" class="topic-bar">
-      <div class="topic-bar-left">
-        <span class="topic-text" :title="topicDisplay">{{ topicDisplay }}</span>
-        <span class="status-badge" :class="`status-${discussionStatus}`">{{ statusLabel }}</span>
-      </div>
-      <div class="topic-bar-right">
+      <template #topic>
+        <span v-if="topicDisplay" class="topic-text" :title="topicDisplay">{{ topicDisplay }}</span>
+        <span v-if="topicDisplay" class="status-badge" :class="`status-${discussionStatus}`">{{ statusLabel }}</span>
         <button
           v-if="currentAttachment"
           class="action-btn-sm"
@@ -614,8 +615,19 @@ onUnmounted(() => {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         </button>
-      </div>
-    </div>
+      </template>
+      <template #extra>
+        <button
+          class="back-btn"
+          @click="goBackToHome"
+        >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+          </svg>
+          <span>返回主页</span>
+        </button>
+      </template>
+    </Header>
 
     <!-- Auto-pause banner -->
     <div v-if="isPaused && isRunning" class="auto-pause-banner">
@@ -704,8 +716,10 @@ onUnmounted(() => {
         <ChatContainer
           v-else
           :messages="filteredMessages"
+          :checkpoints="checkpoints"
           :is-loading="isLoading"
           class="message-feed"
+          @respond-checkpoint="handleRespondCheckpoint"
         />
       </div>
 
@@ -726,16 +740,17 @@ onUnmounted(() => {
           :doc-plan="docPlan"
           :doc-contents="docContents"
           :current-section-id="currentSectionId"
+          :checkpoints="checkpoints"
           @focus-section="handleFocusSection"
+          @scroll-to-checkpoint="handleScrollToCheckpoint"
         />
-        <!-- User input box embedded in right panel (running) -->
-        <UserInputBox
+        <!-- Producer input (replaces UserInputBox) -->
+        <ProducerInput
           v-if="isRunning && discussion?.id"
           :discussion-id="discussion.id"
           :disabled="!isRunning"
-          placeholder="发表你的观点（会自动暂停、注入、恢复）..."
-          @send="handleUserMessageSent"
-          @error="handleUserInputError"
+          :is-waiting-decision="isWaitingDecision"
+          @send="handleProducerSend"
         />
         <!-- Continue trigger for completed/failed discussions -->
         <div v-if="isFinished && (discussionId || discussion?.id)" class="continue-area">
@@ -954,25 +969,7 @@ onUnmounted(() => {
   background: var(--bg-primary);
 }
 
-/* Compact topic bar */
-.topic-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 16px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
-  gap: 12px;
-}
-
-.topic-bar-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  flex: 1;
-}
-
+/* Topic text (now inside header) */
 .topic-text {
   font-size: 14px;
   font-weight: 600;
@@ -980,7 +977,25 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 400px;
+}
+
+.back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.back-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 .status-badge {
@@ -1012,6 +1027,11 @@ onUnmounted(() => {
   color: #d97706;
 }
 
+.status-waiting_decision {
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+}
+
 .status-stopped {
   background: rgba(245, 158, 11, 0.1);
   color: #d97706;
@@ -1027,12 +1047,6 @@ onUnmounted(() => {
   color: #6b7280;
 }
 
-.topic-bar-right {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
 
 .action-btn-sm {
   display: flex;

@@ -23,7 +23,7 @@ export interface Message {
 }
 
 // Discussion status
-export type DiscussionStatus = 'pending' | 'queued' | 'running' | 'paused' | 'completed' | 'failed';
+export type DiscussionStatus = 'pending' | 'queued' | 'running' | 'paused' | 'waiting_decision' | 'completed' | 'failed';
 
 // Discussion interface
 export interface Discussion {
@@ -42,7 +42,7 @@ export interface ClientMessage {
 }
 
 // Server -> Client
-export type ServerMessageType = 'message' | 'status' | 'error' | 'pong';
+export type ServerMessageType = 'message' | 'status' | 'error' | 'pong' | 'checkpoint' | 'producer_digest';
 
 export interface ServerMessageData {
   discussion_id: string;
@@ -95,6 +95,7 @@ export interface DiscussionStatusResponse {
   continued_from?: string | null;  // 原讨论 ID
   is_continuation?: boolean;  // 是否是续前讨论
   discussion_style?: string;  // 讨论风格
+  briefing?: string | null;  // 讨论简报
 }
 
 // History API types
@@ -373,6 +374,7 @@ export interface DiscussionStyleFull {
 // Create discussion request with agent customization
 export interface CreateCurrentDiscussionRequest {
   topic: string
+  briefing?: string
   rounds?: number
   auto_pause_interval?: number
   attachment?: AttachmentInfo | null
@@ -472,4 +474,161 @@ export interface HolisticReviewEventData {
 export interface HolisticReviewWsEvent {
   type: 'holistic_review'
   data: HolisticReviewEventData
+}
+
+// ============================================================
+// Checkpoint 驱动交互 (Spec 2.10)
+// ============================================================
+
+// Checkpoint types
+export type CheckpointType = 'silent' | 'progress' | 'decision'
+
+// Decision option within a DECISION checkpoint
+export interface DecisionOption {
+  id: string          // 选项 ID (A/B/C/D)
+  label: string       // 选项标题
+  description: string // 选项说明
+}
+
+// Checkpoint model (mirrors backend Checkpoint)
+export interface Checkpoint {
+  id: string
+  discussion_id: string
+  type: CheckpointType
+  round_num: number
+  section_id: string | null
+
+  // PROGRESS fields
+  title: string
+  summary: string
+  key_points: string[]
+
+  // DECISION fields
+  question: string
+  context: string
+  options: DecisionOption[]
+  allow_free_input: boolean
+
+  // Decision response
+  response: string | null
+  response_text: string | null
+  responded_at: string | null
+
+  // Metadata
+  created_at: string
+  announced: boolean
+}
+
+// Decision log entry types for the right panel
+export type DecisionLogEntryType = 'decision' | 'consensus' | 'milestone'
+
+export interface DecisionLogEntry {
+  id: string
+  type: DecisionLogEntryType
+  checkpoint_id: string
+  round_num: number
+  title: string
+  summary: string
+  // decision-specific
+  question?: string
+  options?: DecisionOption[]
+  response?: string
+  response_text?: string
+  announced?: boolean
+  // metadata
+  created_at: string
+  responded_at?: string
+}
+
+// ============================================================
+// Checkpoint WebSocket events
+// ============================================================
+
+// Checkpoint progress event (non-blocking notification)
+export interface CheckpointProgressWsEvent {
+  type: 'checkpoint'
+  data: {
+    event_type: 'progress'
+    checkpoint: Checkpoint
+  }
+}
+
+// Checkpoint decision request event (blocking)
+export interface CheckpointDecisionWsEvent {
+  type: 'checkpoint'
+  data: {
+    event_type: 'decision_request'
+    checkpoint: Checkpoint
+  }
+}
+
+// Checkpoint decision responded event
+export interface CheckpointRespondedWsEvent {
+  type: 'checkpoint'
+  data: {
+    event_type: 'decision_responded'
+    checkpoint_id: string
+    response: string | null
+    response_text: string | null
+    responded_at: string
+  }
+}
+
+// Checkpoint decision announced event
+export interface CheckpointAnnouncedWsEvent {
+  type: 'checkpoint'
+  data: {
+    event_type: 'decision_announced'
+    checkpoint_id: string
+    announcement: string
+  }
+}
+
+// Union type for all checkpoint WS events
+export type CheckpointWsEvent =
+  | CheckpointProgressWsEvent
+  | CheckpointDecisionWsEvent
+  | CheckpointRespondedWsEvent
+  | CheckpointAnnouncedWsEvent
+
+// Producer digest event
+export interface ProducerDigestWsEvent {
+  type: 'producer_digest'
+  data: {
+    discussion_id: string
+    digest_summary: string
+    action: 'adjust' | 'follow_up_decision' | 'acknowledged'
+    guidance: string
+  }
+}
+
+// ============================================================
+// Checkpoint API types
+// ============================================================
+
+// Response for decision checkpoint
+export interface CheckpointRespondRequest {
+  option_id?: string
+  free_input?: string
+}
+
+export interface CheckpointRespondResponse {
+  checkpoint_id: string
+  status: string
+  message: string
+}
+
+// Producer message API
+export interface ProducerMessageRequest {
+  content: string
+}
+
+export interface ProducerMessageResponse {
+  status: string
+  message: string
+}
+
+// Checkpoints list API
+export interface CheckpointsListResponse {
+  checkpoints: Checkpoint[]
 }

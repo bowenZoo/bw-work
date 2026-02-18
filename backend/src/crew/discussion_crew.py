@@ -7,7 +7,7 @@ import re
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -336,6 +336,42 @@ class DiscussionCrew:
         self._doc_plan = None  # DocPlan instance
         self._doc_writer = None  # DocWriter instance
         self._section_summaries: list[str] = []  # sliding window of recent summaries
+        self._section_decisions: dict[str, list[str]] = {}  # section_id -> accumulated round decisions
+
+        # Checkpoint system
+        self._briefing: str = ""
+        self._checkpoint_counter = 0
+        self._pending_decision_checkpoints: dict[str, Any] = {}  # cp_id -> Checkpoint
+        self._checkpoint_lock = __import__("threading").Lock()
+        self._pending_producer_messages: list[dict] = []
+        self._producer_message_lock = __import__("threading").Lock()
+        self._producer_digest_pending: str | None = None  # digest to inject into next round
+
+        # Inject context-aware tools into agents
+        self._inject_context_tools()
+
+    def _inject_context_tools(self) -> None:
+        """Inject context-aware tools (memory_search, read_project_doc, request_vote) into agents."""
+        try:
+            from src.crew.tools import (
+                create_memory_search_tool,
+                create_read_project_doc_tool,
+                create_request_vote_tool,
+            )
+            from src.api.websocket.manager import global_connection_manager
+
+            memory_tool = create_memory_search_tool(self._discussion_memory, self._project_id)
+            doc_tool = create_read_project_doc_tool(self._project_id)
+            vote_tool = create_request_vote_tool(self._discussion_id, global_connection_manager)
+
+            # All agents get memory_search and read_project_doc
+            for agent in self._agents:
+                agent._extra_tools.extend([memory_tool, doc_tool])
+
+            # Only lead planner gets request_vote
+            self._lead_planner._extra_tools.append(vote_tool)
+        except Exception as exc:
+            logger.warning("Failed to inject context-aware tools: %s", exc)
 
     @property
     def agents(self) -> list[Any]:
@@ -532,6 +568,149 @@ class DiscussionCrew:
                 context_parts.append(f"  原因: {decision.rationale}\n")
 
         return "\n".join(context_parts) if context_parts else ""
+
+    # ------------------------------------------------------------------
+    # Windowed context builder — replaces unbounded context accumulation
+    # ------------------------------------------------------------------
+
+    def _build_windowed_context(
+        self,
+        topic: str,
+        opening: str,
+        current_round_messages: list[tuple[str, str]],
+        last_summary: str | None = None,
+        injected_messages: list[dict] | None = None,
+        producer_messages: list[tuple[str, str]] | None = None,
+        *,
+        summary_window: int = 3,
+        for_lead_planner: bool = False,
+    ) -> str:
+        """Build a windowed context for LLM calls instead of full history.
+
+        Constructs a three-layer context that mimics human meeting memory:
+        - Layer 1: Topic + briefing (fixed)
+        - Layer 2: Historical round summaries (compressed)
+        - Layer 3: Current round full messages (working memory)
+
+        Args:
+            topic: The discussion topic.
+            opening: Lead Planner's opening statement.
+            current_round_messages: List of (role, content) for current round.
+            last_summary: The previous round's lead planner summary.
+            injected_messages: User intervention messages in current round.
+            producer_messages: Producer messages as (content, digest) pairs.
+            summary_window: Number of historical round summaries to include.
+                For lead planner, this is automatically doubled.
+            for_lead_planner: If True, uses larger context window.
+
+        Returns:
+            A structured context string, typically 4K-8K tokens.
+        """
+        parts: list[str] = []
+        effective_window = summary_window * 2 if for_lead_planner else summary_window
+
+        # --- Layer 1: Meeting meta ---
+        parts.append(f"## 议题\n{topic}")
+
+        # Briefing (if available)
+        if self._briefing:
+            parts.append(f"\n## 项目简报\n{self._briefing[:1000]}")
+
+        # Opening (truncated for non-LP agents)
+        opening_limit = 1500 if for_lead_planner else 600
+        opening_text = opening[:opening_limit]
+        if len(opening) > opening_limit:
+            opening_text += "\n…(开场内容已截断)"
+        parts.append(f"\n## 主策划开场\n{opening_text}")
+
+        # --- Layer 2: Compressed history (round summaries) ---
+        round_summaries = []
+        if self._current_discussion and self._current_discussion.round_summaries:
+            round_summaries = self._current_discussion.round_summaries
+
+        if round_summaries:
+            # Take the most recent N summaries
+            recent_summaries = round_summaries[-effective_window:]
+            total_rounds = len(round_summaries)
+
+            parts.append(f"\n## 历史讨论摘要（共{total_rounds}轮，显示最近{len(recent_summaries)}轮）")
+
+            # If there are earlier rounds not shown, add a compressed note
+            if total_rounds > effective_window:
+                skipped = total_rounds - effective_window
+                # Extract key decisions from older summaries
+                early_decisions = self._extract_decisions_from_summaries(
+                    round_summaries[:skipped]
+                )
+                if early_decisions:
+                    parts.append(f"\n### 早期讨论已达成的关键决策\n{early_decisions}")
+
+            for summary_data in recent_summaries:
+                round_num = summary_data.get("round", "?")
+                content = summary_data.get("content", "")
+                # For non-LP agents, truncate each summary
+                if not for_lead_planner and len(content) > 800:
+                    content = content[:800] + "\n…(摘要已截断)"
+                parts.append(f"\n### 第{round_num}轮摘要\n{content}")
+
+        # --- Layer 3: Working memory (current round) ---
+        # Previous round summary (transition context)
+        if last_summary and last_summary not in str(round_summaries[-1:]):
+            parts.append(f"\n## 上一轮主策划总结\n{last_summary}")
+
+        # Current round messages
+        if current_round_messages:
+            parts.append("\n## 当前轮讨论")
+            for role, content in current_round_messages:
+                parts.append(f"\n{role}：\n{content}")
+
+        # Injected user/intervention messages
+        if injected_messages:
+            for msg in injected_messages:
+                parts.append(f"\n用户介入：\n{msg.get('content', '')}")
+
+        # Producer messages and digests
+        if producer_messages:
+            for content, digest in producer_messages:
+                parts.append(f"\n制作人：\n{content}")
+                if digest:
+                    parts.append(f"\n[主策划消化制作人消息]：\n{digest}")
+
+        return "\n".join(parts)
+
+    def _extract_decisions_from_summaries(
+        self,
+        summaries: list[dict],
+    ) -> str:
+        """Extract key decisions from a list of round summary dicts.
+
+        Scans the 'content' field for consensus and decision sections.
+
+        Args:
+            summaries: List of round summary dicts with 'content' key.
+
+        Returns:
+            Formatted string of extracted decisions, or empty string.
+        """
+        decisions: list[str] = []
+        for s in summaries:
+            content = s.get("content", "")
+            # Look for consensus / decision sections in the summary
+            for pattern in [
+                r"###?\s*(?:已达成共识|临时决策|决策)\s*\n(.*?)(?=\n###?|\Z)",
+                r"###?\s*(?:共识|Consensus)\s*\n(.*?)(?=\n###?|\Z)",
+            ]:
+                match = re.search(pattern, content, re.DOTALL)
+                if match:
+                    for line in match.group(1).strip().split("\n"):
+                        stripped = line.strip()
+                        if stripped and (stripped.startswith("-") or stripped.startswith("*")):
+                            decisions.append(stripped)
+                    break  # one pattern match per summary is enough
+            if len(decisions) >= 20:
+                break
+
+        return "\n".join(decisions) if decisions else ""
 
     def _init_agenda(self, items_data: list[dict[str, str]]) -> Agenda:
         """Initialize the discussion agenda from parsed items.
@@ -1415,7 +1594,18 @@ class DiscussionCrew:
 
         # Define async function to call a single agent
         async def call_agent(agent: Any) -> tuple[str, str]:
-            response = await agent.respond_async(context)
+            try:
+                from src.crew.tools import set_tool_context, clear_tool_context
+                set_tool_context(self._discussion_id, agent.role_name)
+            except Exception:
+                pass
+            try:
+                response = await agent.respond_async(context)
+            finally:
+                try:
+                    clear_tool_context()
+                except Exception:
+                    pass
             return (agent.role, response)
 
         # Run all agent calls in parallel
@@ -1429,46 +1619,89 @@ class DiscussionCrew:
         self,
         agents_to_call: list[Any],
         context: str,
-    ) -> list[tuple[str, str]]:
+        interrupt_check: Callable[[], bool] | None = None,
+    ) -> tuple[list[tuple[str, str]], bool]:
         """Run multiple agents in parallel, broadcasting as each completes.
 
         All agents start thinking simultaneously. As each finishes, its
         response is broadcast (speaking → message → idle) immediately.
 
+        When *interrupt_check* is provided it is polled periodically (every
+        3 seconds) and after every agent completion.  If it returns ``True``
+        the method stops waiting for remaining agents, sets them to idle,
+        and returns partial results with ``interrupted=True``.  Background
+        threads continue to run but their outputs are discarded.
+
         Args:
             agents_to_call: List of agent instances to call.
             context: The discussion context to respond to.
+            interrupt_check: Optional callable returning True when an
+                interrupt is requested (e.g. producer message arrived).
 
         Returns:
-            List of (role, response) tuples in completion order.
+            Tuple of (results, was_interrupted).
         """
         if not agents_to_call:
-            return []
+            return [], False
 
-        # Single agent — no need for thread pool
+        # Single agent — no thread pool, no interrupt during LLM call
         if len(agents_to_call) == 1:
             agent = agents_to_call[0]
             self._broadcast_status(agent.role, AgentStatus.THINKING)
-            response = agent.respond_sync(context)
+            try:
+                from src.crew.tools import set_tool_context, clear_tool_context
+                set_tool_context(self._discussion_id, agent.role_name)
+            except Exception:
+                pass
+            try:
+                response = agent.respond_sync(context)
+            finally:
+                try:
+                    clear_tool_context()
+                except Exception:
+                    pass
             self._broadcast_status(agent.role, AgentStatus.SPEAKING)
             self._broadcast_message(agent.role, response)
             self._record_message(agent.role, response)
             self._broadcast_status(agent.role, AgentStatus.IDLE)
-            return [(agent.role, response)]
+            return [(agent.role, response)], False
 
         # Broadcast THINKING for all agents at once
         for agent in agents_to_call:
             self._broadcast_status(agent.role, AgentStatus.THINKING)
 
         results: list[tuple[str, str]] = []
+        interrupted = False
 
-        with ThreadPoolExecutor(max_workers=len(agents_to_call)) as pool:
-            future_to_agent = {
-                pool.submit(agent.respond_sync, context): agent
-                for agent in agents_to_call
-            }
+        def _call_with_tool_context(agent: Any, ctx: str) -> str:
+            try:
+                from src.crew.tools import set_tool_context, clear_tool_context
+                set_tool_context(self._discussion_id, agent.role_name)
+            except Exception:
+                pass
+            try:
+                return agent.respond_sync(ctx)
+            finally:
+                try:
+                    from src.crew.tools import clear_tool_context
+                    clear_tool_context()
+                except Exception:
+                    pass
 
-            for future in as_completed(future_to_agent):
+        pool = ThreadPoolExecutor(max_workers=len(agents_to_call))
+        future_to_agent = {
+            pool.submit(_call_with_tool_context, agent, context): agent
+            for agent in agents_to_call
+        }
+        pending = set(future_to_agent.keys())
+
+        while pending:
+            # Wait for next completion or timeout for interrupt polling
+            done, pending = wait(
+                pending, timeout=3.0, return_when=FIRST_COMPLETED,
+            )
+
+            for future in done:
                 agent = future_to_agent[future]
                 try:
                     response = future.result()
@@ -1484,7 +1717,28 @@ class DiscussionCrew:
 
                 results.append((agent.role, response))
 
-        return results
+            # Check for interrupt after processing completions
+            if pending and interrupt_check and interrupt_check():
+                interrupted = True
+                logger.info(
+                    "Discussion %s: agent parallel run interrupted, "
+                    "%d/%d agents completed",
+                    self._discussion_id,
+                    len(results),
+                    len(future_to_agent),
+                )
+                # Set remaining agents to idle
+                for f in pending:
+                    a = future_to_agent[f]
+                    self._broadcast_status(a.role, AgentStatus.IDLE)
+                break
+
+        # Non-blocking shutdown when interrupted: background threads
+        # complete on their own but we proceed immediately.
+        # Normal path: wait for all threads to finish cleanly.
+        pool.shutdown(wait=not interrupted)
+
+        return results, interrupted
 
     def _process_round_summary(self, summary: str, task_name: str) -> None:
         """Process a round summary from the Lead Planner.
@@ -1806,9 +2060,15 @@ class DiscussionCrew:
         topic: str,
         context: str,
     ) -> str:
-        """Generate Lead Planner's round summary synchronously."""
+        """Generate Lead Planner's round summary synchronously.
+
+        Args:
+            round_num: Current round number.
+            topic: The discussion topic.
+            context: Windowed discussion context (not full history).
+        """
         summary_prompt = self._lead_planner.create_round_summary_prompt(round_num, topic)
-        full_prompt = f"{summary_prompt}\n\n---\n讨论记录：\n{context}"
+        full_prompt = f"{summary_prompt}\n\n---\n讨论上下文：\n{context}"
 
         task = Task(
             description=full_prompt,
@@ -1829,9 +2089,14 @@ class DiscussionCrew:
         topic: str,
         context: str,
     ) -> str:
-        """Generate Lead Planner's final decision document synchronously."""
+        """Generate Lead Planner's final decision document synchronously.
+
+        Args:
+            topic: The discussion topic.
+            context: Windowed discussion context (not full history).
+        """
         final_prompt = self._lead_planner.create_final_decision_prompt(topic)
-        full_prompt = f"{final_prompt}\n\n---\n讨论记录：\n{context}"
+        full_prompt = f"{final_prompt}\n\n---\n讨论上下文：\n{context}"
 
         task = Task(
             description=full_prompt,
@@ -1902,17 +2167,22 @@ class DiscussionCrew:
                 self._record_message(self._lead_planner.role, opening)
                 self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
-                # Build discussion context
-                context = f"议题：{topic}\n\n主策划开场：\n{opening}"
+                # Windowed context: track current round messages instead of
+                # accumulating all history into a single growing string.
                 round_num = 0
+                last_summary: str | None = None
+                current_round_msgs: list[tuple[str, str]] = []
+                pending_injected: list[dict] = []
 
                 # --- Phase 1-N: Dynamic Discussion Rounds ---
                 while round_num < max_rounds:
                     round_num += 1
                     self._current_round = round_num
+                    current_round_msgs = []
+                    pending_injected = []
 
                     # Determine who speaks this round
-                    source_text = opening if round_num == 1 else latest_summary
+                    source_text = opening if round_num == 1 else (last_summary or opening)
                     next_speakers = parse_next_speakers(source_text)
 
                     # Filter agents to those who should speak
@@ -1940,12 +2210,19 @@ class DiscussionCrew:
                         participating_names,
                     )
 
+                    # Build windowed context for agents
+                    agent_context = self._build_windowed_context(
+                        topic, opening, current_round_msgs,
+                        last_summary=last_summary,
+                        summary_window=3,
+                    )
+
                     # All agents think in parallel, broadcast as each finishes
-                    round_responses = self._run_agents_parallel_sync(
-                        agents_to_call, context,
+                    round_responses, _ = self._run_agents_parallel_sync(
+                        agents_to_call, agent_context,
                     )
                     for role, response in round_responses:
-                        context += f"\n\n{role}：\n{response}"
+                        current_round_msgs.append((role, response))
 
                     # Check for pause/intervention
                     injected_messages = self._check_pause_and_wait()
@@ -1953,18 +2230,24 @@ class DiscussionCrew:
                         raise DiscussionTimeoutError(self._abort_reason)
                     if injected_messages:
                         self._inject_user_messages(injected_messages)
-                        for msg in injected_messages:
-                            context += f"\n\n用户介入：\n{msg.get('content', '')}"
+                        pending_injected.extend(injected_messages)
 
-                    # Lead Planner summarizes this round
+                    # Lead Planner summarizes this round (larger context window)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
-                    latest_summary = self._lead_planner_summary_sync(round_num, topic, context)
+                    lp_context = self._build_windowed_context(
+                        topic, opening, current_round_msgs,
+                        last_summary=last_summary,
+                        injected_messages=pending_injected or None,
+                        summary_window=3,
+                        for_lead_planner=True,
+                    )
+                    latest_summary = self._lead_planner_summary_sync(round_num, topic, lp_context)
+                    last_summary = latest_summary
 
                     self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
                     self._broadcast_message(self._lead_planner.role, latest_summary)
                     self._record_message(self._lead_planner.role, latest_summary)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
-                    context += f"\n\n主策划总结（第{round_num}轮）：\n{latest_summary}"
 
                     # Generate and broadcast round summary
                     round_summary = self._generate_round_summary(round_num, latest_summary)
@@ -2010,15 +2293,21 @@ class DiscussionCrew:
                             raise DiscussionTimeoutError(self._abort_reason)
                         if injected:
                             self._inject_user_messages(injected)
-                            for msg in injected:
-                                context += f"\n\n用户介入：\n{msg.get('content', '')}"
+                            pending_injected.extend(injected)
 
                     self._broadcast_discussion_event(f"第{round_num}轮讨论完成")
 
                 # --- Final Phase: Lead Planner Decision ---
                 self._broadcast_discussion_event("正在生成最终决策文档...")
                 self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
-                final_decision = self._lead_planner_final_decision_sync(topic, context)
+                final_context = self._build_windowed_context(
+                    topic, opening, current_round_msgs,
+                    last_summary=last_summary,
+                    injected_messages=pending_injected or None,
+                    summary_window=5,
+                    for_lead_planner=True,
+                )
+                final_decision = self._lead_planner_final_decision_sync(topic, final_context)
 
                 self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
                 self._broadcast_message(self._lead_planner.role, final_decision)
@@ -2106,17 +2395,17 @@ class DiscussionCrew:
             len(stored.round_summaries) + 1 if stored.round_summaries else 1
         )
 
-        # Reconstruct context from existing messages (last 50 to keep manageable)
-        context = f"议题：{topic}\n"
-        recent_msgs = stored.messages[-50:] if len(stored.messages) > 50 else stored.messages
-        for msg in recent_msgs:
-            context += f"\n{msg.agent_role}：\n{msg.content}\n"
+        # Reconstruct opening from first lead planner message (if available)
+        opening = ""
+        for msg in stored.messages:
+            if msg.agent_role in ("主策划", "lead_planner"):
+                opening = msg.content
+                break
 
         # Inject follow-up as user message
         if follow_up:
             self._record_message("User", follow_up)
             self._broadcast_message("User", follow_up)
-            context += f"\n用户追问：\n{follow_up}\n"
 
         # Set up state
         self._auto_pause_interval = 0
@@ -2136,19 +2425,27 @@ class DiscussionCrew:
             ) as span:
                 trace_span = span
                 round_num = start_round - 1
-                latest_summary = ""
+                last_summary: str | None = None
+                current_round_msgs: list[tuple[str, str]] = []
+                pending_injected: list[dict] = []
+
+                # Use follow-up as initial context for speaker parsing
+                if follow_up:
+                    pending_injected.append({"content": follow_up})
 
                 while round_num < end_round:
                     round_num += 1
                     self._current_round = round_num
+                    current_round_msgs = []
+                    round_injected: list[dict] = []
 
                     # Determine speakers
                     if round_num == start_round and follow_up:
                         source_text = follow_up
-                    elif latest_summary:
-                        source_text = latest_summary
+                    elif last_summary:
+                        source_text = last_summary
                     else:
-                        source_text = context[-2000:]
+                        source_text = opening[-2000:] if opening else topic
 
                     next_speakers = parse_next_speakers(source_text)
                     agents_to_call = (
@@ -2168,12 +2465,20 @@ class DiscussionCrew:
                         self._discussion_id, round_num, participating,
                     )
 
+                    # Build windowed context for agents
+                    agent_context = self._build_windowed_context(
+                        topic, opening, current_round_msgs,
+                        last_summary=last_summary,
+                        injected_messages=pending_injected or None,
+                        summary_window=3,
+                    )
+
                     # All agents think in parallel, broadcast as each finishes
-                    round_responses = self._run_agents_parallel_sync(
-                        agents_to_call, context,
+                    round_responses, _ = self._run_agents_parallel_sync(
+                        agents_to_call, agent_context,
                     )
                     for role, response in round_responses:
-                        context += f"\n\n{role}：\n{response}"
+                        current_round_msgs.append((role, response))
 
                     # Pause/intervention check
                     injected = self._check_pause_and_wait()
@@ -2181,19 +2486,27 @@ class DiscussionCrew:
                         raise DiscussionTimeoutError(self._abort_reason)
                     if injected:
                         self._inject_user_messages(injected)
-                        for msg in injected:
-                            context += f"\n\n用户介入：\n{msg.get('content', '')}"
+                        round_injected.extend(injected)
 
-                    # Lead Planner summary
+                    # Lead Planner summary (larger context window)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
-                    latest_summary = self._lead_planner_summary_sync(
-                        round_num, topic, context
+                    lp_context = self._build_windowed_context(
+                        topic, opening, current_round_msgs,
+                        last_summary=last_summary,
+                        injected_messages=(pending_injected + round_injected) or None,
+                        summary_window=3,
+                        for_lead_planner=True,
                     )
+                    latest_summary = self._lead_planner_summary_sync(
+                        round_num, topic, lp_context
+                    )
+                    last_summary = latest_summary
+                    pending_injected = []  # Clear after first round
+
                     self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
                     self._broadcast_message(self._lead_planner.role, latest_summary)
                     self._record_message(self._lead_planner.role, latest_summary)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
-                    context += f"\n\n主策划总结（第{round_num}轮）：\n{latest_summary}"
 
                     # Round summary + doc organize
                     round_summary = self._generate_round_summary(round_num, latest_summary)
@@ -2218,7 +2531,13 @@ class DiscussionCrew:
                 # Final decision
                 self._broadcast_discussion_event("正在生成最终决策文档...")
                 self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
-                final_decision = self._lead_planner_final_decision_sync(topic, context)
+                final_context = self._build_windowed_context(
+                    topic, opening, current_round_msgs,
+                    last_summary=last_summary,
+                    summary_window=5,
+                    for_lead_planner=True,
+                )
+                final_decision = self._lead_planner_final_decision_sync(topic, final_context)
                 self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
                 self._broadcast_message(self._lead_planner.role, final_decision)
                 self._record_message(self._lead_planner.role, final_decision)
@@ -2301,11 +2620,14 @@ class DiscussionCrew:
         set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
         self._abort_reason = None
 
-        # Inject follow-up if provided
+        # Inject follow-up if provided — both as a visible message
+        # and into _producer_digest_pending so that _build_section_context
+        # includes it in the next round's agent prompt.
         if follow_up:
             self._record_message("User", follow_up)
             self._broadcast_message("User", follow_up)
             self._broadcast_discussion_event(f"用户追加方向：{follow_up[:100]}")
+            self._producer_digest_pending = f"制作人追加方向：{follow_up}"
 
         trace_metadata = self._prepare_trace_metadata(topic, additional_rounds)
         trace_span: Any | None = None
@@ -2359,7 +2681,7 @@ class DiscussionCrew:
 
                     # Agents discuss in parallel
                     context = self._build_section_context(topic, doc_plan, section, section_content, opening)
-                    round_responses = self._run_agents_parallel_sync(agents_to_call, context)
+                    round_responses, _ = self._run_agents_parallel_sync(agents_to_call, context)
 
                     discussion_content = f"主策划：{opening}\n\n"
                     for role, resp in round_responses:
@@ -2377,6 +2699,12 @@ class DiscussionCrew:
                     self._section_summaries.append(f"追加第{round_num}轮({section.title}): {summary[:500]}")
                     if len(self._section_summaries) > 2:
                         self._section_summaries.pop(0)
+
+                    # Accumulate per-section decisions for compact agent context
+                    if summary:
+                        self._section_decisions.setdefault(section.id, []).append(
+                            f"追加第{round_num}轮: {summary[:500]}"
+                        )
 
                     # Process agenda directives from summary
                     self._process_agenda_directives(summary, section)
@@ -2633,13 +2961,13 @@ class DiscussionCrew:
         Args:
             round_num: Current round number.
             topic: The discussion topic.
-            context: The full discussion context.
+            context: Windowed discussion context (not full history).
 
         Returns:
             The Lead Planner's summary for this round.
         """
         summary_prompt = self._lead_planner.create_round_summary_prompt(round_num, topic)
-        full_prompt = f"{summary_prompt}\n\n---\n讨论记录：\n{context}"
+        full_prompt = f"{summary_prompt}\n\n---\n讨论上下文：\n{context}"
 
         task = Task(
             description=full_prompt,
@@ -2665,13 +2993,13 @@ class DiscussionCrew:
 
         Args:
             topic: The discussion topic.
-            context: The full discussion context.
+            context: Windowed discussion context (not full history).
 
         Returns:
             The Lead Planner's final decision document.
         """
         final_prompt = self._lead_planner.create_final_decision_prompt(topic)
-        full_prompt = f"{final_prompt}\n\n---\n讨论记录：\n{context}"
+        full_prompt = f"{final_prompt}\n\n---\n讨论上下文：\n{context}"
 
         task = Task(
             description=full_prompt,
@@ -2735,20 +3063,35 @@ class DiscussionCrew:
                 self._record_message(self._lead_planner.role, opening)
                 self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
-                # Initialize context with opening
-                context = f"议题：{topic}\n\n主策划开场：\n{opening}"
+                # Windowed context: track current round messages instead of
+                # accumulating all history into a single growing string.
                 round_num = 0
+                last_summary: str | None = None
+                current_round_msgs: list[tuple[str, str]] = []
+                pending_injected: list[dict] = []
+                pending_producer: list[tuple[str, str]] = []
 
                 # Phase 1-N: Dynamic discussion rounds
                 while round_num < max_rounds:
                     round_num += 1
                     self._current_round = round_num
+                    current_round_msgs = []
+                    pending_injected = []
+                    pending_producer = []
 
-                    # Parse mentioned roles from context (primarily from latest summary/opening)
-                    mentioned_roles = parse_mentioned_roles(opening if round_num == 1 else context)
+                    # Parse mentioned roles (from latest summary or opening)
+                    source_text = opening if round_num == 1 else (last_summary or opening)
+                    mentioned_roles = parse_mentioned_roles(source_text)
+
+                    # Build windowed context for agents
+                    agent_context = self._build_windowed_context(
+                        topic, opening, current_round_msgs,
+                        last_summary=last_summary,
+                        summary_window=3,
+                    )
 
                     # Run parallel responses from mentioned agents
-                    responses = await self._run_parallel_responses(mentioned_roles, context)
+                    responses = await self._run_parallel_responses(mentioned_roles, agent_context)
 
                     # Record and broadcast responses
                     for role, response in responses:
@@ -2756,7 +3099,7 @@ class DiscussionCrew:
                         self._broadcast_message(role, response)
                         self._record_message(role, response)
                         self._broadcast_status(role, AgentStatus.IDLE)
-                        context += f"\n\n{role}：\n{response}"
+                        current_round_msgs.append((role, response))
 
                     # Check for pause/intervention
                     injected_messages = self._check_pause_and_wait()
@@ -2764,18 +3107,59 @@ class DiscussionCrew:
                         raise DiscussionTimeoutError(self._abort_reason)
                     if injected_messages:
                         self._inject_user_messages(injected_messages)
-                        for msg in injected_messages:
-                            context += f"\n\n用户介入：\n{msg.get('content', '')}"
+                        pending_injected.extend(injected_messages)
 
-                    # Lead Planner summarizes this round
+                    # Check for producer messages (制作人即时消息)
+                    producer_msgs = self._check_producer_messages()
+                    if producer_msgs:
+                        self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                        # Use windowed context for digest (replaces old ctx_tail approach)
+                        digest_context = self._build_windowed_context(
+                            topic, opening, current_round_msgs,
+                            last_summary=last_summary,
+                            summary_window=2,
+                        )
+                        digest = self._digest_producer_messages_dynamic(producer_msgs, digest_context)
+                        self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                        for msg in producer_msgs:
+                            pending_producer.append((msg["content"], digest["digest_summary"]))
+
+                        # Broadcast digest event
+                        try:
+                            from src.api.websocket.events import create_producer_digest_event
+                            digest_event = create_producer_digest_event(
+                                self._discussion_id,
+                                digest_summary=digest["digest_summary"],
+                                action=digest["action"],
+                                guidance=digest["guidance"],
+                            )
+                            broadcast_sync(digest_event.to_dict(), discussion_id=self._discussion_id)
+                        except Exception:
+                            pass
+
+                    # Lead Planner summarizes this round (larger context window)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
-                    summary = await self._lead_planner_summary(round_num, topic, context)
+                    lp_context = self._build_windowed_context(
+                        topic, opening, current_round_msgs,
+                        last_summary=last_summary,
+                        injected_messages=pending_injected or None,
+                        producer_messages=pending_producer or None,
+                        summary_window=3,
+                        for_lead_planner=True,
+                    )
+                    summary = await self._lead_planner_summary(round_num, topic, lp_context)
+                    last_summary = summary
 
                     self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
                     self._broadcast_message(self._lead_planner.role, summary)
                     self._record_message(self._lead_planner.role, summary)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
-                    context += f"\n\n主策划总结（第{round_num}轮）：\n{summary}"
+
+                    # Save round summary (used by _build_windowed_context for history)
+                    round_summary_data = self._generate_round_summary(round_num, summary)
+                    self._save_round_summary(round_summary_data)
+                    self._broadcast_round_summary(round_summary_data)
 
                     # Check if discussion should continue
                     status, questions = parse_discussion_status(summary)
@@ -2791,7 +3175,15 @@ class DiscussionCrew:
                 # Final Phase: Lead Planner makes final decisions
                 self._broadcast_discussion_event("正在生成最终决策文档...")
                 self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
-                final_decision = await self._lead_planner_final_decision(topic, context)
+                final_context = self._build_windowed_context(
+                    topic, opening, current_round_msgs,
+                    last_summary=last_summary,
+                    injected_messages=pending_injected or None,
+                    producer_messages=pending_producer or None,
+                    summary_window=5,
+                    for_lead_planner=True,
+                )
+                final_decision = await self._lead_planner_final_decision(topic, final_context)
 
                 self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
                 self._broadcast_message(self._lead_planner.role, final_decision)
@@ -2959,13 +3351,32 @@ class DiscussionCrew:
 
     def _lead_planner_section_opening(self, section, section_content: str, round_num: int) -> str:
         """Generate Lead Planner's opening for a section discussion."""
+        # Use decisions summary instead of full content for later rounds
+        decisions = self._section_decisions.get(section.id)
+        if decisions and len(section_content or "") > 1500:
+            content_for_prompt = (
+                f"（章节已有 {len(section_content)} 字，以下是各轮关键决策）\n"
+                + "\n".join(decisions[-5:])
+            )
+        else:
+            content_for_prompt = section_content
         prompt = self._lead_planner.create_section_discussion_prompt(
-            section.title, section.description, section_content, round_num,
+            section.title, section.description, content_for_prompt, round_num,
         )
 
         # Add recent summaries context
         if self._section_summaries:
             prompt += "\n\n---\n最近讨论摘要：\n" + "\n".join(self._section_summaries) + "\n---"
+
+        # Inject pending producer feedback so the opening addresses it.
+        # NOTE: Do NOT clear _producer_digest_pending here — let
+        # _build_section_context also inject it into agents' context so
+        # they see the feedback directly, not only via the opening text.
+        if self._producer_digest_pending:
+            prompt += (
+                f"\n\n⚠️ 制作人反馈（你必须在开场中回应并纳入讨论）：\n"
+                f"{self._producer_digest_pending}"
+            )
 
         task = Task(
             description=prompt,
@@ -3000,6 +3411,28 @@ class DiscussionCrew:
         output = self._sanitize_crew_output(str(result), "lead_planner_section_summary")
         return output or f"第{round_num}轮讨论已完成，暂无法生成总结。"
 
+    def _get_section_context_for_agents(self, section, section_content: str) -> str:
+        """Return compact section context for agent prompts.
+
+        For short sections (<=1500 chars), returns the full content.
+        For longer sections, returns the accumulated per-section decision
+        summaries instead — preserving semantics without prompt bloat.
+        """
+        if not section_content:
+            return ""
+        if len(section_content) <= 1500:
+            return f"\n当前章节内容：\n{section_content}"
+        # Use accumulated decisions if available
+        decisions = self._section_decisions.get(section.id)
+        if decisions:
+            decisions_text = "\n".join(decisions[-5:])  # keep last 5 rounds
+            return (
+                f"\n本章节已有 {len(section_content)} 字文档内容，以下是各轮关键决策：\n"
+                f"{decisions_text}"
+            )
+        # Fallback: first time seeing a long section (e.g. pre-populated doc)
+        return f"\n当前章节内容：\n{section_content}"
+
     def _build_section_context(self, topic: str, doc_plan, section, section_content: str, opening: str) -> str:
         """Build context string for agent discussion of a section."""
         parts = [
@@ -3007,13 +3440,522 @@ class DiscussionCrew:
             f"\n当前讨论章节：{section.title}",
             f"章节目标：{section.description}",
         ]
-        if section_content:
-            parts.append(f"\n当前章节内容：\n{section_content}")
+        section_ctx = self._get_section_context_for_agents(section, section_content)
+        if section_ctx:
+            parts.append(section_ctx)
         if self._section_summaries:
             parts.append("\n最近讨论摘要：")
             parts.extend(self._section_summaries)
+        # Inject pending producer message digest from previous round
+        if self._producer_digest_pending:
+            parts.append(f"\n⚠️ 制作人反馈（请务必回应）：\n{self._producer_digest_pending}")
+            self._producer_digest_pending = None
         parts.append(f"\n主策划引导：\n{opening}")
         return "\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # Checkpoint 系统
+    # ------------------------------------------------------------------
+
+    def _build_briefing_context(self, topic: str, briefing: str, attachment: str | None) -> str:
+        """构建包含 briefing 的讨论上下文。
+
+        Args:
+            topic: 讨论主题。
+            briefing: 制作人 briefing。
+            attachment: 可选附件。
+
+        Returns:
+            组合后的上下文字符串。
+        """
+        parts = [f"## 讨论主题\n{topic}"]
+        if briefing:
+            parts.append(f"\n## 制作人简报\n{briefing}")
+        if attachment:
+            parts.append(f"\n## 附件内容\n{attachment}")
+        return "\n".join(parts)
+
+    def _next_checkpoint_id(self) -> str:
+        """生成下一个 checkpoint ID。"""
+        self._checkpoint_counter += 1
+        return f"cp_{self._checkpoint_counter:03d}"
+
+    def _generate_checkpoint(
+        self,
+        round_num: int,
+        section: Any,
+        round_responses: list[tuple[str, str]],
+        briefing: str = "",
+    ) -> Any:
+        """调用 LLM 生成 Checkpoint，解析输出。
+
+        Args:
+            round_num: 当前轮次。
+            section: 当前 section 对象（需有 title, description）。
+            round_responses: 本轮 agent 发言列表 [(role, content), ...]。
+            briefing: 制作人 briefing。
+
+        Returns:
+            Checkpoint 实例。
+        """
+        from src.models.checkpoint import Checkpoint, CheckpointType, DecisionOption
+
+        recent_messages = [f"{role}: {content[:200]}" for role, content in round_responses]
+
+        # Build discussion context from section summaries
+        discussion_context = "\n".join(self._section_summaries[-5:]) if self._section_summaries else "(尚无先前讨论摘要)"
+
+        # Collect pending decisions
+        pending_decisions = []
+        with self._checkpoint_lock:
+            for cp in self._pending_decision_checkpoints.values():
+                if cp.response is None:
+                    pending_decisions.append(cp.question)
+
+        prompt = self._lead_planner.create_checkpoint_prompt(
+            round_num=round_num,
+            section_title=section.title,
+            section_description=section.description,
+            recent_messages=recent_messages,
+            discussion_context=discussion_context,
+            briefing=briefing,
+            pending_decisions=pending_decisions,
+        )
+
+        full_prompt = f"{prompt}"
+
+        try:
+            task = Task(
+                description=full_prompt,
+                expected_output="Checkpoint 判断结果",
+                agent=self._lead_planner.build_agent(),
+            )
+            crew = Crew(
+                agents=[self._lead_planner.build_agent()],
+                tasks=[task],
+                process=Process.sequential,
+            )
+            result = crew.kickoff()
+            output = self._sanitize_crew_output(str(result), "checkpoint_generation")
+        except Exception as e:
+            logger.warning("Checkpoint generation failed: %s, defaulting to SILENT", e)
+            output = ""
+
+        # Parse checkpoint output
+        checkpoint = self._parse_checkpoint_output(output, round_num, section)
+        return checkpoint
+
+    def _parse_checkpoint_output(self, output: str, round_num: int, section: Any) -> Any:
+        """解析 LLM 输出中的 checkpoint 代码块。
+
+        Args:
+            output: LLM 输出文本。
+            round_num: 轮次。
+            section: 章节对象。
+
+        Returns:
+            Checkpoint 实例。
+        """
+        import re
+        import yaml
+        from src.models.checkpoint import Checkpoint, CheckpointType, DecisionOption
+
+        cp_id = self._next_checkpoint_id()
+
+        # Extract ```checkpoint block
+        match = re.search(r"```checkpoint\s*\n(.*?)\n```", output, re.DOTALL)
+        if not match:
+            # Default to SILENT
+            return Checkpoint(
+                id=cp_id,
+                discussion_id=self._discussion_id,
+                type=CheckpointType.SILENT,
+                round_num=round_num,
+                section_id=getattr(section, "id", None),
+            )
+
+        block = match.group(1).strip()
+        try:
+            data = yaml.safe_load(block)
+        except Exception:
+            return Checkpoint(
+                id=cp_id,
+                discussion_id=self._discussion_id,
+                type=CheckpointType.SILENT,
+                round_num=round_num,
+                section_id=getattr(section, "id", None),
+            )
+
+        if not isinstance(data, dict):
+            return Checkpoint(
+                id=cp_id,
+                discussion_id=self._discussion_id,
+                type=CheckpointType.SILENT,
+                round_num=round_num,
+                section_id=getattr(section, "id", None),
+            )
+
+        cp_type_str = str(data.get("type", "SILENT")).upper()
+        try:
+            cp_type = CheckpointType(cp_type_str.lower())
+        except ValueError:
+            cp_type = CheckpointType.SILENT
+
+        options = []
+        if cp_type == CheckpointType.DECISION:
+            for opt_data in data.get("options", []):
+                if isinstance(opt_data, dict):
+                    options.append(DecisionOption(
+                        id=str(opt_data.get("id", "")),
+                        label=str(opt_data.get("label", "")),
+                        description=str(opt_data.get("description", "")),
+                    ))
+
+        return Checkpoint(
+            id=cp_id,
+            discussion_id=self._discussion_id,
+            type=cp_type,
+            round_num=round_num,
+            section_id=getattr(section, "id", None),
+            title=str(data.get("title", "")),
+            summary=str(data.get("summary", "")),
+            key_points=data.get("key_points", []) if isinstance(data.get("key_points"), list) else [],
+            question=str(data.get("question", "")),
+            context=str(data.get("context", "")),
+            options=options,
+            allow_free_input=bool(data.get("allow_free_input", True)),
+        )
+
+    def _broadcast_checkpoint_event(self, checkpoint: Any) -> None:
+        """广播 checkpoint 事件到 WebSocket。"""
+        from src.api.websocket.events import (
+            create_checkpoint_progress_event,
+            create_checkpoint_decision_event,
+        )
+        from src.models.checkpoint import CheckpointType
+
+        if self._discussion_id is None:
+            return
+
+        try:
+            cp_data = checkpoint.model_dump(mode="json")
+            if checkpoint.type == CheckpointType.PROGRESS:
+                event = create_checkpoint_progress_event(self._discussion_id, cp_data)
+            elif checkpoint.type == CheckpointType.DECISION:
+                event = create_checkpoint_decision_event(self._discussion_id, cp_data)
+            else:
+                return  # SILENT produces no event
+
+            broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
+        except Exception as exc:
+            logger.debug("Failed to broadcast checkpoint event: %s", exc)
+
+    def _persist_checkpoint(self, checkpoint: Any) -> None:
+        """持久化 checkpoint 到讨论记录。"""
+        if self._current_discussion is None:
+            return
+        try:
+            cp_data = checkpoint.model_dump(mode="json")
+            self._current_discussion.checkpoints.append(cp_data)
+            self._discussion_memory.save(self._current_discussion)
+        except Exception as exc:
+            logger.debug("Failed to persist checkpoint: %s", exc)
+
+    def _wait_for_decision_response(self, checkpoint_id: str) -> dict:
+        """轮询等待用户对 DECISION checkpoint 的回答。
+
+        类似 _check_pause_and_wait 的轮询模式。
+
+        Args:
+            checkpoint_id: 等待回答的 checkpoint ID。
+
+        Returns:
+            响应数据 dict，包含 option_id 和 free_input。
+        """
+        # Register as pending
+        with self._checkpoint_lock:
+            cp = self._pending_decision_checkpoints.get(checkpoint_id)
+
+        start_time = time.time()
+        while True:
+            # Check if discussion was aborted
+            state_info = get_discussion_state(self._discussion_id)
+            if state_info is not None and state_info.get("state") == DiscussionState.FINISHED:
+                raise DiscussionTimeoutError("Discussion finished while waiting for decision")
+
+            # Check if response arrived
+            with self._checkpoint_lock:
+                cp = self._pending_decision_checkpoints.get(checkpoint_id)
+                if cp and cp.response is not None:
+                    return {
+                        "option_id": cp.response,
+                        "free_input": cp.response_text or "",
+                    }
+
+            # Timeout check
+            if time.time() - start_time > self._pause_timeout:
+                logger.warning(
+                    "Decision wait timeout for checkpoint %s in discussion %s",
+                    checkpoint_id, self._discussion_id,
+                )
+                raise DiscussionTimeoutError(f"Decision wait timeout for checkpoint {checkpoint_id}")
+
+            time.sleep(self._pause_check_interval)
+
+    def _lead_planner_announce_decision(self, checkpoint: Any) -> str:
+        """主策划公开宣布决策内容。
+
+        Args:
+            checkpoint: 已有响应的 Checkpoint。
+
+        Returns:
+            宣布消息文本。
+        """
+        options_summary = "\n".join(
+            f"  {opt.id}. {opt.label}: {opt.description}"
+            for opt in checkpoint.options
+        ) if checkpoint.options else "(无选项)"
+
+        prompt = self._lead_planner.create_decision_announcement_prompt(
+            question=checkpoint.question,
+            user_response=checkpoint.response or "",
+            user_response_text=checkpoint.response_text or "",
+            options_summary=options_summary,
+        )
+
+        try:
+            task = Task(
+                description=prompt,
+                expected_output="决策宣布消息",
+                agent=self._lead_planner.build_agent(),
+            )
+            crew = Crew(
+                agents=[self._lead_planner.build_agent()],
+                tasks=[task],
+                process=Process.sequential,
+            )
+            result = crew.kickoff()
+            output = self._sanitize_crew_output(str(result), "decision_announcement")
+            return output or "制作人已做出决策，讨论继续。"
+        except Exception as e:
+            logger.warning("Decision announcement failed: %s", e)
+            return "制作人已做出决策，讨论继续。"
+
+    def _check_producer_messages(self) -> list[dict]:
+        """检查并获取待处理的制作人消息。
+
+        Returns:
+            制作人消息列表，每项包含 content 和 timestamp。
+        """
+        with self._producer_message_lock:
+            if not self._pending_producer_messages:
+                return []
+            messages = list(self._pending_producer_messages)
+            self._pending_producer_messages.clear()
+            logger.info(
+                "Discussion %s: dequeued %d producer message(s) for processing",
+                self._discussion_id,
+                len(messages),
+            )
+            return messages
+
+    def _has_pending_producer_messages(self) -> bool:
+        """Non-destructive check for pending producer messages.
+
+        Used as interrupt_check callback during parallel agent execution.
+        """
+        with self._producer_message_lock:
+            return len(self._pending_producer_messages) > 0
+
+    def add_producer_message(self, content: str) -> None:
+        """API 层调用，向队列添加制作人消息。
+
+        Args:
+            content: 消息内容。
+        """
+        from datetime import datetime
+        with self._producer_message_lock:
+            self._pending_producer_messages.append({
+                "content": content,
+                "timestamp": datetime.utcnow().isoformat(),
+            })
+            logger.info(
+                "Discussion %s: producer message queued (queue_size=%d): %s",
+                self._discussion_id,
+                len(self._pending_producer_messages),
+                content[:80],
+            )
+
+        # Persist producer message so it survives page refresh
+        message = Message(
+            id=str(uuid4()),
+            agent_id="producer",
+            agent_role="制作人",
+            content=content,
+            timestamp=datetime.now(),
+        )
+        self._messages.append(message)
+        self._unsaved_message_count += 1
+        if self._unsaved_message_count >= self._INCREMENTAL_SAVE_INTERVAL:
+            self._incremental_save()
+
+    def respond_to_checkpoint(self, checkpoint_id: str, option_id: str | None, free_input: str | None) -> bool:
+        """API 层调用，提交对 DECISION checkpoint 的响应。
+
+        Args:
+            checkpoint_id: checkpoint ID。
+            option_id: 选择的选项 ID（可选）。
+            free_input: 自由输入文本（可选）。
+
+        Returns:
+            是否成功提交。
+        """
+        from datetime import datetime
+        with self._checkpoint_lock:
+            cp = self._pending_decision_checkpoints.get(checkpoint_id)
+            if cp is None:
+                return False
+            cp.response = option_id or free_input or ""
+            cp.response_text = free_input or ""
+            cp.responded_at = datetime.utcnow().isoformat()
+            return True
+
+    def _lead_planner_digest_producer_message(
+        self,
+        messages: list[dict],
+        section: Any,
+        doc_plan: Any,
+    ) -> dict:
+        """主策划消化制作人消息。
+
+        Args:
+            messages: 制作人消息列表。
+            section: 当前 section。
+            doc_plan: 文档规划。
+
+        Returns:
+            消化结果 dict，包含 digest_summary, action, guidance。
+        """
+        user_messages = [m["content"] for m in messages]
+        discussion_context = "\n".join(self._section_summaries[-5:]) if self._section_summaries else "(无)"
+        section_title = getattr(section, "title", "未知章节")
+
+        prompt = self._lead_planner.create_producer_digest_prompt(
+            user_messages=user_messages,
+            current_section=section_title,
+            discussion_context=discussion_context,
+        )
+
+        try:
+            task = Task(
+                description=prompt,
+                expected_output="制作人消息消化结果",
+                agent=self._lead_planner.build_agent(),
+            )
+            crew = Crew(
+                agents=[self._lead_planner.build_agent()],
+                tasks=[task],
+                process=Process.sequential,
+            )
+            result = crew.kickoff()
+            output = self._sanitize_crew_output(str(result), "producer_digest")
+        except Exception as e:
+            logger.warning("Producer digest failed: %s", e)
+            output = ""
+
+        # Parse action from output
+        action = "acknowledged"
+        if output:
+            output_lower = output.lower()
+            if "**adjust**" in output_lower or "adjust" in output_lower.split("行动判断")[1:2]:
+                action = "adjust"
+            elif "**follow_up_decision**" in output_lower:
+                action = "follow_up_decision"
+
+        return {
+            "digest_summary": output or "已收到制作人消息。",
+            "action": action,
+            "guidance": "",
+        }
+
+    def _digest_producer_messages_dynamic(
+        self,
+        messages: list[dict],
+        discussion_context: str,
+    ) -> dict:
+        """在 run_dynamic 模式下消化制作人消息。
+
+        与 _lead_planner_digest_producer_message 类似，但不依赖 section/doc_plan。
+
+        Args:
+            messages: 制作人消息列表。
+            discussion_context: 当前讨论上下文。
+
+        Returns:
+            消化结果 dict，包含 digest_summary, action, guidance。
+        """
+        user_messages = [m["content"] for m in messages]
+        messages_block = "\n".join(
+            f"- 制作人消息 {i+1}: {msg}" for i, msg in enumerate(user_messages)
+        )
+
+        # 截取最近的上下文（避免太长）
+        ctx_tail = discussion_context[-3000:] if len(discussion_context) > 3000 else discussion_context
+
+        prompt = f"""作为主策划，你收到了制作人（项目负责人）的实时消息。请认真消化并融入后续讨论。
+
+**讨论上下文（最近部分）**:
+{ctx_tail}
+
+**制作人消息**:
+{messages_block}
+
+请按以下格式输出你的分析和引导：
+
+### 理解确认
+- 用你自己的话复述制作人的核心意图
+
+### 行动判断
+选择以下之一：
+- **adjust** — 制作人的意见需要调整当前讨论方向
+- **follow_up_decision** — 需要向制作人追问确认
+- **acknowledged** — 已知悉，纳入后续讨论
+
+### 后续引导
+- 下一轮讨论应如何回应制作人的意见
+- 哪些团队成员需要重点关注制作人提出的问题"""
+
+        try:
+            task = Task(
+                description=prompt,
+                expected_output="制作人消息消化分析",
+                agent=self._lead_planner.build_agent(),
+            )
+            crew = Crew(
+                agents=[self._lead_planner.build_agent()],
+                tasks=[task],
+                process=Process.sequential,
+            )
+            result = crew.kickoff()
+            output = self._sanitize_crew_output(str(result), "producer_digest_dynamic")
+        except Exception as e:
+            logger.warning("Producer digest (dynamic) failed: %s", e)
+            output = ""
+
+        # Parse action
+        action = "acknowledged"
+        if output:
+            output_lower = output.lower()
+            if "**adjust**" in output_lower:
+                action = "adjust"
+            elif "**follow_up_decision**" in output_lower:
+                action = "follow_up_decision"
+
+        return {
+            "digest_summary": output or "已收到制作人消息，将在后续讨论中纳入考虑。",
+            "action": action,
+            "guidance": "",
+        }
 
     def _trigger_auto_pause(self, round_num: int) -> None:
         """Trigger auto-pause at a round boundary."""
@@ -3573,7 +4515,7 @@ class DiscussionCrew:
 
         task = Task(
             description=prompt,
-            expected_output="观众干预消化分析",
+            expected_output="制作人消息消化分析",
             agent=self._lead_planner.build_agent(),
         )
         crew = Crew(
@@ -3585,7 +4527,7 @@ class DiscussionCrew:
         digest_raw = str(result)
 
         # Broadcast digest event
-        self._broadcast_discussion_event("主策划正在消化观众反馈...")
+        self._broadcast_discussion_event("主策划正在消化制作人消息...")
         self._broadcast_message(self._lead_planner.role, digest_raw)
         self._record_message(self._lead_planner.role, digest_raw)
 
@@ -3737,13 +4679,13 @@ class DiscussionCrew:
         summary = assessment.get("summary", "")
 
         if impact == "CURRENT_ONLY":
-            guidance = f"观众反馈已纳入考虑。{summary}。请大家在当前章节讨论中融入这些意见。"
+            guidance = f"制作人意见已纳入考虑。{summary}。请大家在当前章节讨论中融入这些意见。"
         elif impact == "REOPEN":
             reopened = [r["section_id"] for r in assessment.get("reopen_sections", [])]
-            guidance = f"观众反馈影响较大：{summary}。已重开章节 {', '.join(reopened)}，稍后会回溯讨论。"
+            guidance = f"制作人意见影响较大：{summary}。已重开章节 {', '.join(reopened)}，稍后会回溯讨论。"
         else:
             new_titles = [t["title"] for t in assessment.get("new_topics", [])]
-            guidance = f"观众反馈引入新议题：{summary}。新增议题：{', '.join(new_titles)}。"
+            guidance = f"制作人意见引入新议题：{summary}。新增议题：{', '.join(new_titles)}。"
 
         self._broadcast_message(self._lead_planner.role, guidance)
         self._record_message(self._lead_planner.role, guidance)
@@ -3946,6 +4888,7 @@ class DiscussionCrew:
         max_rounds: int = 10,
         attachment: str | None = None,
         auto_pause_interval: int = 5,
+        briefing: str = "",
     ) -> str:
         """Run a document-centric discussion.
 
@@ -3958,6 +4901,7 @@ class DiscussionCrew:
             max_rounds: Maximum rounds of discussion.
             attachment: Optional attachment content.
             auto_pause_interval: Auto-pause every N rounds (0=disabled).
+            briefing: Producer briefing with background, constraints, expected output.
 
         Returns:
             Final result string.
@@ -3969,6 +4913,7 @@ class DiscussionCrew:
         self._init_discussion(topic)
         self._auto_pause_interval = auto_pause_interval
         self._total_rounds = max_rounds
+        self._briefing = briefing
         set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
         self._abort_reason = None
 
@@ -4010,6 +4955,26 @@ class DiscussionCrew:
                 for round_num in range(1, max_rounds + 1):
                     self._current_round = round_num
 
+                    # ── Check for producer messages at round start ──
+                    # Messages can arrive during checkpoint / DocWriter /
+                    # pause-check of the previous round.  Capture them
+                    # now so _lead_planner_section_opening sees them.
+                    early_producer_msgs = self._check_producer_messages()
+                    if early_producer_msgs:
+                        producer_text = "\n".join(
+                            m["content"] for m in early_producer_msgs
+                        )
+                        self._producer_digest_pending = (
+                            f"制作人消息：{producer_text}"
+                        )
+                        logger.info(
+                            "Discussion %s round %d: captured %d early "
+                            "producer message(s) for opening injection",
+                            self._discussion_id,
+                            round_num,
+                            len(early_producer_msgs),
+                        )
+
                     # Pick next section
                     file_plan, section = self._pick_next_section(doc_plan)
                     if file_plan is None or section is None:
@@ -4026,7 +4991,18 @@ class DiscussionCrew:
                     # Read current section content
                     section_content = self._doc_writer.read_section(file_plan.filename, section.id)
 
+                    # Last-chance check for producer messages before opening
+                    late_msgs = self._check_producer_messages()
+                    if late_msgs:
+                        extra = "\n".join(m["content"] for m in late_msgs)
+                        prev = self._producer_digest_pending or ""
+                        self._producer_digest_pending = (
+                            f"{prev}\n制作人消息：{extra}" if prev
+                            else f"制作人消息：{extra}"
+                        )
+
                     # Lead Planner opens section discussion
+                    # (_producer_digest_pending is consumed inside if set)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
                     opening = self._lead_planner_section_opening(section, section_content, round_num)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
@@ -4047,27 +5023,189 @@ class DiscussionCrew:
                     logger.info("Discussion %s round %d section %s: speakers=%s",
                                 self._discussion_id, round_num, section.id, participating)
 
-                    # Agents discuss in parallel
+                    # Agents discuss in parallel (with producer interrupt detection)
                     context = self._build_section_context(topic, doc_plan, section, section_content, opening)
-                    round_responses = self._run_agents_parallel_sync(agents_to_call, context)
+                    used_decisions = bool(
+                        self._section_decisions.get(section.id)
+                        and len(section_content or "") > 1500
+                    )
+                    logger.info(
+                        "Discussion %s round %d: section_content=%d chars, "
+                        "agent_context=%d chars, mode=%s",
+                        self._discussion_id, round_num,
+                        len(section_content or ""), len(context),
+                        "decisions_summary" if used_decisions else "full_content",
+                    )
+                    round_responses, was_interrupted = self._run_agents_parallel_sync(
+                        agents_to_call, context,
+                        interrupt_check=self._has_pending_producer_messages,
+                    )
 
                     # Build discussion content for summary and doc update
                     discussion_content = f"主策划：{opening}\n\n"
                     for role, resp in round_responses:
                         discussion_content += f"{role}：{resp}\n\n"
 
-                    # Lead Planner summarizes the section discussion
+                    # --- Process producer messages (before checkpoint) ---
+                    producer_msgs = self._check_producer_messages()
+                    if producer_msgs:
+                        if was_interrupted:
+                            self._broadcast_discussion_event(
+                                "收到制作人消息，中断当前讨论，主策划正在分析..."
+                            )
+                        self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                        digest = self._lead_planner_digest_producer_message(
+                            producer_msgs, section, doc_plan,
+                        )
+                        digest_text = digest["digest_summary"]
+
+                        # Broadcast lead planner's response to producer
+                        self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                        self._broadcast_message(
+                            self._lead_planner.role,
+                            f"[回应制作人] {digest_text}",
+                        )
+                        self._record_message(
+                            self._lead_planner.role,
+                            f"[回应制作人] {digest_text}",
+                        )
+                        self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+
+                        # Inject into discussion content so checkpoint sees it
+                        for msg in producer_msgs:
+                            discussion_content += f"制作人：{msg['content']}\n\n"
+                        discussion_content += f"主策划回应：{digest_text}\n\n"
+
+                        # Broadcast digest event for frontend
+                        try:
+                            from src.api.websocket.events import create_producer_digest_event
+                            digest_event = create_producer_digest_event(
+                                self._discussion_id,
+                                digest_summary=digest_text,
+                                action=digest["action"],
+                                guidance=digest["guidance"],
+                            )
+                            broadcast_sync(digest_event.to_dict(), discussion_id=self._discussion_id)
+                        except Exception:
+                            pass
+
+                    # Generate Checkpoint (replaces section summary)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
-                    summary = self._lead_planner_section_summary(section.title, round_num, discussion_content)
-                    self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
-                    self._broadcast_message(self._lead_planner.role, summary)
-                    self._record_message(self._lead_planner.role, summary)
+                    checkpoint = self._generate_checkpoint(
+                        round_num, section, round_responses,
+                        briefing=self._briefing,
+                    )
+
+                    from src.models.checkpoint import CheckpointType
+                    from src.api.websocket.events import (
+                        create_checkpoint_responded_event,
+                        create_decision_announced_event,
+                        create_producer_digest_event,
+                    )
+
+                    if checkpoint.type == CheckpointType.SILENT:
+                        # SILENT: no notification, generate fallback summary for internal use
+                        summary = self._lead_planner_section_summary(section.title, round_num, discussion_content)
+                        self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                        self._broadcast_message(self._lead_planner.role, summary)
+                        self._record_message(self._lead_planner.role, summary)
+                    elif checkpoint.type == CheckpointType.PROGRESS:
+                        # PROGRESS: non-blocking notice
+                        self._broadcast_checkpoint_event(checkpoint)
+                        self._persist_checkpoint(checkpoint)
+                        summary_text = f"[进展通报] {checkpoint.title}: {checkpoint.summary}"
+                        self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                        self._broadcast_message(self._lead_planner.role, summary_text)
+                        self._record_message(self._lead_planner.role, summary_text)
+                        summary = summary_text
+                    elif checkpoint.type == CheckpointType.DECISION:
+                        # DECISION: blocking, wait for user response
+                        with self._checkpoint_lock:
+                            self._pending_decision_checkpoints[checkpoint.id] = checkpoint
+                        self._broadcast_checkpoint_event(checkpoint)
+                        self._persist_checkpoint(checkpoint)
+
+                        # Set WAITING_DECISION status
+                        from src.api.routes.discussion import (
+                            DiscussionStatus as APIDiscussionStatus,
+                            get_discussion_state as get_api_state,
+                            save_discussion_state,
+                            get_current_discussion,
+                            set_current_discussion,
+                        )
+                        api_state = get_api_state(self._discussion_id)
+                        if api_state:
+                            api_state.status = APIDiscussionStatus.WAITING_DECISION
+                            save_discussion_state(api_state)
+                            current = get_current_discussion()
+                            if current and current.id == self._discussion_id:
+                                set_current_discussion(api_state)
+
+                        self._broadcast_discussion_event(f"等待制作人决策：{checkpoint.question}")
+
+                        # Wait for user response
+                        response = self._wait_for_decision_response(checkpoint.id)
+                        checkpoint.response = response["option_id"]
+                        checkpoint.response_text = response["free_input"]
+                        checkpoint.responded_at = datetime.utcnow().isoformat()
+
+                        # Broadcast responded event
+                        try:
+                            resp_event = create_checkpoint_responded_event(
+                                self._discussion_id,
+                                checkpoint.id,
+                                checkpoint.response,
+                                checkpoint.response_text,
+                                checkpoint.responded_at,
+                            )
+                            broadcast_sync(resp_event.to_dict(), discussion_id=self._discussion_id)
+                        except Exception:
+                            pass
+
+                        # Lead planner announces decision
+                        self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
+                        announcement = self._lead_planner_announce_decision(checkpoint)
+                        self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                        self._broadcast_message(self._lead_planner.role, announcement)
+                        self._record_message(self._lead_planner.role, announcement)
+                        checkpoint.announced = True
+                        self._persist_checkpoint(checkpoint)
+
+                        # Broadcast announced event
+                        try:
+                            ann_event = create_decision_announced_event(
+                                self._discussion_id,
+                                checkpoint.id,
+                                announcement,
+                            )
+                            broadcast_sync(ann_event.to_dict(), discussion_id=self._discussion_id)
+                        except Exception:
+                            pass
+
+                        # Restore RUNNING status
+                        if api_state:
+                            api_state.status = APIDiscussionStatus.RUNNING
+                            save_discussion_state(api_state)
+                            current = get_current_discussion()
+                            if current and current.id == self._discussion_id:
+                                set_current_discussion(api_state)
+
+                        summary = f"[决策] {checkpoint.question} → {checkpoint.response}"
+                    else:
+                        summary = ""
+
                     self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
                     # Update sliding window of summaries (keep last 2)
                     self._section_summaries.append(f"第{round_num}轮({section.title}): {summary[:500]}")
                     if len(self._section_summaries) > 2:
                         self._section_summaries.pop(0)
+
+                    # Accumulate per-section decisions for compact agent context
+                    if summary:
+                        self._section_decisions.setdefault(section.id, []).append(
+                            f"第{round_num}轮: {summary[:500]}"
+                        )
 
                     # Process agenda directives from summary
                     self._process_agenda_directives(summary, section)
@@ -4103,7 +5241,7 @@ class DiscussionCrew:
                     self._save_round_summary(round_summary)
                     self._broadcast_round_summary(round_summary)
 
-                    # Check for pause/intervention
+                    # Check for pause/intervention (legacy mechanism, kept for compatibility)
                     injected = self._check_pause_and_wait()
                     if self._abort_reason:
                         raise DiscussionTimeoutError(self._abort_reason)
@@ -4199,7 +5337,7 @@ class DiscussionCrew:
                                     agents_to_call = list(self._discussion_agents)
 
                                 ctx = self._build_section_context(topic, doc_plan, sect, sect_content, opening)
-                                rr = self._run_agents_parallel_sync(agents_to_call, ctx)
+                                rr, _ = self._run_agents_parallel_sync(agents_to_call, ctx)
                                 disc_content = f"主策划：{opening}\n\n"
                                 for role, resp in rr:
                                     disc_content += f"{role}：{resp}\n\n"

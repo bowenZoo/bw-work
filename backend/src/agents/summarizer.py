@@ -112,6 +112,7 @@ class Summarizer(BaseAgent):
                 "tools": self.get_tools(),
                 "verbose": False,
                 "allow_delegation": False,
+                "max_iter": 10,
             }
 
             if self._llm is not None:

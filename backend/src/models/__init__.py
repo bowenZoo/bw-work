@@ -6,10 +6,22 @@ from src.models.agenda import (
     AgendaItemStatus,
     AgendaSummaryDetails,
 )
+from src.models.checkpoint import (
+    Checkpoint,
+    CheckpointType,
+    DecisionOption,
+    PendingProducerMessage,
+    PendingProducerMessages,
+)
 
 __all__ = [
     "Agenda",
     "AgendaItem",
     "AgendaItemStatus",
     "AgendaSummaryDetails",
+    "Checkpoint",
+    "CheckpointType",
+    "DecisionOption",
+    "PendingProducerMessage",
+    "PendingProducerMessages",
 ]

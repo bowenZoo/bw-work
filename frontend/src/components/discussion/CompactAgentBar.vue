@@ -1,6 +1,10 @@
 <script setup lang="ts">
+import { ref, watch, onUnmounted } from 'vue'
 import type { Agent, AgentStatus } from '@/types'
 import { getAgentDisplayName, getAgentAvatar } from '@/utils/agents'
+import { useAgentsStore } from '@/stores'
+
+const agentsStore = useAgentsStore()
 
 const props = defineProps<{
   agents: Agent[]
@@ -20,7 +24,11 @@ function isSpeaking(agentId: string): boolean {
   return agentId === props.currentSpeaker
 }
 
-function getStatusLabel(status: AgentStatus): string {
+function getStatusLabel(agentId: string, status: AgentStatus): string {
+  const content = agentsStore.getStatusContent(agentId)
+  if (status === 'thinking' && content) {
+    return content
+  }
   switch (status) {
     case 'thinking': return '思考中'
     case 'speaking': return '发言中'
@@ -28,6 +36,64 @@ function getStatusLabel(status: AgentStatus): string {
     default: return '空闲'
   }
 }
+
+// --- Timer logic (uses backend-provided started_at timestamps) ---
+const timers = ref<Record<string, number>>({})       // agentId -> elapsed seconds
+let intervalId: ReturnType<typeof setInterval> | null = null
+
+function startTick() {
+  if (intervalId) return
+  intervalId = setInterval(() => {
+    const now = Date.now()
+    const updated: Record<string, number> = {}
+    for (const [id, isoStr] of Object.entries(agentsStore.statusStartedAt)) {
+      const startMs = new Date(isoStr).getTime()
+      if (startMs > 0) {
+        updated[id] = Math.floor((now - startMs) / 1000)
+      }
+    }
+    timers.value = updated
+  }, 1000)
+}
+
+function stopTick() {
+  if (intervalId) {
+    clearInterval(intervalId)
+    intervalId = null
+  }
+}
+
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+// Watch statusStartedAt from store to start/stop ticker
+watch(
+  () => Object.keys(agentsStore.statusStartedAt).length,
+  (count) => {
+    if (count > 0) {
+      // Immediate calc before next tick
+      const now = Date.now()
+      const updated: Record<string, number> = {}
+      for (const [id, isoStr] of Object.entries(agentsStore.statusStartedAt)) {
+        const startMs = new Date(isoStr).getTime()
+        if (startMs > 0) {
+          updated[id] = Math.floor((now - startMs) / 1000)
+        }
+      }
+      timers.value = updated
+      startTick()
+    } else {
+      timers.value = {}
+      stopTick()
+    }
+  },
+  { immediate: true },
+)
+
+onUnmounted(() => stopTick())
 </script>
 
 <template>
@@ -58,10 +124,19 @@ function getStatusLabel(status: AgentStatus): string {
           :class="`dot-${getStatus(agent.id)}`"
         ></span>
       </div>
-      <span class="agent-name">{{ getAgentDisplayName(agent.role) }}</span>
-      <span class="agent-status-label" :class="`label-${getStatus(agent.id)}`">
-        {{ getStatusLabel(getStatus(agent.id)) }}
-      </span>
+      <div class="agent-info">
+        <div class="agent-name-row">
+          <span class="agent-name">{{ getAgentDisplayName(agent.role) }}</span>
+          <span
+            v-if="timers[agent.id] !== undefined"
+            class="agent-timer"
+            :class="`label-${getStatus(agent.id)}`"
+          >{{ formatTime(timers[agent.id]) }}</span>
+        </div>
+        <span class="agent-status-label" :class="`label-${getStatus(agent.id)}`">
+          {{ getStatusLabel(agent.id, getStatus(agent.id)) }}
+        </span>
+      </div>
     </div>
   </div>
 </template>
@@ -70,8 +145,8 @@ function getStatusLabel(status: AgentStatus): string {
 .agent-bar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 8px 12px;
+  gap: 2px;
+  padding: 6px 8px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -81,9 +156,9 @@ function getStatusLabel(status: AgentStatus): string {
 .agent-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 20px;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 16px;
   cursor: pointer;
   transition: background 0.2s;
   flex: 1;
@@ -108,16 +183,16 @@ function getStatusLabel(status: AgentStatus): string {
 
 .agent-avatar {
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
   border-radius: 50%;
   overflow: visible;
 }
 
 .avatar-img {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   object-fit: cover;
 }
@@ -126,21 +201,21 @@ function getStatusLabel(status: AgentStatus): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: var(--bg-tertiary);
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .status-dot {
   position: absolute;
   bottom: -1px;
   right: -1px;
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  border: 2px solid var(--bg-secondary);
+  border: 1.5px solid var(--bg-secondary);
 }
 
 .dot-idle {
@@ -166,8 +241,22 @@ function getStatusLabel(status: AgentStatus): string {
   50% { opacity: 0.5; }
 }
 
+.agent-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.agent-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
 .agent-name {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
@@ -175,10 +264,19 @@ function getStatusLabel(status: AgentStatus): string {
   text-overflow: ellipsis;
 }
 
-.agent-status-label {
-  font-size: 11px;
+.agent-timer {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.agent-status-label {
+  font-size: 10px;
+  white-space: nowrap;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .label-idle {

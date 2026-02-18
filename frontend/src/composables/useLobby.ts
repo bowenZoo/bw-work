@@ -270,9 +270,11 @@ export function useLobby() {
     agentConfigs?: Record<string, Partial<AgentConfig>>,
     discussionStyle?: string,
     password?: string,
+    briefing?: string,
   ): Promise<CreateCurrentDiscussionResponse> {
     const response = await createCurrentDiscussion({
       topic,
+      briefing,
       rounds,
       auto_pause_interval: autoPauseInterval,
       attachment: attachment || null,

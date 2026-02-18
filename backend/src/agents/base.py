@@ -51,6 +51,7 @@ class BaseAgent(ABC):
             self._config.update(config_overrides)
         self._llm = llm
         self._agent: Agent | None = None
+        self._extra_tools: list[Any] = []
 
     @property
     def config(self) -> dict[str, Any]:
@@ -93,13 +94,33 @@ class BaseAgent(ABC):
             Configured CrewAI Agent instance.
         """
         if self._agent is None:
+            # Merge agent-specific tools with shared context-free tools
+            tools = list(self.get_tools())
+            try:
+                from src.crew.tools import (
+                    get_calculator_tool,
+                    get_industry_data_tool,
+                    get_table_tool,
+                    get_web_search_tool,
+                )
+                tools.append(get_web_search_tool())
+                tools.append(get_calculator_tool())
+                tools.append(get_table_tool())
+                tools.append(get_industry_data_tool())
+            except Exception:
+                pass  # graceful degradation if tools unavailable
+
+            # Add context-aware tools injected by DiscussionCrew
+            tools.extend(self._extra_tools)
+
             agent_kwargs: dict[str, Any] = {
                 "role": self.role,
                 "goal": self.goal,
                 "backstory": self.backstory,
-                "tools": self.get_tools(),
+                "tools": tools,
                 "verbose": settings.debug,
                 "allow_delegation": False,
+                "max_iter": 10,
             }
 
             if self._llm is not None:

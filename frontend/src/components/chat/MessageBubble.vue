@@ -21,7 +21,16 @@ const agent = computed(() => {
   return role ? agentsStore.getAgentByRole(role) : undefined;
 });
 
-const displayName = computed(() => agent.value?.name ?? props.message.agentRole ?? 'Unknown');
+const isProducer = computed(() => {
+  const role = (props.message.agentRole || '').toLowerCase();
+  const id = (props.message.agentId || '').toLowerCase();
+  return role === 'user' || role === '制作人' || id === 'producer' || id === 'user';
+});
+
+const displayName = computed(() => {
+  if (isProducer.value) return '制作人';
+  return agent.value?.name ?? props.message.agentRole ?? 'Unknown';
+});
 
 // Format timestamp
 const formattedTime = computed(() => {
@@ -38,7 +47,10 @@ const avatarInitial = computed(() => {
 });
 
 // Get role class for styling
-const roleClass = computed(() => normalizedRole.value ?? 'other');
+const roleClass = computed(() => {
+  if (isProducer.value) return 'producer';
+  return normalizedRole.value ?? 'other';
+});
 
 // Render markdown content
 const htmlContent = computed(() => {

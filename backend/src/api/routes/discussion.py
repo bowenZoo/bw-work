@@ -41,6 +41,7 @@ class DiscussionStatus(str, Enum):
     PENDING = "pending"
     QUEUED = "queued"
     RUNNING = "running"
+    WAITING_DECISION = "waiting_decision"  # 等待用户决策
     COMPLETED = "completed"
     STOPPED = "stopped"  # 轮次用完但仍有未讨论 section
     FAILED = "failed"
@@ -91,6 +92,7 @@ class DiscussionState(BaseModel):
     agent_configs: dict = Field(default_factory=dict)  # role_name -> config 覆盖
     discussion_style: str = ""  # 讨论风格 (socratic/directive/debate)
     password_hash: str = ""  # 空字符串表示无密码
+    briefing: str = ""  # 制作人 briefing
 
 
 class GetDiscussionResponse(BaseModel):
@@ -110,6 +112,7 @@ class GetDiscussionResponse(BaseModel):
     is_continuation: bool = False  # 是否是续前讨论
     discussion_style: str = ""  # 讨论风格
     has_password: bool = False  # 是否有密码保护
+    briefing: str = ""  # 制作人 briefing
 
 
 class StartDiscussionResponse(BaseModel):
@@ -236,6 +239,7 @@ class CreateCurrentDiscussionRequest(BaseModel):
     agent_configs: dict = Field(default_factory=dict, description="Per-agent config overrides")
     discussion_style: str = Field(default="", description="Discussion style (socratic, directive, debate)")
     password: str = Field(default="123456", description="Discussion password (empty string for no password)")
+    briefing: str = Field(default="", description="Producer briefing: background, constraints, expected output")
 
 
 class CreateCurrentDiscussionResponse(BaseModel):
@@ -281,6 +285,9 @@ _current_discussion_lock = threading.RLock()
 
 # Per-discussion agent statuses: discussion_id -> {agent_id -> status}
 _per_discussion_agent_statuses: dict[str, dict[str, str]] = {}
+
+# Per-discussion agent status started_at timestamps: discussion_id -> {agent_id -> ISO timestamp}
+_per_discussion_agent_started_at: dict[str, dict[str, str]] = {}
 
 # Discussion concurrency control
 _discussion_semaphore: threading.Semaphore | None = None
@@ -332,17 +339,37 @@ def get_agent_statuses(discussion_id: str | None = None) -> dict[str, str]:
     return {}
 
 
+def get_agent_started_at(discussion_id: str | None = None) -> dict[str, str]:
+    """Get timestamps for when each agent entered their current active status."""
+    if discussion_id:
+        return dict(_per_discussion_agent_started_at.get(discussion_id, {}))
+    return {}
+
+
 def set_agent_status(discussion_id: str, agent_id: str, status: str) -> None:
     """Update a single agent's status for a discussion."""
+    from datetime import datetime, timezone
+
+    old_status = _per_discussion_agent_statuses.get(discussion_id, {}).get(agent_id)
     _per_discussion_agent_statuses.setdefault(discussion_id, {})[agent_id] = status
+
+    active_statuses = {"thinking", "speaking", "writing"}
+    if status in active_statuses and old_status != status:
+        _per_discussion_agent_started_at.setdefault(discussion_id, {})[agent_id] = (
+            datetime.now(timezone.utc).isoformat()
+        )
+    elif status not in active_statuses:
+        _per_discussion_agent_started_at.get(discussion_id, {}).pop(agent_id, None)
 
 
 def reset_agent_statuses(discussion_id: str | None = None) -> None:
     """Reset agent statuses. If discussion_id given, reset only that discussion."""
     if discussion_id:
         _per_discussion_agent_statuses.pop(discussion_id, None)
+        _per_discussion_agent_started_at.pop(discussion_id, None)
     else:
         _per_discussion_agent_statuses.clear()
+        _per_discussion_agent_started_at.clear()
 
 
 def cleanup_stale_discussions() -> int:
@@ -690,6 +717,7 @@ def _run_discussion_sync(discussion_id: str) -> None:
                 max_rounds=discussion.rounds,
                 attachment=discussion.attachment.content if discussion.attachment else None,
                 auto_pause_interval=discussion.auto_pause_interval,
+                briefing=discussion.briefing or "",
             )
 
             if result.startswith("STOPPED:"):
@@ -1047,6 +1075,7 @@ async def get_current_discussion_api() -> GetDiscussionResponse | None:
         is_continuation=discussion.continued_from is not None,
         discussion_style=discussion.discussion_style,
         has_password=bool(discussion.password_hash),
+        briefing=discussion.briefing,
     )
 
 
@@ -1096,6 +1125,7 @@ async def create_current_discussion(
             agent_configs=agent_configs,
             discussion_style=request.discussion_style or "",
             password_hash=password_hash,
+            briefing=request.briefing or "",
         )
 
         # _current_discussion points to the most recently created discussion
@@ -1178,6 +1208,7 @@ async def join_current_discussion() -> JoinDiscussionResponse:
             is_continuation=discussion.continued_from is not None,
             discussion_style=discussion.discussion_style,
             has_password=bool(discussion.password_hash),
+            briefing=discussion.briefing,
         ),
         messages=messages,
     )
@@ -1361,6 +1392,7 @@ async def get_discussion(discussion_id: str) -> GetDiscussionResponse:
         is_continuation=discussion.continued_from is not None,
         discussion_style=discussion.discussion_style,
         has_password=bool(discussion.password_hash),
+        briefing=discussion.briefing,
     )
 
 

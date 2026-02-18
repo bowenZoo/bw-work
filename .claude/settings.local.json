@@ -101,7 +101,15 @@
       "WebFetch(domain:118.89.16.95)",
       "Bash(git checkout:*)",
       "Bash(find:*)",
-      "Bash(perl -ne:*)"
+      "Bash(perl -ne:*)",
+      "WebSearch",
+      "WebFetch(domain:pypi.org)",
+      "Bash(.venv/bin/pip list:*)",
+      "Bash(PROJECT_DIR=\"/Users/bowen/workspace/claude/bw-work\")",
+      "Bash(REMOTE=\"bw-dify\")",
+      "Bash(REMOTE_DIR=\"/home/ubuntu/bw-work\")",
+      "Bash(__NEW_LINE_7543386be47857e8__ rsync -avz --delete --exclude 'node_modules' --exclude '.venv' --exclude '__pycache__' --exclude '.pytest_cache' --exclude '.mypy_cache' --exclude 'backend/data' --exclude '.git' --exclude '.claude' --exclude '.bwf' --exclude '*.pyc' --exclude 'frontend/dist' --exclude 'github' --exclude 'docs' --exclude 'backend/tests' --exclude '.DS_Store' --exclude '.ruff_cache' \"$PROJECT_DIR/\" \"$REMOTE:$REMOTE_DIR/\")",
+      "Bash(git remote add:*)"
     ]
   }
 }

@@ -131,6 +131,7 @@ const isEmpty = computed(
 // New discussion dialog
 const showNewDialog = ref(false);
 const topicInput = ref('');
+const briefingInput = ref('');
 const autoPauseInterval = ref(5);
 const attachmentFile = ref<File | null>(null);
 const attachmentContent = ref('');
@@ -200,6 +201,7 @@ function viewCard(card: CardItem) {
 function openNewDialog() {
   showNewDialog.value = true;
   topicInput.value = '';
+  briefingInput.value = '';
   autoPauseInterval.value = 5;
   attachmentFile.value = null;
   attachmentContent.value = '';
@@ -262,6 +264,7 @@ async function createDiscussion() {
       Object.keys(agentConfigsFinal).length > 0 ? agentConfigsFinal : undefined,
       selectedStyle.value || undefined,
       password.value || undefined,
+      briefingInput.value.trim() || undefined,
     );
 
     showNewDialog.value = false;
@@ -397,6 +400,7 @@ function getStatusLabel(status: string | null): string {
   switch (status) {
     case 'queued': return '排队中';
     case 'running': return '进行中';
+    case 'waiting_decision': return '等待决策';
     case 'paused': return '已暂停';
     case 'stopped': return '已停止';
     case 'failed': return '已中断';
@@ -408,6 +412,7 @@ function getStatusClass(status: string | null): string {
   switch (status) {
     case 'queued': return 'badge-queued';
     case 'running': return 'badge-running';
+    case 'waiting_decision': return 'badge-paused';
     case 'paused': return 'badge-paused';
     case 'stopped': return 'badge-stopped';
     case 'failed': return 'badge-failed';
@@ -416,7 +421,7 @@ function getStatusClass(status: string | null): string {
 }
 
 function isActiveStatus(status: string | null): boolean {
-  return status === 'running' || status === 'queued' || status === 'paused';
+  return status === 'running' || status === 'queued' || status === 'paused' || status === 'waiting_decision';
 }
 
 // Load discussion styles
@@ -597,6 +602,41 @@ onMounted(() => {
                     />
                   </div>
 
+                  <!-- Briefing -->
+                  <div class="form-section">
+                    <label class="input-label">讨论简报</label>
+                    <textarea
+                      v-model="briefingInput"
+                      class="briefing-input"
+                      placeholder="请提供讨论的背景信息，例如：&#10;- 讨论背景和上下文&#10;- 已知的约束条件&#10;- 期望的讨论产出"
+                      rows="4"
+                    />
+                    <span class="briefing-hint">帮助策划团队更好地理解你的需求（可选）</span>
+                  </div>
+
+                  <!-- Attachment -->
+                  <div class="form-section">
+                    <input
+                      ref="fileInputRef"
+                      type="file"
+                      accept=".md"
+                      class="hidden"
+                      @change="handleFileSelect"
+                    />
+                    <div v-if="attachmentFile" class="attachment-info">
+                      <Paperclip class="icon-sm text-blue" />
+                      <span class="attachment-name">{{ attachmentFile.name }}</span>
+                      <span class="attachment-size">{{ (attachmentFile.size / 1024).toFixed(1) }} KB</span>
+                      <button class="attachment-remove" @click="removeAttachment">
+                        <X class="icon-xs" />
+                      </button>
+                    </div>
+                    <button v-else class="attachment-add" @click="triggerFileInput">
+                      <Paperclip class="icon-sm" />
+                      <span>添加参考文档（.md）</span>
+                    </button>
+                  </div>
+
                   <!-- Password -->
                   <div class="form-section">
                     <label class="input-label">密码设置</label>
@@ -637,29 +677,6 @@ onMounted(() => {
                       v-model:agents="selectedAgents"
                       v-model:configs="agentConfigs"
                     />
-                  </div>
-
-                  <!-- Attachment -->
-                  <div class="form-section">
-                    <input
-                      ref="fileInputRef"
-                      type="file"
-                      accept=".md"
-                      class="hidden"
-                      @change="handleFileSelect"
-                    />
-                    <div v-if="attachmentFile" class="attachment-info">
-                      <Paperclip class="icon-sm text-blue" />
-                      <span class="attachment-name">{{ attachmentFile.name }}</span>
-                      <span class="attachment-size">{{ (attachmentFile.size / 1024).toFixed(1) }} KB</span>
-                      <button class="attachment-remove" @click="removeAttachment">
-                        <X class="icon-xs" />
-                      </button>
-                    </div>
-                    <button v-else class="attachment-add" @click="triggerFileInput">
-                      <Paperclip class="icon-sm" />
-                      <span>添加参考文档（.md）</span>
-                    </button>
                   </div>
 
                   <!-- Discussion Style -->
@@ -1535,6 +1552,37 @@ onMounted(() => {
 }
 
 .topic-input::placeholder {
+  color: var(--text-secondary, #9ca3af);
+}
+
+/* ===== Briefing ===== */
+.briefing-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 80px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.briefing-input:focus {
+  outline: none;
+  border-color: var(--primary-color, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.briefing-input::placeholder {
+  color: var(--text-secondary, #9ca3af);
+}
+
+.briefing-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
   color: var(--text-secondary, #9ca3af);
 }
 

@@ -28,6 +28,7 @@ import type {
   LeadPlannerDigestEventData,
   InterventionAssessmentEventData,
   HolisticReviewEventData,
+  Checkpoint,
 } from '@/types';
 import { normalizeAgentRole } from '@/utils/agents';
 import api from '@/api';
@@ -65,6 +66,12 @@ export function useDiscussion() {
 
   // Holistic review events
   const holisticReviews = ref<HolisticReviewEventData[]>([]);
+
+  // Checkpoint state
+  const checkpoints = ref<Checkpoint[]>([]);
+  const isWaitingDecision = computed(() =>
+    checkpoints.value.some(cp => cp.type === 'decision' && cp.response === null && cp.responded_at === null)
+  );
 
   // Current discussion ID
   const discussionId = computed(() => discussionStore.discussionId);
@@ -179,13 +186,15 @@ export function useDiscussion() {
     leadPlannerDigests.value = [];
     interventionAssessments.value = [];
     holisticReviews.value = [];
+    checkpoints.value = [];
 
     try {
-      const [statusResponse, messagesResponse, interventionStatus, summariesResponse] = await Promise.all([
+      const [statusResponse, messagesResponse, interventionStatus, summariesResponse, checkpointsResponse] = await Promise.all([
         discussionApi.getDiscussionStatus(id),
         discussionApi.getDiscussionMessages(id).catch(() => null),
         getInterventionStatus(id).catch(() => null),
         discussionApi.getRoundSummaries(id).catch(() => null),
+        api.get<{ checkpoints: Checkpoint[] }>(`/api/discussions/${id}/checkpoints`).then(r => r.data).catch(() => null),
       ]);
 
       const messages: Message[] = (messagesResponse?.messages ?? []).map((msg) => {
@@ -218,8 +227,13 @@ export function useDiscussion() {
         roundSummaries.value = summariesResponse.summaries;
       }
 
+      // Load checkpoints
+      if (checkpointsResponse?.checkpoints) {
+        checkpoints.value = checkpointsResponse.checkpoints;
+      }
+
       // Connect WebSocket if discussion is in progress
-      if (discussion.status === 'running') {
+      if (discussion.status === 'running' || discussion.status === 'waiting_decision') {
         connect();
       }
 
@@ -272,10 +286,10 @@ export function useDiscussion() {
           roundSummaries.value = message.data.round_summaries;
         }
         if (message.data.agent_statuses) {
-          agentsStore.resetAllAgentsStatus();
-          for (const [agentId, status] of Object.entries(message.data.agent_statuses)) {
-            agentsStore.setAgentStatus(agentId, status as AgentStatus);
-          }
+          agentsStore.setDiscussionAgentStatuses(
+            message.data.agent_statuses as Record<string, AgentStatus>,
+            message.data.agent_started_at as Record<string, string> | undefined,
+          );
         }
         if (message.data.doc_plan) {
           docPlan.value = message.data.doc_plan;
@@ -288,15 +302,19 @@ export function useDiscussion() {
           }
           docContents.value = newMap;
         }
+        if (message.data.checkpoints) {
+          checkpoints.value = message.data.checkpoints;
+        }
         break;
 
       case 'message':
         if (message.data?.agent_id && message.data?.content) {
-          // Deduplicate user messages: if we already have an optimistic
-          // user message with same content (within 30s), skip the WS echo
-          if (message.data.agent_id === 'user') {
+          // Deduplicate user/producer messages: if we already have an optimistic
+          // message with same content (within 30s), skip the WS echo
+          if (message.data.agent_id === 'user' || message.data.agent_id === 'producer') {
+            const srcId = message.data.agent_id;
             const recent = discussionStore.messages.find(
-              m => m.agentId === 'user' &&
+              m => m.agentId === srcId &&
                    m.content === message.data!.content &&
                    Date.now() - new Date(m.timestamp).getTime() < 30000
             );
@@ -344,21 +362,29 @@ export function useDiscussion() {
             discussionStore.setStatus('queued');
           } else if (content === 'discussion_running') {
             discussionStore.setStatus('running');
+          } else if (content === 'discussion_waiting_decision') {
+            discussionStore.setStatus('waiting_decision');
           }
           break;
         }
-        // Agent status update
+        // Agent status update (with optional content for tool status)
         if (message.data?.agent_id && message.data?.status) {
           agentsStore.setAgentStatus(
             message.data.agent_id,
-            message.data.status as AgentStatus
+            message.data.status as AgentStatus,
+            message.data.content || undefined,
+            message.data.timestamp || undefined,
           );
         } else if (message.data?.agent_role && message.data?.status) {
           const normalizedRole =
             normalizeAgentRole(message.data.agent_role) ??
             normalizeAgentRole(message.data.agent_id);
           if (normalizedRole) {
-            agentsStore.setAgentStatusByRole(normalizedRole, message.data.status as AgentStatus);
+            agentsStore.setAgentStatusByRole(
+              normalizedRole,
+              message.data.status as AgentStatus,
+              message.data.content || undefined,
+            );
           }
         }
         break;
@@ -468,6 +494,53 @@ export function useDiscussion() {
 
       case 'holistic_review': {
         holisticReviews.value = [...holisticReviews.value, message.data];
+        break;
+      }
+
+      case 'checkpoint': {
+        const eventType = message.data?.event_type;
+        if (eventType === 'progress' || eventType === 'decision_request') {
+          const cp = message.data.checkpoint as Checkpoint;
+          const idx = checkpoints.value.findIndex(c => c.id === cp.id);
+          if (idx >= 0) {
+            const arr = [...checkpoints.value];
+            arr[idx] = cp;
+            checkpoints.value = arr;
+          } else {
+            checkpoints.value = [...checkpoints.value, cp];
+          }
+        } else if (eventType === 'decision_responded') {
+          const cpId = message.data.checkpoint_id;
+          const idx = checkpoints.value.findIndex(c => c.id === cpId);
+          if (idx >= 0) {
+            checkpoints.value[idx] = {
+              ...checkpoints.value[idx],
+              response: message.data.response,
+              response_text: message.data.response_text,
+              responded_at: message.data.responded_at,
+            };
+            checkpoints.value = [...checkpoints.value];
+          }
+        } else if (eventType === 'decision_announced') {
+          const cpId = message.data.checkpoint_id;
+          const idx = checkpoints.value.findIndex(c => c.id === cpId);
+          if (idx >= 0) {
+            checkpoints.value[idx] = { ...checkpoints.value[idx], announced: true };
+            checkpoints.value = [...checkpoints.value];
+          }
+        }
+        break;
+      }
+
+      case 'producer_digest': {
+        // Producer digest is handled as a lead planner digest variant
+        leadPlannerDigests.value = [...leadPlannerDigests.value, {
+          discussion_id: message.data.discussion_id,
+          digest_summary: message.data.digest_summary,
+          key_points: [],
+          guidance: message.data.guidance,
+          timestamp: new Date().toISOString(),
+        }];
         break;
       }
 
@@ -645,6 +718,45 @@ export function useDiscussion() {
     discussionStore.endDiscussion();
   }
 
+  // Checkpoint API methods
+  async function respondToCheckpoint(checkpointId: string, optionId: string | null, freeInput: string): Promise<boolean> {
+    const id = discussionId.value;
+    if (!id) return false;
+    try {
+      await api.post(`/api/discussions/${id}/checkpoint/${checkpointId}/respond`, {
+        option_id: optionId || undefined,
+        free_input: freeInput || undefined,
+      });
+      // Optimistically update local state
+      const idx = checkpoints.value.findIndex(c => c.id === checkpointId);
+      if (idx >= 0) {
+        checkpoints.value[idx] = {
+          ...checkpoints.value[idx],
+          response: optionId,
+          response_text: freeInput || null,
+          responded_at: new Date().toISOString(),
+        };
+        checkpoints.value = [...checkpoints.value];
+      }
+      return true;
+    } catch (error) {
+      console.error('Failed to respond to checkpoint:', error);
+      return false;
+    }
+  }
+
+  async function sendProducerMessage(content: string): Promise<boolean> {
+    const id = discussionId.value;
+    if (!id) return false;
+    try {
+      await api.post(`/api/discussions/${id}/producer-message`, { content });
+      return true;
+    } catch (error) {
+      console.error('Failed to send producer message:', error);
+      return false;
+    }
+  }
+
   /**
    * Clear and reset everything
    */
@@ -663,6 +775,7 @@ export function useDiscussion() {
     leadPlannerDigests.value = [];
     interventionAssessments.value = [];
     holisticReviews.value = [];
+    checkpoints.value = [];
   }
 
   function setPaused(value: boolean) {
@@ -721,6 +834,10 @@ export function useDiscussion() {
     interventionAssessments,
     holisticReviews,
 
+    // Checkpoint state
+    checkpoints,
+    isWaitingDecision,
+
     // Actions
     createDiscussion,
     startDiscussion,
@@ -741,5 +858,9 @@ export function useDiscussion() {
     skipAgendaItem,
     getAgendaItemSummary,
     updateAgendaItem,
+
+    // Checkpoint actions
+    respondToCheckpoint,
+    sendProducerMessage,
   };
 }

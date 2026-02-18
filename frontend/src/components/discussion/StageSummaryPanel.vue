@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { RoundSummary } from '@/types'
 import { toSanitizedMarkdownHtml } from '@/utils/markdown'
 
@@ -9,6 +9,13 @@ const props = defineProps<{
 
 // Selected round index (null = show latest)
 const selectedRound = ref<number | null>(null)
+const showDropdown = ref(false)
+const selectorRef = ref<HTMLElement | null>(null)
+
+// Current effective index
+const currentIndex = computed(() =>
+  selectedRound.value ?? props.roundSummaries.length - 1
+)
 
 // Auto-select latest when new summaries arrive
 watch(
@@ -35,22 +42,52 @@ const hasContent = computed(() => props.roundSummaries.length > 0)
 
 // Display title
 const panelTitle = computed(() => {
-  if (selectedRound.value !== null && currentSummary.value) {
-    return `第 ${currentSummary.value.round} 轮总结`
-  }
   if (currentSummary.value) {
     return `第 ${currentSummary.value.round} 轮总结`
   }
   return '阶段总结'
 })
 
-function selectRound(index: number) {
-  selectedRound.value = index
+function goPrev() {
+  if (currentIndex.value > 0) selectedRound.value = currentIndex.value - 1
+}
+
+function goNext() {
+  if (currentIndex.value < props.roundSummaries.length - 1) {
+    selectedRound.value = currentIndex.value + 1
+    // If reached the last one, set to null (= latest)
+    if (selectedRound.value === props.roundSummaries.length - 1) {
+      selectedRound.value = null
+    }
+  }
+}
+
+function jumpTo(idx: number) {
+  selectedRound.value = idx === props.roundSummaries.length - 1 ? null : idx
+  showDropdown.value = false
 }
 
 function showLatest() {
   selectedRound.value = null
 }
+
+function closeDropdown() {
+  showDropdown.value = false
+}
+
+function onClickOutside(e: MouseEvent) {
+  if (selectorRef.value && !selectorRef.value.contains(e.target as Node)) {
+    showDropdown.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', onClickOutside, true)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onClickOutside, true)
+})
 </script>
 
 <template>
@@ -99,20 +136,47 @@ function showLatest() {
 
     <!-- Round navigation -->
     <div v-if="roundSummaries.length > 1" class="round-nav">
-      <button
-        v-for="(s, idx) in roundSummaries"
-        :key="idx"
-        class="round-btn"
-        :class="{ active: selectedRound === idx }"
-        @click="selectRound(idx)"
-      >
-        第{{ s.round }}轮
+      <!-- Prev -->
+      <button class="nav-arrow" :disabled="currentIndex <= 0" @click="goPrev">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
       </button>
-      <button
-        class="round-btn"
-        :class="{ active: selectedRound === null }"
-        @click="showLatest"
-      >
+
+      <!-- Round selector -->
+      <div ref="selectorRef" class="round-selector">
+        <button class="round-current" @click="showDropdown = !showDropdown">
+          第 {{ currentSummary?.round ?? currentIndex + 1 }} 轮
+          <span class="round-total">/ 共 {{ roundSummaries.length }} 轮</span>
+          <svg class="dropdown-caret" :class="{ open: showDropdown }" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+
+        <!-- Dropdown (opens upward) -->
+        <div v-if="showDropdown" class="round-dropdown">
+          <button
+            v-for="(s, idx) in [...roundSummaries].reverse()"
+            :key="roundSummaries.length - idx"
+            class="dropdown-item"
+            :class="{ active: currentIndex === roundSummaries.length - 1 - idx }"
+            @click="jumpTo(roundSummaries.length - 1 - idx)"
+          >
+            <span class="dropdown-seq">{{ roundSummaries.length - idx }}</span>
+            <span class="dropdown-round">第{{ s.round }}轮</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Next -->
+      <button class="nav-arrow" :disabled="selectedRound === null" @click="goNext">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
+
+      <!-- Latest shortcut -->
+      <button v-if="selectedRound !== null" class="nav-latest" @click="showLatest">
         最新
       </button>
     </div>
@@ -278,32 +342,147 @@ function showLatest() {
 
 .round-nav {
   display: flex;
+  align-items: center;
   gap: 4px;
-  padding: 8px 14px;
+  padding: 6px 12px;
   border-top: 1px solid var(--border-color);
   background: var(--bg-primary);
   flex-shrink: 0;
-  flex-wrap: wrap;
 }
 
-.round-btn {
-  padding: 3px 10px;
-  font-size: 12px;
-  border-radius: 12px;
+.nav-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  border: 1px solid var(--border-color);
   cursor: pointer;
   transition: all 0.15s;
+  flex-shrink: 0;
 }
 
-.round-btn:hover {
+.nav-arrow:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.nav-arrow:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.round-selector {
+  position: relative;
+}
+
+.round-current {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.round-current:hover {
   background: var(--bg-hover);
 }
 
-.round-btn.active {
+.round-total {
+  color: var(--text-weak);
+  font-weight: 400;
+}
+
+.dropdown-caret {
+  transition: transform 0.15s;
+  color: var(--text-weak);
+}
+
+.dropdown-caret.open {
+  transform: rotate(180deg);
+}
+
+.round-dropdown {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  min-width: 120px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+  padding: 4px;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.1s;
+  white-space: nowrap;
+}
+
+.dropdown-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.dropdown-item.active {
   background: var(--primary-color);
   color: white;
-  border-color: var(--primary-color);
+}
+
+.dropdown-item.active .dropdown-round {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.dropdown-seq {
+  min-width: 20px;
+  text-align: right;
+}
+
+.dropdown-round {
+  color: var(--text-weak);
+  font-size: 11px;
+}
+
+.nav-latest {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 12px;
+  background: var(--primary-color);
+  color: white;
+  border: 1px solid var(--primary-color);
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.nav-latest:hover {
+  opacity: 0.85;
 }
 </style>

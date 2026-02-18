@@ -6,6 +6,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      - TZ=Asia/Shanghai
       - CREWAI_DISABLE_TELEMETRY=true
       - OTEL_SDK_DISABLED=true
       - CREWAI_TESTING=true

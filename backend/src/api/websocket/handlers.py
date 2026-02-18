@@ -48,6 +48,12 @@ def _get_agent_statuses(discussion_id: str | None = None) -> dict[str, str]:
     return get_agent_statuses(discussion_id)
 
 
+def _get_agent_started_at(discussion_id: str | None = None) -> dict[str, str]:
+    """Get timestamps for when each agent entered their current active status."""
+    from src.api.routes.discussion import get_agent_started_at
+    return get_agent_started_at(discussion_id)
+
+
 async def _send_discussion_sync(websocket: WebSocket, discussion_id: str) -> None:
     """Send initial sync message for a per-discussion WebSocket connection.
 
@@ -108,6 +114,7 @@ async def _send_discussion_sync(websocket: WebSocket, discussion_id: str) -> Non
             "messages": messages,
             "round_summaries": round_summaries,
             "agent_statuses": _get_agent_statuses(discussion_id),
+            "agent_started_at": _get_agent_started_at(discussion_id),
             "doc_plan": doc_plan,
             "doc_contents": doc_contents,
             "is_paused": is_paused,
@@ -263,6 +270,7 @@ async def global_websocket_endpoint(websocket: WebSocket) -> None:
                     "messages": messages,
                     "round_summaries": round_summaries,
                     "agent_statuses": _get_agent_statuses(current.id),
+                    "agent_started_at": _get_agent_started_at(current.id),
                     "doc_plan": doc_plan,
                     "doc_contents": doc_contents,
                     "is_paused": is_paused,

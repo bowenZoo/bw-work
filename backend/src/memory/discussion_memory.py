@@ -141,6 +141,8 @@ class DiscussionMemory(MemoryStore[Discussion]):
             "summary": discussion.summary,
             "round_summaries": discussion.round_summaries,
             "doc_plan": discussion.doc_plan,
+            "briefing": discussion.briefing,
+            "checkpoints": discussion.checkpoints,
             "created_at": discussion.created_at.isoformat(),
             "updated_at": discussion.updated_at.isoformat(),
         }
@@ -164,6 +166,8 @@ class DiscussionMemory(MemoryStore[Discussion]):
             summary=data.get("summary"),
             round_summaries=data.get("round_summaries", []),
             doc_plan=data.get("doc_plan"),
+            briefing=data.get("briefing", ""),
+            checkpoints=data.get("checkpoints", []),
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
         )

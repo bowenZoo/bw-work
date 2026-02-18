@@ -47,6 +47,10 @@ class ServerMessageType(str, Enum):
     LEAD_PLANNER_DIGEST = "lead_planner_digest"
     INTERVENTION_ASSESSMENT = "intervention_assessment"
     HOLISTIC_REVIEW = "holistic_review"
+    # Checkpoint events
+    CHECKPOINT = "checkpoint"
+    # Producer digest event
+    PRODUCER_DIGEST = "producer_digest"
 
 
 class AgentStatus(str, Enum):
@@ -1120,5 +1124,145 @@ def create_holistic_review_event(
             review_dimensions=dims,
             revisions_needed=revisions_needed or [],
             new_topics=new_topics or [],
+        )
+    )
+
+
+# Checkpoint event models
+
+
+class CheckpointEventType(str, Enum):
+    """Sub-types of checkpoint events."""
+
+    PROGRESS = "progress"
+    DECISION_REQUEST = "decision_request"
+    DECISION_RESPONDED = "decision_responded"
+    DECISION_ANNOUNCED = "decision_announced"
+
+
+class CheckpointEventData(BaseModel):
+    """Data payload for checkpoint events."""
+
+    discussion_id: str
+    event_type: CheckpointEventType
+    checkpoint: dict[str, Any] | None = None  # Full checkpoint data (progress/decision_request)
+    checkpoint_id: str | None = None  # For responded/announced events
+    response: str | None = None  # Selected option ID
+    response_text: str | None = None  # Free text input
+    responded_at: str | None = None
+    announcement: str | None = None  # Lead planner announcement text
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class CheckpointEvent(BaseModel):
+    """Event for checkpoint notifications."""
+
+    type: ServerMessageType = ServerMessageType.CHECKPOINT
+    data: CheckpointEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+def create_checkpoint_progress_event(
+    discussion_id: str,
+    checkpoint: dict[str, Any],
+) -> CheckpointEvent:
+    """Create a PROGRESS checkpoint event (non-blocking notice)."""
+    return CheckpointEvent(
+        data=CheckpointEventData(
+            discussion_id=discussion_id,
+            event_type=CheckpointEventType.PROGRESS,
+            checkpoint=checkpoint,
+        )
+    )
+
+
+def create_checkpoint_decision_event(
+    discussion_id: str,
+    checkpoint: dict[str, Any],
+) -> CheckpointEvent:
+    """Create a DECISION checkpoint event (blocking, requires user response)."""
+    return CheckpointEvent(
+        data=CheckpointEventData(
+            discussion_id=discussion_id,
+            event_type=CheckpointEventType.DECISION_REQUEST,
+            checkpoint=checkpoint,
+        )
+    )
+
+
+def create_checkpoint_responded_event(
+    discussion_id: str,
+    checkpoint_id: str,
+    response: str | None,
+    response_text: str | None,
+    responded_at: str,
+) -> CheckpointEvent:
+    """Create a checkpoint responded event (user answered a decision)."""
+    return CheckpointEvent(
+        data=CheckpointEventData(
+            discussion_id=discussion_id,
+            event_type=CheckpointEventType.DECISION_RESPONDED,
+            checkpoint_id=checkpoint_id,
+            response=response,
+            response_text=response_text,
+            responded_at=responded_at,
+        )
+    )
+
+
+def create_decision_announced_event(
+    discussion_id: str,
+    checkpoint_id: str,
+    announcement: str,
+) -> CheckpointEvent:
+    """Create a decision announced event (lead planner publicly announces the decision)."""
+    return CheckpointEvent(
+        data=CheckpointEventData(
+            discussion_id=discussion_id,
+            event_type=CheckpointEventType.DECISION_ANNOUNCED,
+            checkpoint_id=checkpoint_id,
+            announcement=announcement,
+        )
+    )
+
+
+# Producer digest event models
+
+
+class ProducerDigestEventData(BaseModel):
+    """Data payload for producer message digest events."""
+
+    discussion_id: str
+    digest_summary: str
+    action: str = "acknowledged"  # "adjust" | "follow_up_decision" | "acknowledged"
+    guidance: str = ""
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class ProducerDigestEvent(BaseModel):
+    """Event when lead planner digests a producer message."""
+
+    type: ServerMessageType = ServerMessageType.PRODUCER_DIGEST
+    data: ProducerDigestEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+def create_producer_digest_event(
+    discussion_id: str,
+    digest_summary: str,
+    action: str = "acknowledged",
+    guidance: str = "",
+) -> ProducerDigestEvent:
+    """Create a producer digest event."""
+    return ProducerDigestEvent(
+        data=ProducerDigestEventData(
+            discussion_id=discussion_id,
+            digest_summary=digest_summary,
+            action=action,
+            guidance=guidance,
         )
     )

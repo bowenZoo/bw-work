@@ -25,13 +25,13 @@ const connectionStatusText = computed(() => {
 const connectionStatusClass = computed(() => {
   switch (props.connectionStatus) {
     case 'connected':
-      return 'text-green-600';
+      return 'conn-ok';
     case 'connecting':
-      return 'text-yellow-600';
+      return 'conn-ing';
     case 'error':
-      return 'text-red-600';
+      return 'conn-err';
     default:
-      return 'text-gray-500';
+      return 'conn-off';
   }
 });
 
@@ -39,30 +39,98 @@ const isConnected = computed(() => props.connectionStatus === 'connected');
 </script>
 
 <template>
-  <header class="bg-white border-b border-gray-200 px-4 py-3">
-    <div class="flex items-center justify-between">
-      <!-- Logo and title -->
-      <div class="flex items-center gap-3">
-        <div class="w-7 h-7 bg-gray-900 rounded-md flex items-center justify-center">
-          <span class="text-white font-bold text-xs">BW</span>
-        </div>
-        <div>
-          <h1 class="text-lg font-semibold text-gray-900">Game Design</h1>
-          <p class="text-xs text-gray-500">多智能体讨论系统</p>
+  <header class="header-bar">
+    <div class="header-inner">
+      <!-- Logo -->
+      <div class="header-logo">
+        <div class="logo-icon">
+          <span class="logo-text">BW</span>
         </div>
       </div>
 
-      <!-- Extra slot and connection status -->
-      <div class="flex items-center gap-4">
-        <!-- Extra slot for additional content -->
-        <slot name="extra" />
+      <!-- Center: topic slot (replaces old topic-bar) -->
+      <div class="header-center">
+        <slot name="topic" />
+      </div>
 
-        <!-- Connection status -->
-        <div class="flex items-center gap-2" :class="connectionStatusClass">
-          <component :is="isConnected ? Wifi : WifiOff" class="w-4 h-4" />
-          <span class="text-sm">{{ connectionStatusText }}</span>
+      <!-- Right: extra slot + connection status -->
+      <div class="header-right">
+        <slot name="extra" />
+        <div class="connection-status" :class="connectionStatusClass">
+          <component :is="isConnected ? Wifi : WifiOff" class="conn-icon" />
+          <span class="conn-label">{{ connectionStatusText }}</span>
         </div>
       </div>
     </div>
   </header>
 </template>
+
+<style scoped>
+.header-bar {
+  background: var(--bg-primary, #fff);
+  border-bottom: 1px solid var(--border-color, #e5e7eb);
+  padding: 0 16px;
+  flex-shrink: 0;
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  gap: 12px;
+}
+
+.header-logo {
+  flex-shrink: 0;
+}
+
+.logo-icon {
+  width: 28px;
+  height: 28px;
+  background: #111827;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+}
+
+.logo-text {
+  color: #fff;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.header-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-right {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.conn-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.conn-label {
+  font-size: 12px;
+}
+
+.conn-ok { color: #059669; }
+.conn-ing { color: #d97706; }
+.conn-err { color: #dc2626; }
+.conn-off { color: #6b7280; }
+</style>

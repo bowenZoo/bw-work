@@ -34,6 +34,8 @@ class Discussion:
     summary: str | None = None
     round_summaries: list[dict] = field(default_factory=list)
     doc_plan: dict | None = None
+    briefing: str = ""
+    checkpoints: list[dict] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 

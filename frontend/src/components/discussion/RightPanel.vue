@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
-import type { RoundSummary, DocUpdateEvent, DocPlan } from '@/types'
+import type { RoundSummary, DocUpdateEvent, DocPlan, Checkpoint } from '@/types'
 import StageSummaryPanel from './StageSummaryPanel.vue'
 import InlineDesignDocs from './InlineDesignDocs.vue'
 import DocOutline from './DocOutline.vue'
+import DecisionLogPanel from './DecisionLogPanel.vue'
 
 const props = defineProps<{
   roundSummaries: RoundSummary[]
@@ -12,13 +13,15 @@ const props = defineProps<{
   docPlan: DocPlan | null
   docContents: Map<string, string>
   currentSectionId: string | null
+  checkpoints?: Checkpoint[]
 }>()
 
 const emit = defineEmits<{
   (e: 'focus-section', sectionId: string): void
+  (e: 'scroll-to-checkpoint', checkpointId: string): void
 }>()
 
-type TabKey = 'outline' | 'summaries'
+type TabKey = 'outline' | 'decisions' | 'summaries'
 const activeTab = ref<TabKey>('outline')
 
 // Doc preview modal state
@@ -28,6 +31,9 @@ const previewFilename = ref<string | null>(null)
 // New content indicators
 const hasNewSummary = ref(false)
 const hasNewOutline = ref(false)
+const hasNewDecision = ref(false)
+
+const checkpointsList = computed(() => props.checkpoints ?? [])
 
 watch(() => props.roundSummaries.length, (newLen, oldLen) => {
   if (oldLen !== undefined && newLen > oldLen && activeTab.value !== 'summaries') {
@@ -41,10 +47,25 @@ watch(() => props.docPlan, (newVal) => {
   }
 }, { deep: true })
 
-// Auto-switch to outline when docPlan first arrives
+// Watch for new checkpoints
+watch(() => checkpointsList.value.length, (newLen, oldLen) => {
+  if (oldLen !== undefined && newLen > oldLen && activeTab.value !== 'decisions') {
+    hasNewDecision.value = true
+  }
+})
+
+// Smart default tab: auto-switch based on data availability
 watch(() => props.docPlan, (newVal, oldVal) => {
   if (newVal && !oldVal) {
     activeTab.value = 'outline'
+  }
+})
+
+// Auto-switch to decisions when first checkpoint arrives
+watch(() => checkpointsList.value.length, (newLen, oldLen) => {
+  if (oldLen === 0 && newLen > 0) {
+    activeTab.value = 'decisions'
+    hasNewDecision.value = false
   }
 })
 
@@ -52,6 +73,7 @@ function switchTab(tab: TabKey) {
   activeTab.value = tab
   if (tab === 'summaries') hasNewSummary.value = false
   if (tab === 'outline') hasNewOutline.value = false
+  if (tab === 'decisions') hasNewDecision.value = false
 }
 
 function handleSelectSection(_sectionId: string, filename: string) {
@@ -61,6 +83,10 @@ function handleSelectSection(_sectionId: string, filename: string) {
 
 function handleFocusSection(sectionId: string) {
   emit('focus-section', sectionId)
+}
+
+function handleScrollToCheckpoint(checkpointId: string) {
+  emit('scroll-to-checkpoint', checkpointId)
 }
 
 function closeDocPreview() {
@@ -94,6 +120,10 @@ function triggerDownload(filename: string, content: string) {
         <span>文档大纲</span>
         <span v-if="hasNewOutline" class="new-dot"></span>
       </button>
+      <button class="tab-btn" :class="{ active: activeTab === 'decisions' }" @click="switchTab('decisions')">
+        <span>决策日志</span>
+        <span v-if="hasNewDecision" class="new-dot"></span>
+      </button>
       <button class="tab-btn" :class="{ active: activeTab === 'summaries' }" @click="switchTab('summaries')">
         <span>轮次总结</span>
         <span v-if="hasNewSummary" class="new-dot"></span>
@@ -107,6 +137,12 @@ function triggerDownload(filename: string, content: string) {
         :current-section-id="props.currentSectionId"
         @select-section="handleSelectSection"
         @focus-section="handleFocusSection"
+      />
+      <DecisionLogPanel
+        v-show="activeTab === 'decisions'"
+        :checkpoints="checkpointsList"
+        :discussion-id="props.discussionId"
+        @scroll-to-checkpoint="handleScrollToCheckpoint"
       />
       <StageSummaryPanel
         v-show="activeTab === 'summaries'"

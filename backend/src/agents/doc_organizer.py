@@ -61,6 +61,7 @@ class DocOrganizer:
                 "tools": [],
                 "verbose": False,
                 "allow_delegation": False,
+                "max_iter": 10,
             }
             if self._llm is not None:
                 agent_kwargs["llm"] = self._llm
