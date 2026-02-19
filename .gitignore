@@ -31,5 +31,8 @@ data/knowledge/templates/*
 data/knowledge/references/*
 !data/knowledge/references/.gitkeep
 
+# Claude Code
+.claude/
+
 # Reference projects (external)
 github/

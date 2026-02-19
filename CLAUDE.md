@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 多 Agent 协作系统，模拟游戏策划团队进行设计讨论。后端用 CrewAI 编排 AI Agent 讨论，前端用 Vue 3 实时展示讨论过程。
 
-**技术栈**: CrewAI + FastAPI + Vue 3 + Vite + WebSocket + SQLite + Langfuse
+**技术栈**: CrewAI + FastAPI + Vue 3 + Vite + Tailwind CSS + WebSocket + SQLite + Langfuse
 
 ## 常用命令
 
@@ -68,15 +68,26 @@ docker-compose up -d --build
 | API 入口 | `backend/src/api/main.py` | FastAPI app、中间件、lifespan 启停 |
 | 讨论路由 | `backend/src/api/routes/discussion.py` | 讨论 CRUD、启动、暂停/恢复 |
 | Checkpoint 路由 | `backend/src/api/routes/checkpoint.py` | 决策响应、制作人发言、checkpoint 查询 |
+| 项目路由 | `backend/src/api/routes/project.py` | 项目管理、GDD 上传解析 |
+| 图片路由 | `backend/src/api/routes/image.py` | AI 概念图生成 |
 | 讨论引擎 | `backend/src/crew/discussion_crew.py` | CrewAI 编排核心，暂停/恢复/checkpoint 状态机 |
 | Agent 基类 | `backend/src/agents/base.py` | 从 YAML 加载角色配置，构建 CrewAI Agent |
 | WebSocket 管理 | `backend/src/api/websocket/manager.py` | ConnectionManager (per-discussion) + GlobalConnectionManager |
 | 记忆系统 | `backend/src/memory/discussion_memory.py` | JSON 文件 (数据源) + SQLite (索引) 混合存储 |
+| Admin 模块 | `backend/src/admin/` | JWT 认证、API Key 加密存储、配置管理、审计日志 |
+| 项目模块 | `backend/src/project/` | GDD 解析（MD/PDF/DOCX）、讨论执行器、设计文档输出 |
+| 图片服务 | `backend/src/image/` | 多后端图片生成（OpenAI/兼容API）、提示词工程、风格管理 |
+| 数据模型 | `backend/src/models/` | Pydantic 模型（Agenda、DocPlan、Checkpoint） |
+| 监控 | `backend/src/monitoring/langfuse_client.py` | Langfuse 集成，LLM 调用追踪 |
 | 角色配置 | `backend/src/config/roles/*.yaml` | Agent 的 role/goal/backstory 定义 |
 | 讨论风格 | `backend/src/config/discussion_styles.yaml` | Socratic / Directive / Debate 三种风格 |
 | 游戏知识库 | `backend/src/config/knowledge/game_industry.yaml` | 行业指标基准（留存、付费、抽卡等）|
 
 ### 前端核心模块
+
+**UI 库**: Tailwind CSS + lucide-vue-next 图标 + Marked（markdown 渲染）+ DOMPurify（XSS 防护）
+
+**路径别名**: `@` → `frontend/src/`（配置在 `vite.config.ts`）
 
 | 模块 | 路径 | 职责 |
 |------|------|------|
@@ -88,6 +99,8 @@ docker-compose up -d --build
 | DecisionCard | `frontend/src/components/chat/DecisionCard.vue` | Checkpoint DECISION 卡片，支持选项和自由输入 |
 | ProducerInput | `frontend/src/components/discussion/ProducerInput.vue` | 制作人发言输入（节流 3 条/分钟）|
 | DecisionLogPanel | `frontend/src/components/discussion/DecisionLogPanel.vue` | 决策历史时间线面板 |
+
+**页面视图**: HomeView（大厅）、DiscussionView（讨论详情）、ProjectView（项目管理）、HistoryView（历史记录）、Admin 后台（登录/仪表盘/LLM配置/图片配置/讨论配置/Langfuse配置/审计日志）
 
 ### WebSocket 双通道
 
@@ -131,6 +144,12 @@ Lead Planner 在每轮讨论结束时生成 Checkpoint，有三种类型：
 
 - Python: snake_case | TypeScript: camelCase | Vue 组件: PascalCase | 文件名: kebab-case
 
+### Lint 与格式化
+
+- Ruff: line-length=88, 规则 `E,F,I,N,W,UP`（忽略 E501），配置在 `backend/pyproject.toml`
+- pytest: asyncio_mode=auto, pythonpath=["."]，**必须在 `backend/` 目录下运行**
+- 前端类型检查: `vue-tsc --noEmit`
+
 ### Git 提交
 
 格式: `feat:` / `fix:` / `docs:` / `refactor:` / `style:` / `test:`
@@ -171,6 +190,12 @@ FastAPI 中 `/ws/{discussion_id}` 会吞掉 `/ws/discussion`。**固定路径路
 | 前端 Dev | 18001 |
 
 前端 `vite.config.ts` 配置了 `/api` → `localhost:18000` 和 `/ws` → `ws://localhost:18000` 代理。
+
+## 部署
+
+- **本地 Docker**: `docker-compose up -d --build`，数据卷挂载 `backend/data` 和 `data/admin`
+- **远程部署**: `/deploy` 技能，rsync 同步到服务器后 Docker 重建
+- Docker 中前端构建为静态文件由 nginx 代理（端口映射 18001→80）
 
 ## 开发工作流（Spec-Driven）
 
