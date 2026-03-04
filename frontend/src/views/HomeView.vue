@@ -644,43 +644,21 @@ onMounted(() => {
               :class="{ 'card-active': isActiveStatus(card.status) }"
               @click="viewCard(card)"
             >
-              <!-- Status badge -->
-              <div class="card-status">
+              <!-- Row 1: status + topic + time -->
+              <div class="card-row1">
                 <span v-if="isActiveStatus(card.status)" class="pulse-dot" :class="{ 'queued-dot': card.status === 'queued' }" />
-                <span class="card-badge" :class="getStatusClass(card.status)">
-                  {{ getStatusLabel(card.status) }}
-                </span>
+                <span class="card-badge" :class="getStatusClass(card.status)">{{ getStatusLabel(card.status) }}</span>
+                <h3 class="card-topic">{{ card.topic }}</h3>
                 <span class="card-time">{{ formatDate(card.created_at) }}</span>
               </div>
-
-              <!-- Topic -->
-              <h3 class="card-topic">{{ card.topic }}</h3>
-              <span v-if="card.owner_name" class="card-owner">
-                <LetterAvatar :name="card.owner_name || '?'" :size="20" />
-                <span v-if="card.owner_name">{{ card.owner_name }}</span>
-              </span>
-
-              <!-- Metrics -->
-              <div class="card-metrics">
-                <span v-if="card.isLive && card.rounds > 0" class="metric">
-                  第 {{ card.rounds }} 轮
-                </span>
-                <span v-if="card.message_count > 0" class="metric">
-                  <MessageSquare class="icon-xs" />
-                  {{ card.message_count }}
-                </span>
-                <span v-if="card.doc_count > 0" class="metric">
-                  <FileText class="icon-xs" />
-                  {{ card.doc_count }}
-                </span>
-              </div>
-
-              <!-- Action buttons for completed discussions -->
-              <div v-if="card.status === 'completed' || card.status === 'error' || card.status === 'failed'" class="card-actions">
-                <button class="action-btn resume-btn" @click.stop="openResumeDialog(card)" title="继续讨论">
-                  <RotateCcw :size="14" />
-                  <span>继续</span>
-                </button>
+              <!-- Row 2: avatar + name + metrics + action -->
+              <div class="card-row2">
+                <LetterAvatar v-if="card.owner_name" :name="card.owner_name" :size="18" />
+                <span v-if="card.owner_name" class="card-owner-text">{{ card.owner_name }}</span>
+                <span v-if="card.isLive && card.rounds > 0" class="metric">第{{ card.rounds }}轮</span>
+                <span v-if="card.message_count > 0" class="metric"><MessageSquare :size="12" /> {{ card.message_count }}</span>
+                <span v-if="card.doc_count > 0" class="metric"><FileText :size="12" /> {{ card.doc_count }}</span>
+                <button v-if="card.status === 'completed' || card.status === 'error' || card.status === 'failed' || card.status === 'stopped'" class="resume-btn" @click.stop="openResumeDialog(card)"><RotateCcw :size="12" /> 继续</button>
               </div>
             </div>
           </div>
@@ -2224,4 +2202,62 @@ onMounted(() => {
   font-weight: 500;
 }
 .btn-primary:hover { background: #2563eb; }
+
+/* Card compact 2-row layout */
+.card-row1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.card-row1 .card-topic {
+  flex: 1;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-row1 .card-time {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #9ca3af;
+}
+.card-row1 .card-badge {
+  flex-shrink: 0;
+}
+.card-row2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+.card-owner-text {
+  margin-right: 4px;
+}
+.card-row2 .metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #9ca3af;
+}
+.card-row2 .resume-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: #6b7280;
+  background: #f3f4f6;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.card-row2 .resume-btn:hover {
+  background: #e5e7eb;
+  color: #374151;
+}
 </style>
