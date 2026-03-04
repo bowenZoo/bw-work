@@ -581,7 +581,7 @@ onMounted(() => {
       <div class="header-actions">
         <template v-if="userStore.isAuthenticated">
           <div class="user-area" @click.stop="showUserMenu = !showUserMenu">
-            <User :size="16" />
+            <LetterAvatar :name="userStore.user?.display_name || userStore.user?.username || '?'" :size="24" />
             <span class="user-name">{{ userStore.user?.display_name || userStore.user?.username }}</span>
             <span v-if="userStore.isAdmin" class="role-tag">管理员</span>
             <ChevronDown :size="14" />
