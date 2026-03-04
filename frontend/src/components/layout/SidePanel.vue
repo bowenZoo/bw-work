@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { MessageSquare, Users, Settings, BarChart3, FileText, User, ChevronLeft, ChevronRight, List } from 'lucide-vue-next';
+import { MessageSquare, Users, Settings, BarChart3, FileText, User, ChevronLeft, ChevronRight, List, Bot, Eye, Image, LayoutDashboard } from 'lucide-vue-next';
 import { useUserStore } from '@/stores/user';
 
 const props = defineProps<{
@@ -34,6 +34,9 @@ const menuItems = computed<MenuItem[]>(() => {
       { id: 'all-discussions', label: '全部讨论', icon: List, adminOnly: true },
       { id: 'user-manage', label: '用户管理', icon: Users, adminOnly: true },
       { id: 'system-settings', label: '系统设置', icon: Settings, adminOnly: true },
+      { id: 'llm-config', label: 'LLM 配置', icon: Bot, adminOnly: true },
+      { id: 'langfuse-config', label: 'Langfuse', icon: Eye, adminOnly: true },
+      { id: 'image-config', label: '图片模型', icon: Image, adminOnly: true },
       { id: 'audit-logs', label: '审计日志', icon: FileText, adminOnly: true },
     );
   }

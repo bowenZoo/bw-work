@@ -11,6 +11,9 @@ import UserManagePanel from '@/components/admin/UserManagePanel.vue';
 import ProfilePanel from '@/components/settings/ProfilePanel.vue';
 import SystemSettingsPanel from '@/components/settings/SystemSettingsPanel.vue';
 import AuditLogPanel from '@/components/settings/AuditLogPanel.vue';
+import LlmConfigPanel from '@/components/settings/LlmConfigPanel.vue';
+import LangfuseConfigPanel from '@/components/settings/LangfuseConfigPanel.vue';
+import ImageConfigPanel from '@/components/settings/ImageConfigPanel.vue';
 import LetterAvatar from '@/components/common/LetterAvatar.vue';
 import { useUserStore } from '@/stores/user';
 import type { DiscussionSummary, AgentConfig, DiscussionStyle, DiscussionStyleFull, DiscussionStyleOverrides } from '@/types';
@@ -709,6 +712,15 @@ onMounted(() => {
       <!-- Section: Other placeholders -->
       <template v-else-if="activeSection === 'system-settings' && userStore.isAdmin">
         <SystemSettingsPanel />
+      </template>
+      <template v-else-if="activeSection === 'llm-config' && userStore.isAdmin">
+        <LlmConfigPanel />
+      </template>
+      <template v-else-if="activeSection === 'langfuse-config' && userStore.isAdmin">
+        <LangfuseConfigPanel />
+      </template>
+      <template v-else-if="activeSection === 'image-config' && userStore.isAdmin">
+        <ImageConfigPanel />
       </template>
       <template v-else-if="activeSection === 'audit-logs' && userStore.isAdmin">
         <AuditLogPanel />
