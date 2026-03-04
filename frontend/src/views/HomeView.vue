@@ -8,6 +8,7 @@ import { AgentConfigEditor } from '@/components/discussion';
 import SidePanel from '@/components/layout/SidePanel.vue';
 import LoginModal from '@/components/auth/LoginModal.vue';
 import UserManagePanel from '@/components/admin/UserManagePanel.vue';
+import LetterAvatar from '@/components/common/LetterAvatar.vue';
 import { useUserStore } from '@/stores/user';
 import type { DiscussionSummary, AgentConfig, DiscussionStyle, DiscussionStyleFull, DiscussionStyleOverrides } from '@/types';
 
@@ -650,8 +651,8 @@ onMounted(() => {
 
               <!-- Topic -->
               <h3 class="card-topic">{{ card.topic }}</h3>
-              <span v-if="card.owner_name || card.owner_avatar" class="card-owner">
-                <img v-if="card.owner_avatar" :src="card.owner_avatar" class="card-owner-avatar" />
+              <span v-if="card.owner_name" class="card-owner">
+                <LetterAvatar :name="card.owner_name || '?'" :size="20" />
                 <span v-if="card.owner_name">{{ card.owner_name }}</span>
               </span>
 
