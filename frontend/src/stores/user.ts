@@ -96,9 +96,21 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
+
+  async function updateProfile(data: { display_name?: string; avatar?: string; email?: string }) {
+    const resp = await authApi.updateMe(accessToken.value!, data);
+    user.value = resp;
+    saveToStorage();
+    return resp;
+  }
+
+  async function changePassword(old_password: string, new_password: string) {
+    await authApi.changePassword(accessToken.value!, { old_password, new_password });
+  }
+
   return {
     user, accessToken, refreshToken,
     isAuthenticated, isAdmin,
-    login, register, logout, doRefreshToken, fetchMe, init,
+    login, register, logout, doRefreshToken, fetchMe, init, updateProfile, changePassword,
   };
 });
