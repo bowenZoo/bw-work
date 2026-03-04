@@ -1,7 +1,5 @@
 <template>
   <div class="project-list-page">
-    <SidePanel :active-section="activeSection" @select="onSectionSelect" />
-    <div class="page-wrapper">
     <!-- Header -->
     <header class="page-header">
       <div class="header-left">
@@ -85,24 +83,15 @@
 
     <!-- Login Modal (should not appear if guard works, but fallback) -->
     <LoginModal v-if="!userStore.isAuthenticated" :force="true" />
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import SidePanel from '@/components/layout/SidePanel.vue';
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import LoginModal from '@/components/auth/LoginModal.vue'
 
-const router = useRouter();
-const activeSection = ref("my-discussions");
-function onSectionSelect(section) {
-  const s = ["profile","system-settings","llm-config","langfuse-config","image-config","audit-logs","user-manage","all-discussions"];
-  if (s.includes(section)) { router.push("/project/lobby"); return; }
-  activeSection.value = section;
-}
 const userStore = useUserStore()
 
 const loading = ref(true)
@@ -180,14 +169,10 @@ watch(() => userStore.isAuthenticated, async (val) => {
 
 <style scoped>
 .project-list-page {
-  display: flex;
   min-height: 100vh;
   background: #f9fafb;
 }
-.page-wrapper {
-  flex: 1;
-  overflow-y: auto;
-}
+
 .page-header {
   display: flex;
   justify-content: space-between;

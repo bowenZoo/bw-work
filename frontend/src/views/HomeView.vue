@@ -5,15 +5,7 @@ import { Plus, Search, X, Paperclip, MessageSquare, FileText, Eye, EyeOff, Rotat
 import { getDiscussionHistory, getDiscussionStyles } from '@/api/discussion';
 import { useLobby } from '@/composables/useLobby';
 import { AgentConfigEditor } from '@/components/discussion';
-import SidePanel from '@/components/layout/SidePanel.vue';
 import LoginModal from '@/components/auth/LoginModal.vue';
-import UserManagePanel from '@/components/admin/UserManagePanel.vue';
-import ProfilePanel from '@/components/settings/ProfilePanel.vue';
-import SystemSettingsPanel from '@/components/settings/SystemSettingsPanel.vue';
-import AuditLogPanel from '@/components/settings/AuditLogPanel.vue';
-import LlmConfigPanel from '@/components/settings/LlmConfigPanel.vue';
-import LangfuseConfigPanel from '@/components/settings/LangfuseConfigPanel.vue';
-import ImageConfigPanel from '@/components/settings/ImageConfigPanel.vue';
 import LetterAvatar from '@/components/common/LetterAvatar.vue';
 import { useUserStore } from '@/stores/user';
 import type { DiscussionSummary, AgentConfig, DiscussionStyle, DiscussionStyleFull, DiscussionStyleOverrides } from '@/types';
@@ -24,7 +16,6 @@ const userStore = useUserStore();
 const currentProject = ref<any>(null);
 
 // Side panel
-const activeSection = ref('my-discussions');
 const showLoginModal = ref(false);
 const showResumeDialog = ref(false);
 const resumeTarget = ref<CardItem | null>(null);
@@ -570,8 +561,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="home-layout">
-    <SidePanel :active-section="activeSection" @select="activeSection = $event" />
+  <div class="home-page-root">
     <div class="home-page" @scroll="handleScroll">
     <!-- Header -->
     <header class="home-header">
@@ -615,13 +605,7 @@ onMounted(() => {
 
     <!-- Content -->
     <main class="home-content">
-      <!-- Section: User Management (admin only) -->
-      <template v-if="activeSection === 'user-manage' && userStore.isAdmin">
-        <UserManagePanel />
-      </template>
 
-      <!-- Section: Discussions (default) -->
-      <template v-else-if="activeSection === 'my-discussions' || activeSection === 'all-discussions'">
 
 
       <!-- Search bar -->
@@ -707,27 +691,7 @@ onMounted(() => {
       <div v-if="hasMore && !isLoadingList && filteredCards.length > 0" class="load-more-hint">
         向下滚动加载更多
       </div>
-      </template>
 
-      <!-- Section: Other placeholders -->
-      <template v-else-if="activeSection === 'system-settings' && userStore.isAdmin">
-        <SystemSettingsPanel />
-      </template>
-      <template v-else-if="activeSection === 'llm-config' && userStore.isAdmin">
-        <LlmConfigPanel />
-      </template>
-      <template v-else-if="activeSection === 'langfuse-config' && userStore.isAdmin">
-        <LangfuseConfigPanel />
-      </template>
-      <template v-else-if="activeSection === 'image-config' && userStore.isAdmin">
-        <ImageConfigPanel />
-      </template>
-      <template v-else-if="activeSection === 'audit-logs' && userStore.isAdmin">
-        <AuditLogPanel />
-      </template>
-      <template v-else-if="activeSection === 'profile'">
-        <ProfilePanel />
-      </template>
     </main>
 
     <!-- New Discussion Panel (large, two-column) -->
@@ -1012,8 +976,7 @@ onMounted(() => {
 .text-blue { color: #3b82f6; }
 
 /* ===== Page layout ===== */
-.home-layout {
-  display: flex;
+.home-page-root {
   min-height: 100vh;
 }
 .section-placeholder {
