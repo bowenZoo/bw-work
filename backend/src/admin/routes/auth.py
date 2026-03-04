@@ -80,9 +80,18 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Get user from database
+    # Get user from database (check admin_users first, then normal users with superadmin role)
     username = payload.get("sub")
     user = db.get_admin_user(username)
+    if not user:
+        # Fallback: check normal users table for superadmin
+        normal_user = db.get_user(username)
+        if normal_user and normal_user.get("role") == "superadmin":
+            user = {
+                "id": normal_user["id"],
+                "username": normal_user["username"],
+                "is_active": True,
+            }
 
     if not user or not user.get("is_active"):
         raise HTTPException(
