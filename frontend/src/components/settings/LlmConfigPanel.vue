@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { useAdminAuth } from '@/composables/useAdminAuth';
-import AdminAuthWrapper from './AdminAuthWrapper.vue';
+import { useAdminApi } from './useAdminApi';
+
 import { Plus, Pencil, Trash2, Zap, Check, PlayCircle, AlertCircle } from 'lucide-vue-next';
 
-const { apiRequest } = useAdminAuth();
+const { adminRequest } = useAdminApi();
 
 interface LlmProfile {
   id: string; name: string; provider: string; model: string;
@@ -37,19 +37,19 @@ async function save() {
   if (!body.api_key) delete body.api_key;
   if (!body.base_url) delete body.base_url;
   try {
-    if (editing.value) { await apiRequest(`/config/llm/profiles/${editing.value.id}`, { method:'PUT', body:JSON.stringify(body) }); }
-    else { await apiRequest('/config/llm/profiles', { method:'POST', body:JSON.stringify(body) }); }
+    if (editing.value) { await adminRequest(`/config/llm/profiles/${editing.value.id}`, { method:'PUT', body:JSON.stringify(body) }); }
+    else { await adminRequest('/config/llm/profiles', { method:'POST', body:JSON.stringify(body) }); }
     showForm.value = false; await load();
   } catch {}
 }
 
 async function activate(id: string) {
-  await apiRequest(`/config/llm/profiles/${id}/activate`, { method:'POST' }); await load();
+  await adminRequest(`/config/llm/profiles/${id}/activate`, { method:'POST' }); await load();
 }
 
 async function remove(id: string) {
   if (!confirm('确认删除？')) return;
-  await apiRequest(`/config/llm/profiles/${id}`, { method:'DELETE' }); await load();
+  await adminRequest(`/config/llm/profiles/${id}`, { method:'DELETE' }); await load();
 }
 
 async function test(id: string) {
@@ -65,7 +65,6 @@ onMounted(load);
 </script>
 
 <template>
-<AdminAuthWrapper>
   <div class="llm-panel">
     <div class="header-row">
       <h2 class="title">LLM 配置</h2>
@@ -122,7 +121,6 @@ onMounted(load);
       </div>
     </div>
   </div>
-</AdminAuthWrapper>
 </template>
 
 <style scoped>

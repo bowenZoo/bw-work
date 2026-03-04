@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { useAdminAuth } from '@/composables/useAdminAuth';
-import AdminAuthWrapper from './AdminAuthWrapper.vue';
+import { useAdminApi } from './useAdminApi';
+
 import { Settings, Save, Check, AlertCircle, Zap, Eye, BarChart3 } from 'lucide-vue-next';
 
-const { apiRequest } = useAdminAuth();
+const { adminRequest } = useAdminApi();
 const loading = ref(true);
 const saving = ref(false);
 const saved = ref(false);
@@ -31,7 +31,7 @@ async function load() {
 async function saveDiscussion() {
   saving.value = true; error.value = ''; saved.value = false;
   try {
-    await apiRequest('/config/discussion', { method:'PUT', body:JSON.stringify(discussion.value) });
+    await adminRequest('/config/discussion', { method:'PUT', body:JSON.stringify(discussion.value) });
     saved.value = true; setTimeout(() => saved.value = false, 2000);
   } catch (e:any) { error.value = e.message || '保存失败'; }
   finally { saving.value = false; }
@@ -41,7 +41,6 @@ onMounted(load);
 </script>
 
 <template>
-<AdminAuthWrapper>
   <div class="sys-panel">
     <h2 class="title"><Settings :size="20" /> 系统设置</h2>
 
@@ -88,7 +87,6 @@ onMounted(load);
       </div>
     </template>
   </div>
-</AdminAuthWrapper>
 </template>
 
 <style scoped>

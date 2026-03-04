@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { useAdminAuth } from '@/composables/useAdminAuth';
-import AdminAuthWrapper from './AdminAuthWrapper.vue';
+import { useAdminApi } from './useAdminApi';
+
 import { Save, Check, AlertCircle, PlayCircle } from 'lucide-vue-next';
 
-const { apiRequest } = useAdminAuth();
+const { adminRequest } = useAdminApi();
 const loading = ref(true);
 const saving = ref(false);
 const saved = ref(false);
@@ -31,7 +31,7 @@ async function load() {
 async function save_() {
   saving.value = true; error.value = ''; saved.value = false;
   try {
-    await apiRequest('/config/langfuse', { method:'PUT', body:JSON.stringify(config.value) });
+    await adminRequest('/config/langfuse', { method:'PUT', body:JSON.stringify(config.value) });
     saved.value = true; setTimeout(() => saved.value = false, 2000);
   } catch (e:any) { error.value = e.message || '保存失败'; }
   finally { saving.value = false; }
@@ -50,7 +50,6 @@ onMounted(load);
 </script>
 
 <template>
-<AdminAuthWrapper>
   <div class="lfuse-panel">
     <h2 class="title">Langfuse 配置</h2>
     <div v-if="loading" class="loading">加载中...</div>
@@ -71,7 +70,6 @@ onMounted(load);
       <div v-if="testResult" class="test-result" :class="{ok:testResult.ok}">{{ testResult.ok?'✅ 连接成功':'❌ '+testResult.msg }}</div>
     </div>
   </div>
-</AdminAuthWrapper>
 </template>
 
 <style scoped>
