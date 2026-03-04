@@ -1089,7 +1089,7 @@ async def list_discussions(
                 row = cursor.fetchone()
                 if row:
                     owner_name = row["username"]
-                    owner_avatar = row.get("avatar", "")
+                    owner_avatar = row["avatar"] if "avatar" in row.keys() else None
         items.append(
             DiscussionSummaryItem(
                 id=disc.id,
