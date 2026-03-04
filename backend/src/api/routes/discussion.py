@@ -1089,7 +1089,6 @@ async def list_discussions(
                 if row:
                     owner_name = row["username"]
                     owner_avatar = row.get("avatar", "")
-        owner_avatar = None
         items.append(
             DiscussionSummaryItem(
                 id=disc.id,
