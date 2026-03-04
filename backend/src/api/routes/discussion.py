@@ -1080,6 +1080,7 @@ async def list_discussions(
         status = state.status.value if state else "completed"
         owner_id = _discussion_memory.get_owner_id(disc.id)
         owner_name = None
+        owner_avatar = None
         if owner_id:
             from ...admin.database import AdminDatabase
             _adb = AdminDatabase()
