@@ -266,7 +266,7 @@ function onPasswordVerified() {
 }
 
 function onPasswordCancel() {
-  router.push('/');
+  const pId = route.params.projectId; router.push(pId ? `/project/${pId}` : '/');
 }
 
 // Handle topic submission (live mode only — creates a new discussion)
@@ -278,7 +278,7 @@ async function handleSubmit(topic: string) {
   const { createCurrentDiscussion } = await import('@/api/discussion');
   try {
     const response = await createCurrentDiscussion({ topic });
-    router.push({ name: 'discussion-by-id', params: { id: response.id } });
+    router.push({ name: 'discussion-by-id', params: { projectId: route.params.projectId || 'default', id: response.id } });
   } catch (e) {
     console.error('Failed to create discussion:', e);
     setError(e instanceof Error ? e.message : '创建讨论失败');
@@ -401,7 +401,8 @@ function handleSpeedChange(newSpeed: number) { setSpeed(newSpeed); }
 
 // Navigate back to home
 function goBackToHome() {
-  router.push({ name: 'home' });
+  const pId = route.params.projectId as string;
+  router.push(pId ? `/project/${pId}` : '/');
 }
 
 async function submitContinue() {

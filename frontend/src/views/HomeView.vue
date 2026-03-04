@@ -1,19 +1,37 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick, toRaw } from 'vue';
 import { useRouter } from 'vue-router';
-import { Plus, Search, X, Paperclip, MessageSquare, FileText, Eye, EyeOff, RotateCcw } from 'lucide-vue-next';
+import { Plus, Search, X, Paperclip, MessageSquare, FileText, Eye, EyeOff, RotateCcw, LogOut, ChevronDown, User } from 'lucide-vue-next';
 import { getDiscussionHistory, getDiscussionStyles } from '@/api/discussion';
 import { useLobby } from '@/composables/useLobby';
 import { AgentConfigEditor } from '@/components/discussion';
+import SidePanel from '@/components/layout/SidePanel.vue';
+import LoginModal from '@/components/auth/LoginModal.vue';
+import UserManagePanel from '@/components/admin/UserManagePanel.vue';
+import { useUserStore } from '@/stores/user';
 import type { DiscussionSummary, AgentConfig, DiscussionStyle, DiscussionStyleFull, DiscussionStyleOverrides } from '@/types';
 
 const router = useRouter();
+const props = defineProps<{ projectId?: string }>();
+const userStore = useUserStore();
+const currentProject = ref<any>(null);
+
+// Side panel
+const activeSection = ref('my-discussions');
+const showLoginModal = ref(false);
+const showResumeDialog = ref(false);
+const resumeTarget = ref<CardItem | null>(null);
+const resumeFollowUp = ref('');
+const resumeRounds = ref(10);
+const resumeMode = ref<'extend' | 'continue'>('extend');
+const showUserMenu = ref(false);
+
 
 // Lobby state (active discussions via WebSocket)
 const {
   activeDiscussions,
   createDiscussion: lobbyCreateDiscussion,
-} = useLobby();
+} = useLobby(computed(() => props.projectId));
 
 // Workspace list (history)
 const workspaces = ref<DiscussionSummary[]>([]);
@@ -36,6 +54,9 @@ interface CardItem {
   rounds: number;
   created_at: string;
   isLive: boolean;
+  owner_id?: number | null;
+  owner_name?: string | null;
+  owner_avatar?: string | null;
 }
 
 // Merge active discussions + history into unified list
@@ -44,7 +65,11 @@ const allCards = computed<CardItem[]>(() => {
   const cards: CardItem[] = [];
 
   // Add active discussions first (they have live status)
-  for (const d of activeDiscussions.value) {
+  // Filter by project if in workspace context
+  const activeList = props.projectId
+    ? activeDiscussions.value.filter((d: any) => d.project_id === props.projectId)
+    : activeDiscussions.value;
+  for (const d of activeList) {
     cards.push({
       id: d.id,
       topic: d.topic,
@@ -78,9 +103,14 @@ const allCards = computed<CardItem[]>(() => {
 
 // Filter by search
 const filteredCards = computed(() => {
+  let cards = allCards.value;
+  
+  // Search filtering
   const q = searchQuery.value.trim().toLowerCase();
-  if (!q) return allCards.value;
-  return allCards.value.filter(c => c.topic?.toLowerCase().includes(q));
+  if (q) {
+    cards = cards.filter(c => c.topic?.toLowerCase().includes(q));
+  }
+  return cards;
 });
 
 // Date grouping
@@ -153,7 +183,8 @@ const customOverrides = ref<DiscussionStyleOverrides | null>(null);
 const newFocusArea = ref('');
 
 // Password
-const password = ref('123456');
+const password = ref('');
+const usePassword = ref(false);
 const showPassword = ref(false);
 
 // Error state
@@ -172,7 +203,7 @@ async function loadWorkspaces(reset = false) {
       page.value = 1;
       workspaces.value = [];
     }
-    const response = await getDiscussionHistory(page.value, PAGE_SIZE);
+    const response = await getDiscussionHistory(page.value, PAGE_SIZE, false, props.projectId);
     workspaces.value = [...workspaces.value, ...response.items];
     hasMore.value = response.hasMore;
     page.value++;
@@ -193,8 +224,67 @@ function handleScroll(event: Event) {
 }
 
 // Navigation
+function openResumeDialog(card: CardItem) {
+  resumeTarget.value = card;
+  resumeFollowUp.value = '';
+  resumeRounds.value = 10;
+  resumeMode.value = 'extend';
+  showResumeDialog.value = true;
+}
+
+async function doResume() {
+  if (!resumeTarget.value) return;
+  const id = resumeTarget.value.id;
+  
+  try {
+    if (resumeMode.value === 'extend') {
+      // Extend: resume in-place
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const raw = localStorage.getItem('bw_user_tokens');
+      if (raw) {
+        const { access_token } = JSON.parse(raw);
+        headers['Authorization'] = `Bearer ${access_token}`;
+      }
+      const res = await fetch(`/api/discussions/${id}/extend`, {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          follow_up: resumeFollowUp.value,
+          additional_rounds: resumeRounds.value,
+        })
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Extend failed');
+      showResumeDialog.value = false;
+      router.push({ name: 'discussion-by-id', params: { projectId: props.projectId || 'default', id } });
+    } else {
+      // Continue: create new discussion from this one
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const raw = localStorage.getItem('bw_user_tokens');
+      if (raw) {
+        const { access_token } = JSON.parse(raw);
+        headers['Authorization'] = `Bearer ${access_token}`;
+      }
+      const res = await fetch(`/api/discussions/${id}/continue`, {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          follow_up: resumeFollowUp.value,
+          rounds: Math.min(resumeRounds.value, 10),
+        })
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Continue failed');
+      const data = await res.json();
+      showResumeDialog.value = false;
+      router.push({ name: 'discussion-by-id', params: { projectId: props.projectId || 'default', id: data.new_discussion_id } });
+    }
+  } catch (e: any) {
+    alert(e.message);
+  }
+}
+
 function viewCard(card: CardItem) {
-  router.push({ name: 'discussion-by-id', params: { id: card.id } });
+  const routeName = props.projectId ? 'discussion-by-id' : 'discussion-legacy';
+  const params: any = { id: card.id };
+  if (props.projectId) params.projectId = props.projectId;
+  router.push({ name: routeName, params });
 }
 
 // New discussion
@@ -208,7 +298,8 @@ function openNewDialog() {
   selectedAgents.value = [];
   agentConfigs.value = {};
   selectedStyle.value = defaultStyleId.value;
-  password.value = '123456';
+  password.value = '';
+usePassword.value = false;
   showPassword.value = false;
   newFocusArea.value = '';
   onStyleSelect(defaultStyleId.value);
@@ -263,12 +354,12 @@ async function createDiscussion() {
       selectedAgents.value.length > 0 ? selectedAgents.value : undefined,
       Object.keys(agentConfigsFinal).length > 0 ? agentConfigsFinal : undefined,
       selectedStyle.value || undefined,
-      password.value || undefined,
+      usePassword.value ? (password.value || undefined) : undefined,
       briefingInput.value.trim() || undefined,
     );
 
     showNewDialog.value = false;
-    router.push({ name: 'discussion-by-id', params: { id: response.id } });
+    router.push({ name: 'discussion-by-id', params: { projectId: props.projectId || 'default', id: response.id } });
   } catch (e) {
     console.error('Failed to create discussion:', e);
     createError.value = '创建讨论失败，请重试';
@@ -449,14 +540,28 @@ async function loadStyles() {
 }
 
 // Lifecycle
+async function loadProject() {
+  if (!props.projectId) return;
+  try {
+    const raw = localStorage.getItem('bw_user_tokens');
+    const headers: Record<string, string> = {};
+    if (raw) { try { headers['Authorization'] = `Bearer ${JSON.parse(raw).access_token}`; } catch {} }
+    const res = await fetch(`/api/projects/${props.projectId}`, { headers });
+    if (res.ok) currentProject.value = await res.json();
+  } catch {}
+}
+
 onMounted(() => {
+  loadProject();
   loadWorkspaces(true);
   loadStyles();
 });
 </script>
 
 <template>
-  <div class="home-page" @scroll="handleScroll">
+  <div class="home-layout">
+    <SidePanel :active-section="activeSection" @select="activeSection = $event" />
+    <div class="home-page" @scroll="handleScroll">
     <!-- Header -->
     <header class="home-header">
       <div class="header-left">
@@ -464,18 +569,49 @@ onMounted(() => {
           <span class="logo-text">BW</span>
         </div>
         <div>
-          <h1 class="app-title">Game Design</h1>
+          <div class="title-row" :class="{clickable: !!projectId}" @click="projectId && $router.push('/')">
+            <span v-if="projectId" class="back-arrow">←</span>
+            <h1 class="app-title" :title="projectId ? '返回项目列表' : ''">{{ currentProject?.name || "BW-Work" }}</h1>
+          </div>
           <p class="app-subtitle">AI 策划工作空间</p>
         </div>
       </div>
-      <button class="new-btn" @click="openNewDialog">
-        <Plus class="icon-sm" />
-        <span>新建讨论</span>
-      </button>
+      <!-- User area -->
+      <div class="header-actions">
+        <template v-if="userStore.isAuthenticated">
+          <div class="user-area" @click.stop="showUserMenu = !showUserMenu">
+            <User :size="16" />
+            <span class="user-name">{{ userStore.user?.display_name || userStore.user?.username }}</span>
+            <span v-if="userStore.isAdmin" class="role-tag">管理员</span>
+            <ChevronDown :size="14" />
+            <div v-if="showUserMenu" class="user-dropdown">
+              <button class="dropdown-item" @click="userStore.logout(); showUserMenu = false">
+                <LogOut :size="14" />
+                <span>退出登录</span>
+              </button>
+            </div>
+          </div>
+        </template>
+        <template v-else>
+          <button class="login-btn" @click="showLoginModal = true">登录</button>
+        </template>
+        <button class="new-btn" @click="openNewDialog">
+          <Plus class="icon-sm" />
+          <span>新建讨论</span>
+        </button>
+      </div>
     </header>
 
     <!-- Content -->
     <main class="home-content">
+      <!-- Section: User Management (admin only) -->
+      <template v-if="activeSection === 'user-manage' && userStore.isAdmin">
+        <UserManagePanel />
+      </template>
+
+      <!-- Section: Discussions (default) -->
+      <template v-else-if="activeSection === 'my-discussions' || activeSection === 'all-discussions'">
+
 
       <!-- Search bar -->
       <div v-if="allCards.length > 0 || searchQuery" class="search-bar">
@@ -514,6 +650,10 @@ onMounted(() => {
 
               <!-- Topic -->
               <h3 class="card-topic">{{ card.topic }}</h3>
+              <span v-if="card.owner_name || card.owner_avatar" class="card-owner">
+                <img v-if="card.owner_avatar" :src="card.owner_avatar" class="card-owner-avatar" />
+                <span v-if="card.owner_name">{{ card.owner_name }}</span>
+              </span>
 
               <!-- Metrics -->
               <div class="card-metrics">
@@ -528,6 +668,14 @@ onMounted(() => {
                   <FileText class="icon-xs" />
                   {{ card.doc_count }}
                 </span>
+              </div>
+
+              <!-- Action buttons for completed discussions -->
+              <div v-if="card.status === 'completed' || card.status === 'error' || card.status === 'failed'" class="card-actions">
+                <button class="action-btn resume-btn" @click.stop="openResumeDialog(card)" title="继续讨论">
+                  <RotateCcw :size="14" />
+                  <span>继续</span>
+                </button>
               </div>
             </div>
           </div>
@@ -570,6 +718,24 @@ onMounted(() => {
       <div v-if="hasMore && !isLoadingList && filteredCards.length > 0" class="load-more-hint">
         向下滚动加载更多
       </div>
+      </template>
+
+      <!-- Section: Other placeholders -->
+      <template v-else-if="activeSection === 'system-settings'">
+        <div class="section-placeholder">
+          <p>系统设置功能开发中...</p>
+        </div>
+      </template>
+      <template v-else-if="activeSection === 'audit-logs'">
+        <div class="section-placeholder">
+          <p>审计日志功能开发中...</p>
+        </div>
+      </template>
+      <template v-else-if="activeSection === 'profile'">
+        <div class="section-placeholder">
+          <p>个人中心功能开发中...</p>
+        </div>
+      </template>
     </main>
 
     <!-- New Discussion Panel (large, two-column) -->
@@ -639,13 +805,16 @@ onMounted(() => {
 
                   <!-- Password -->
                   <div class="form-section">
-                    <label class="input-label">密码设置</label>
-                    <div class="password-field">
+                    <label class="checkbox-label">
+                      <input type="checkbox" v-model="usePassword" />
+                      <span>设置讨论密码</span>
+                    </label>
+                    <div v-if="usePassword" class="password-field">
                       <input
                         v-model="password"
                         :type="showPassword ? 'text' : 'password'"
                         class="password-input"
-                        placeholder="设置讨论密码"
+                        placeholder="输入密码"
                       />
                       <button class="password-toggle" @click="showPassword = !showPassword" type="button">
                         <Eye v-if="!showPassword" class="icon-sm" />
@@ -797,7 +966,47 @@ onMounted(() => {
         </div>
       </Transition>
     </Teleport>
-  </div>
+  </div><!-- home-page -->
+  </div><!-- home-layout -->
+    <!-- Resume Dialog -->
+    <div v-if="showResumeDialog && resumeTarget" class="modal-mask" @click.self="showResumeDialog = false">
+      <div class="modal-content resume-modal">
+        <h2>继续讨论</h2>
+        <p class="resume-topic">{{ resumeTarget.topic }}</p>
+        
+        <div class="form-group">
+          <label>模式</label>
+          <div class="mode-toggle">
+            <button :class="{ active: resumeMode === 'extend' }" @click="resumeMode = 'extend'">
+              原地继续
+            </button>
+            <button :class="{ active: resumeMode === 'continue' }" @click="resumeMode = 'continue'">
+              新建分支
+            </button>
+          </div>
+          <p class="mode-hint" v-if="resumeMode === 'extend'">在原讨论基础上追加轮次</p>
+          <p class="mode-hint" v-else>创建新讨论，继承上次的上下文</p>
+        </div>
+
+        <div class="form-group">
+          <label>追加说明（可选）</label>
+          <textarea v-model="resumeFollowUp" placeholder="想继续聊什么？或者有新的方向？" rows="3" />
+        </div>
+
+        <div class="form-group">
+          <label>额外轮次</label>
+          <input type="number" v-model.number="resumeRounds" min="1" :max="resumeMode === 'extend' ? 100 : 10" />
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn-cancel" @click="showResumeDialog = false">取消</button>
+          <button class="btn-primary" @click="doResume">开始</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Login Modal -->
+    <LoginModal v-if="showLoginModal" @close="showLoginModal = false" />
 </template>
 
 <style scoped>
@@ -811,7 +1020,21 @@ onMounted(() => {
 .text-blue { color: #3b82f6; }
 
 /* ===== Page layout ===== */
+.home-layout {
+  display: flex;
+  min-height: 100vh;
+}
+.section-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  color: var(--text-secondary, #9ca3af);
+  font-size: 15px;
+}
 .home-page {
+  flex: 1;
+  min-width: 0;
   min-height: 100vh;
   background: var(--bg-primary, #f8f9fb);
   overflow-y: auto;
@@ -852,6 +1075,11 @@ onMounted(() => {
   font-size: 13px;
 }
 
+.title-row { display: flex; align-items: center; gap: 4px; }
+.title-row.clickable { cursor: pointer; color: #3b82f6; }
+.title-row.clickable:hover { opacity: 0.8; }
+
+.back-arrow { margin-right: 6px; font-size: 16px; }
 .app-title {
   font-size: 16px;
   font-weight: 600;
@@ -1067,6 +1295,22 @@ onMounted(() => {
 }
 
 /* Card topic */
+
+.card-owner-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  vertical-align: middle;
+}
+.card-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #9ca3af;
+  margin-top: 2px;
+}
 .card-topic {
   font-size: 14px;
   font-weight: 600;
@@ -1282,6 +1526,19 @@ onMounted(() => {
 }
 
 /* ===== Password Field ===== */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
 .password-field {
   position: relative;
   display: flex;
@@ -1766,4 +2023,200 @@ onMounted(() => {
     padding: 12px 16px;
   }
 }
+
+/* ===== User Area ===== */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.login-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #3b82f6;
+  border: 1px solid #3b82f6;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.login-btn:hover {
+  background: #3b82f6;
+  color: white;
+}
+.user-area {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  position: relative;
+  font-size: 13px;
+  color: #374151;
+}
+.user-area:hover { background: #f3f4f6; }
+.role-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.user-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  min-width: 140px;
+  z-index: 100;
+  padding: 4px;
+}
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: #374151;
+  border-radius: 4px;
+}
+.dropdown-item:hover { background: #f3f4f6; }
+
+
+/* Modal overlay */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal-content {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  width: 90%;
+}
+.modal-content h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+
+/* Resume Dialog */
+.resume-modal {
+  max-width: 480px;
+}
+.resume-topic {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 4px 0 16px;
+  padding: 8px 12px;
+  background: #f9fafb;
+  border-radius: 6px;
+}
+.mode-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.mode-toggle button {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  background: white;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+.mode-toggle button.active {
+  background: #3b82f6;
+  color: white;
+}
+.mode-hint {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-top: 4px;
+}
+.card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+  color: #6b7280;
+  transition: all 0.2s;
+}
+.resume-btn:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+  background: #eff6ff;
+}
+.form-group {
+  margin-bottom: 16px;
+}
+.form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: #374151;
+}
+.form-group textarea, .form-group input[type="number"] {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 13px;
+  resize: vertical;
+}
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+.btn-cancel {
+  padding: 8px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn-primary {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  background: #3b82f6;
+  color: white;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+.btn-primary:hover { background: #2563eb; }
 </style>

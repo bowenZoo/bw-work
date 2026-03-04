@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router';
+import ProjectListView from '@/views/ProjectListView.vue';
 import HomeView from '@/views/HomeView.vue';
 import DiscussionView from '@/views/DiscussionView.vue';
 import { useAdminStore } from '@/stores/admin';
@@ -33,16 +34,28 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      name: 'home',
-      component: HomeView,
+      name: 'projects',
+      component: ProjectListView,
     },
     {
       path: '/discussion',
       redirect: '/',
     },
     {
-      path: '/discussion/:id',
+      path: '/project/:projectId',
+      name: 'project-workspace',
+      component: HomeView,
+      props: true,
+    },
+    {
+      path: '/project/:projectId/discussion/:id',
       name: 'discussion-by-id',
+      component: DiscussionView,
+      props: true,
+    },
+    {
+      path: '/discussion/:id',
+      name: 'discussion-legacy',
       component: DiscussionView,
     },
     {
@@ -58,7 +71,13 @@ const router = createRouter({
       path: '/discussion/:id/playback',
       redirect: (to) => ({ name: 'discussion-by-id', params: { id: to.params.id } }),
     },
-    // Admin routes
+    // Shared route placeholder (Phase 3)
+    {
+      path: '/shared/:token',
+      name: 'shared',
+      component: HomeView,
+    },
+    // Admin routes (kept for backward compatibility)
     {
       path: '/admin/login',
       name: 'admin-login',
@@ -106,8 +125,22 @@ const router = createRouter({
   ],
 });
 
-// Global navigation guard for token expiration
+// Global auth guard: force login for all non-admin routes
 router.beforeEach(async (to) => {
+  // Skip admin routes (have their own guard)
+  if (to.meta.isAdminRoute) {
+    // existing admin guard logic below
+  } else {
+    // Check user auth for all app routes
+    const { useUserStore } = await import('@/stores/user')
+    const userStore = useUserStore()
+    if (!userStore.isAuthenticated && to.name !== 'projects') {
+      // Redirect to projects page (which shows login modal)
+      return { name: 'projects' }
+    }
+  }
+
+  // Original admin guard below:
   // Skip for non-admin routes
   if (!to.meta.isAdminRoute) {
     return true;

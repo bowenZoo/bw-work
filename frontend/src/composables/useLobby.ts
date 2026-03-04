@@ -6,7 +6,7 @@
  * - Receives lobby-level events (discussion created/completed/failed)
  * - Provides createDiscussion() that creates + starts a discussion
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, type Ref } from 'vue';
 import { createCurrentDiscussion, getActiveDiscussions } from '@/api/discussion';
 import type {
   LobbyDiscussion,
@@ -61,7 +61,7 @@ interface ViewersMessage {
 
 type LobbyMessage = LobbySyncMessage | LobbyEventMessage | ViewersMessage | { type: string; data: any };
 
-export function useLobby() {
+export function useLobby(projectId?: Ref<string | undefined>) {
   // Connection state
   const socket = ref<WebSocket | null>(null);
   const connectionStatus = ref<ConnectionStatus>('disconnected');
@@ -274,6 +274,7 @@ export function useLobby() {
   ): Promise<CreateCurrentDiscussionResponse> {
     const response = await createCurrentDiscussion({
       topic,
+      project_id: projectId.value,
       briefing,
       rounds,
       auto_pause_interval: autoPauseInterval,

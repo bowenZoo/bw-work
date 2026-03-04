@@ -67,11 +67,17 @@ export async function startDiscussion(id: string): Promise<void> {
  */
 export async function getDiscussionHistory(
   page: number = 1,
-  limit: number = 20
+  limit: number = 20,
+  all: boolean = false,
+  projectId?: string
 ): Promise<DiscussionListResponse> {
-  const response = await fetch(
-    `${API_BASE_URL}/api/discussions?page=${page}&limit=${limit}`
-  );
+  const headers: Record<string, string> = {};
+  const raw = localStorage.getItem('bw_user_tokens');
+  if (raw) {
+    try { headers['Authorization'] = `Bearer ${JSON.parse(raw).access_token}`; } catch {}
+  }
+  const url = `${API_BASE_URL}/api/discussions?page=${page}&limit=${limit}${all ? '&all=true' : ''}${projectId ? `&project_id=${projectId}` : ''}`;
+  const response = await fetch(url, { headers });
 
   if (!response.ok) {
     throw new Error(`Failed to get discussion history: ${response.statusText}`);

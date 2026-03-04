@@ -9,6 +9,8 @@ from src.api.routes.intervention import router as intervention_router
 from src.api.routes.memory import router as memory_router
 from src.api.routes.monitoring import router as monitoring_router
 from src.api.routes.project import router as project_router
+from src.api.routes.auth import router as auth_router
+from src.api.routes.users import router as users_router
 
 __all__ = [
     "checkpoint_router",
@@ -22,4 +24,6 @@ __all__ = [
     "memory_router",
     "monitoring_router",
     "project_router",
+    "auth_router",
+    "users_router",
 ]

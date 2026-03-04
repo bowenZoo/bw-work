@@ -10,14 +10,17 @@ services:
       - CREWAI_DISABLE_TELEMETRY=true
       - OTEL_SDK_DISABLED=true
       - CREWAI_TESTING=true
-      - CORS_ALLOWED_ORIGINS=["http://localhost:18001","http://127.0.0.1:18001","http://118.89.16.95:18001"]
-      - WEBSOCKET_ALLOWED_ORIGIN_PREFIXES=["http://localhost:","http://127.0.0.1:","http://118.89.16.95:"]
-      - WEBSOCKET_ALLOWED_ORIGINS=["http://localhost","http://127.0.0.1","http://118.89.16.95"]
+      - ANTHROPIC_API_KEY=sk-CPV7ifbDHswR9BQsbm0MstQ8yfzpwoswMz28qxNM3e4ADfRs
+      - GOOGLE_API_KEY=AIzaSyCkfgf3CkQ8gRHwq9OqbiTudvTdZNLBq7o
+      - CORS_ALLOWED_ORIGINS=["http://localhost:18001","http://127.0.0.1:18001","http://118.89.16.95:18001","https://restricted-katie-reflections-preferences.trycloudflare.com"]
+      - WEBSOCKET_ALLOWED_ORIGIN_PREFIXES=["http://localhost:","http://127.0.0.1:","http://118.89.16.95:","https://","wss://"]
+      - WEBSOCKET_ALLOWED_ORIGINS=["http://localhost","http://127.0.0.1","http://118.89.16.95","https://restricted-katie-reflections-preferences.trycloudflare.com"]
     volumes:
       - ./backend/data:/app/data
       - ./backend/logs:/app/logs
       - ./data/admin:/data/admin
       - ./backend/src/config/roles:/app/src/config/roles
+      - ./backend/src:/app/src
     ports:
       - "18000:18000"
 

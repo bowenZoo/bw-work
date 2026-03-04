@@ -6,7 +6,20 @@ import router from './router';
 
 const app = createApp(App);
 
-app.use(createPinia());
+const pinia = createPinia();
+app.use(pinia);
 app.use(router);
 
+// Init user store from localStorage before mount
+import { useUserStore } from './stores/user'
+const userStore = useUserStore(pinia)
+userStore.init()
+
+// Expose router for WebMCP bridge
+;(window as any).__vue_router = router
+
 app.mount('#app');
+
+// WebMCP tools for AI testing
+import { initWebMCP } from './webmcp'
+initWebMCP()

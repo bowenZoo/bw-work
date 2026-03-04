@@ -168,6 +168,63 @@ class AdminDatabase:
                 ON admin_audit_log(action)
             """)
 
+            # Users table (for user accounts, separate from admin_users)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    email TEXT UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    display_name TEXT,
+                    role TEXT DEFAULT 'user',
+                    avatar TEXT DEFAULT '',
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_login TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_users_username
+                ON users(username)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_users_email
+                ON users(email)
+            """)
+
+
+            # Migration: add avatar column if missing
+            try:
+                cursor.execute("SELECT avatar FROM users LIMIT 1")
+            except Exception:
+                cursor.execute("ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''")
+
+            # Projects table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS projects (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slug TEXT UNIQUE NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    is_public BOOLEAN DEFAULT 0,
+                    created_by INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Project members table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS project_members (
+                    project_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    role TEXT DEFAULT 'member',
+                    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (project_id, user_id)
+                )
+            """)
+
     # =========================================================================
     # Admin User Operations
     # =========================================================================
@@ -302,6 +359,123 @@ class AdminDatabase:
             return True
         return False
 
+
+    # =========================================================================
+    # User Account Operations (separate from admin_users)
+    # =========================================================================
+
+    def create_user(
+        self, username: str, password_hash: str,
+        display_name: str = None, email: str = None, role: str = "user", avatar: str = "",
+    ) -> Optional[int]:
+        """Create a new user account."""
+        with self.get_cursor() as cursor:
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO users (username, password_hash, display_name, email, role, avatar)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (username, password_hash, display_name, email, role, avatar),
+                )
+                return cursor.lastrowid
+            except Exception:
+                return None
+
+    def get_user(self, username: str) -> Optional[dict]:
+        """Get user by username."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM users WHERE username = ?", (username,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_user_by_id(self, user_id: int) -> Optional[dict]:
+        """Get user by ID."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM users WHERE id = ?", (user_id,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_user_by_email(self, email: str) -> Optional[dict]:
+        """Get user by email."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM users WHERE email = ?", (email,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def list_users(self, page: int = 1, limit: int = 20, search: str = None) -> tuple[list[dict], int]:
+        """List users with pagination and optional search."""
+        offset = (page - 1) * limit
+        conditions = []
+        params = []
+        if search:
+            conditions.append("(username LIKE ? OR display_name LIKE ? OR email LIKE ?)")
+            like = f"%{search}%"
+            params.extend([like, like, like])
+        where = " AND ".join(conditions) if conditions else "1=1"
+
+        with self.get_cursor() as cursor:
+            cursor.execute(f"SELECT COUNT(*) FROM users WHERE {where}", params)
+            total = cursor.fetchone()[0]
+            cursor.execute(
+                f"SELECT * FROM users WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                params + [limit, offset],
+            )
+            items = [dict(row) for row in cursor.fetchall()]
+        return items, total
+
+    def update_user(self, user_id: int, **kwargs) -> bool:
+        """Update user fields."""
+        if not kwargs:
+            return False
+        sets = ", ".join(f"{k} = ?" for k in kwargs)
+        vals = list(kwargs.values()) + [user_id]
+        with self.get_cursor() as cursor:
+            cursor.execute(f"UPDATE users SET {sets} WHERE id = ?", vals)
+            return cursor.rowcount > 0
+
+    def update_user_last_login(self, user_id: int) -> None:
+        """Update user last login timestamp."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?",
+                (user_id,),
+            )
+
+    def get_user_count(self) -> int:
+        """Get total user count."""
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM users")
+            return cursor.fetchone()[0]
+
+    def delete_user(self, user_id: int) -> bool:
+        """Delete a user."""
+        with self.get_cursor() as cursor:
+            cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            return cursor.rowcount > 0
+
+    def setup_initial_user_admin(self) -> None:
+        """Create superadmin user from env vars if users table is empty."""
+        if self.get_user_count() > 0:
+            return
+        import os
+        from .auth import hash_password
+        username = os.environ.get("ADMIN_USERNAME")
+        password = os.environ.get("ADMIN_PASSWORD")
+        if username and password:
+            self.create_user(
+                username=username,
+                password_hash=hash_password(password),
+                role="superadmin",
+            )
+            logger.info(f"Initial superadmin user created: {username}")
+
     # =========================================================================
     # Refresh Token Operations
     # =========================================================================
@@ -319,6 +493,52 @@ class AdminDatabase:
                 (user_id, token_hash, expires_at.isoformat()),
             )
             return cursor.lastrowid
+
+    def store_user_refresh_token(
+        self, user_id: int, token_hash: str, expires_at: datetime
+    ) -> int:
+        """Store a new user refresh token (no FK constraint)."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO user_refresh_tokens (user_id, token_hash, expires_at)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, token_hash, expires_at.isoformat()),
+            )
+            return cursor.lastrowid
+
+    def get_user_refresh_token(self, token_hash: str):
+        """Get user refresh token by hash."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM user_refresh_tokens WHERE token_hash = ? AND revoked = 0",
+                (token_hash,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def revoke_user_refresh_token(self, token_hash: str) -> bool:
+        """Revoke a user refresh token."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "UPDATE user_refresh_tokens SET revoked = 1, revoked_at = CURRENT_TIMESTAMP WHERE token_hash = ?",
+                (token_hash,),
+            )
+            return cursor.rowcount > 0
+
+    def rotate_user_refresh_token(self, old_hash: str, user_id: int, new_hash: str, expires_at) -> bool:
+        """Rotate user refresh token."""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "UPDATE user_refresh_tokens SET revoked = 1, revoked_at = CURRENT_TIMESTAMP, replaced_by_token_hash = ? WHERE token_hash = ?",
+                (new_hash, old_hash),
+            )
+            cursor.execute(
+                "INSERT INTO user_refresh_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)",
+                (user_id, new_hash, expires_at.isoformat()),
+            )
+            return True
 
     def get_refresh_token(self, token_hash: str) -> Optional[dict]:
         """Get refresh token by hash."""

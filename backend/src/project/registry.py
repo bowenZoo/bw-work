@@ -18,6 +18,8 @@ class Project:
     description: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
+    owner_id: Optional[int] = None
+    is_public: bool = False
 
     def to_dict(self) -> dict:
         """Convert project to dictionary for serialization."""
@@ -27,6 +29,8 @@ class Project:
             "description": self.description,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
+            "owner_id": self.owner_id,
+            "is_public": self.is_public,
         }
 
     @classmethod
@@ -38,6 +42,8 @@ class Project:
             description=data.get("description"),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.utcnow(),
             updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.utcnow(),
+            owner_id=data.get("owner_id"),
+            is_public=data.get("is_public", False),
         )
 
 

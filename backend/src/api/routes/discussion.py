@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from crewai import Crew, Process
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from src.agents import Summarizer
@@ -25,6 +25,7 @@ from src.api.websocket.manager import broadcast_sync
 from src.crew.discussion_crew import DiscussionCrew
 from src.memory.base import Discussion, Message
 from src.memory.discussion_memory import DiscussionMemory
+from src.api.routes.auth import get_optional_user, get_current_user as get_auth_user
 from src.models.agenda import Agenda, AgendaItem, AgendaItemStatus, AgendaSummaryDetails
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,7 @@ class DiscussionState(BaseModel):
     discussion_style: str = ""  # 讨论风格 (socratic/directive/debate)
     password_hash: str = ""  # 空字符串表示无密码
     briefing: str = ""  # 制作人 briefing
+    project_id: str = "default"  # 所属项目
 
 
 class GetDiscussionResponse(BaseModel):
@@ -113,6 +115,7 @@ class GetDiscussionResponse(BaseModel):
     discussion_style: str = ""  # 讨论风格
     has_password: bool = False  # 是否有密码保护
     briefing: str = ""  # 制作人 briefing
+    project_id: str = "default"  # 所属项目
 
 
 class StartDiscussionResponse(BaseModel):
@@ -202,6 +205,9 @@ class DiscussionSummaryItem(BaseModel):
     status: str | None = None
     created_at: str
     updated_at: str
+    owner_id: int | None = None
+    owner_name: str | None = None
+    owner_avatar: str | None = None
 
 
 class DiscussionListResponse(BaseModel):
@@ -232,13 +238,14 @@ class CreateCurrentDiscussionRequest(BaseModel):
     """Request body for creating a new global discussion."""
 
     topic: str = Field(..., min_length=1, description="The discussion topic")
+    project_id: str = Field(default="default", description="Project to create discussion in")
     rounds: int = Field(default=10, ge=1, le=50, description="Number of discussion rounds")
     auto_pause_interval: int = Field(default=5, ge=0, le=50, description="Auto-pause every N rounds (0=disabled)")
     attachment: AttachmentInfo | None = Field(default=None, description="Optional markdown attachment")
     agents: list[str] = Field(default_factory=list, description="Agent role names to participate")
     agent_configs: dict = Field(default_factory=dict, description="Per-agent config overrides")
     discussion_style: str = Field(default="", description="Discussion style (socratic, directive, debate)")
-    password: str = Field(default="123456", description="Discussion password (empty string for no password)")
+    password: str = Field(default="", description="Discussion password (empty string for no password)")
     briefing: str = Field(default="", description="Producer briefing: background, constraints, expected output")
 
 
@@ -550,7 +557,9 @@ def save_discussion_state(discussion: DiscussionState) -> None:
 def _get_llm_from_config() -> Any | None:
     """Get LLM instance from admin config store (active profile).
 
-    Also sets OPENAI_API_KEY environment variable for CrewAI compatibility.
+    Supports both OpenAI-compatible and Anthropic-native providers.
+    For Anthropic: set base_url to the proxy (e.g. https://anyrouter.top)
+    and model to a claude-* name (without anthropic/ prefix).
 
     Returns:
         LLM instance if configured, None otherwise.
@@ -569,33 +578,56 @@ def _get_llm_from_config() -> Any | None:
         base_url = config.get("base_url") or ""
         model = config.get("model") or "gpt-4"
 
-        # Set environment variables for CrewAI/LiteLLM compatibility
-        # CrewAI internally checks for these even when LLM is provided
-        os.environ["OPENAI_API_KEY"] = api_key
-        if base_url:
-            # Set all possible environment variable names for base URL
-            os.environ["OPENAI_API_BASE"] = base_url
-            os.environ["OPENAI_BASE_URL"] = base_url
+        # Strip provider prefix if present (e.g. "anthropic/claude-opus-4-6" -> "claude-opus-4-6")
+        raw_model = model.split("/", 1)[-1] if "/" in model else model
 
-        # Set model name in environment for CrewAI
-        os.environ["OPENAI_MODEL_NAME"] = model
+        # Detect if this is an Anthropic model
+        is_anthropic = raw_model.startswith("claude")
 
-        # Use langchain's ChatOpenAI which is compatible with CrewAI
-        from langchain_openai import ChatOpenAI
+        if is_anthropic:
+            # Use ChatAnthropic for native Anthropic API support
+            from langchain_anthropic import ChatAnthropic
 
-        llm_kwargs: dict[str, Any] = {
-            "model": model,
-            "api_key": api_key,
-            "timeout": 180,
-            "max_retries": 5,
-        }
-        if base_url:
-            llm_kwargs["base_url"] = base_url
+            # Set env vars for CrewAI compatibility
+            os.environ["ANTHROPIC_API_KEY"] = api_key
+            if base_url:
+                os.environ["ANTHROPIC_BASE_URL"] = base_url
 
-        logger.info("Creating ChatOpenAI: model=%s, base_url=%s, profile=%s", model, base_url, config.get("name", ""))
-        return ChatOpenAI(**llm_kwargs)
+            llm_kwargs: dict[str, Any] = {
+                "model": raw_model,
+                "anthropic_api_key": api_key,
+                "timeout": 180,
+                "max_retries": 5,
+                "default_headers": {"anthropic-version": "2023-06-01"},
+            }
+            if base_url:
+                llm_kwargs["anthropic_api_url"] = base_url
+
+            logger.info("Creating ChatAnthropic: model=%s, base_url=%s, profile=%s", raw_model, base_url, config.get("name", ""))
+            return ChatAnthropic(**llm_kwargs)
+        else:
+            # Use ChatOpenAI for OpenAI-compatible providers
+            from langchain_openai import ChatOpenAI
+
+            os.environ["OPENAI_API_KEY"] = api_key
+            if base_url:
+                os.environ["OPENAI_API_BASE"] = base_url
+                os.environ["OPENAI_BASE_URL"] = base_url
+            os.environ["OPENAI_MODEL_NAME"] = model
+
+            llm_kwargs = {
+                "model": model,
+                "api_key": api_key,
+                "timeout": 180,
+                "max_retries": 5,
+            }
+            if base_url:
+                llm_kwargs["base_url"] = base_url
+
+            logger.info("Creating ChatOpenAI: model=%s, base_url=%s, profile=%s", model, base_url, config.get("name", ""))
+            return ChatOpenAI(**llm_kwargs)
     except ImportError as e:
-        logger.error("Error importing ChatOpenAI: %s", e)
+        logger.error("Error importing LLM provider: %s", e)
         return None
     except Exception as e:
         logger.error("Error creating LLM from config: %s", e)
@@ -710,6 +742,7 @@ def _run_discussion_sync(discussion_id: str) -> None:
                 enable_visual_concept=True,
                 agent_roles=discussion.agents or None,
                 agent_configs=discussion.agent_configs or None,
+                project_id=discussion.project_id,
             )
             _running_crews[discussion_id] = crew
             result = crew.run_document_centric(
@@ -872,6 +905,7 @@ def _run_discussion_extend_sync(
                 enable_visual_concept=True,
                 agent_roles=extend_roles,
                 agent_configs=discussion.agent_configs or None,
+                project_id=discussion.project_id,
             )
             _running_crews[discussion_id] = crew
 
@@ -986,10 +1020,39 @@ def _get_doc_count(discussion_id: str, project_id: str = "default") -> int:
     return 0
 
 
+
+@router.post("/migrate-project", tags=["projects"])
+async def migrate_discussions_to_project(
+    from_project: str = "default",
+    to_project: str = "default",
+    user: dict = Depends(get_auth_user),
+):
+    """Migrate all discussions from one project to another. Superadmin only."""
+    if user.get("role") != "superadmin":
+        raise HTTPException(status_code=403, detail="Superadmin only")
+    all_discs = _discussion_memory.list_all(offset=0, limit=10000)
+    migrated = 0
+    for disc in all_discs:
+        if disc.project_id == from_project:
+            _discussion_memory.set_project_id(disc.id, to_project)
+            migrated += 1
+    return {"migrated": migrated, "from": from_project, "to": to_project}
+
+
+@router.get("/count-by-project", tags=["projects"])
+async def count_discussions_by_project(project_id: str):
+    """Get discussion count for a project."""
+    count = _discussion_memory.count_by_project(project_id)
+    return {"project_id": project_id, "count": count}
+
+
 @router.get("", response_model=DiscussionListResponse)
 async def list_discussions(
     page: int = 1,
     limit: int = 20,
+    all: bool = False,
+    project_id: str = None,
+    user: dict = Depends(get_optional_user),
 ) -> DiscussionListResponse:
     """List all discussions with pagination.
 
@@ -997,19 +1060,44 @@ async def list_discussions(
     """
     offset = (page - 1) * limit
 
-    # First, try to get from discussion memory (persistent storage)
-    memory_discussions = _discussion_memory.list_all(offset=offset, limit=limit + 1)
+    # If filtering by a specific project, show all discussions in that project (for public spaces like lobby)
+    # Otherwise filter by owner for personal views
+    if project_id:
+        # Show all discussions in this project regardless of owner
+        memory_discussions = _discussion_memory.list_all(offset=offset, limit=limit + 1)
+    elif user and not all:
+        memory_discussions = _discussion_memory.list_by_owner(user["id"], offset=offset, limit=limit + 1)
+    elif user and all and user.get("role") == "superadmin":
+        memory_discussions = _discussion_memory.list_all(offset=offset, limit=limit + 1)
+    else:
+        # Not authenticated: show all (backward compat)
+        memory_discussions = _discussion_memory.list_all(offset=offset, limit=limit + 1)
 
     items = []
     for disc in memory_discussions[:limit]:
         # Look up status from DiscussionState (disk/memory)
         state = get_discussion_state(disc.id)
         status = state.status.value if state else "completed"
+        owner_id = _discussion_memory.get_owner_id(disc.id)
+        owner_name = None
+        if owner_id:
+            from ...admin.database import AdminDatabase
+            _adb = AdminDatabase()
+            with _adb.get_cursor() as cursor:
+                cursor.execute("SELECT username, avatar FROM users WHERE id = ?", (owner_id,))
+                row = cursor.fetchone()
+                if row:
+                    owner_name = row["username"]
+                    owner_avatar = row.get("avatar", "")
+        owner_avatar = None
         items.append(
             DiscussionSummaryItem(
                 id=disc.id,
                 project_id=disc.project_id,
                 topic=disc.topic,
+                owner_id=owner_id,
+                owner_name=owner_name,
+                owner_avatar=owner_avatar,
                 summary=disc.summary,
                 message_count=len(disc.messages),
                 doc_count=_get_doc_count(disc.id, disc.project_id),
@@ -1027,7 +1115,7 @@ async def list_discussions(
                 state_items.append(
                     DiscussionSummaryItem(
                         id=disc.id,
-                        project_id="default",
+                        project_id=getattr(disc, 'project_id', 'default'),
                         topic=disc.topic,
                         summary=disc.result[:200] if disc.result else None,
                         message_count=0,
@@ -1039,6 +1127,40 @@ async def list_discussions(
         # Sort by created_at descending
         state_items.sort(key=lambda x: x.created_at, reverse=True)
         items = state_items[offset : offset + limit]
+
+    # Also include running discussions from in-memory state that aren't in memory store yet
+    seen_ids = {i.id for i in items}
+    with _state_lock:
+        for disc_id, disc in _discussions.items():
+            if disc_id not in seen_ids and disc.status in (DiscussionStatus.RUNNING, DiscussionStatus.QUEUED, DiscussionStatus.PENDING):
+                owner_id = _discussion_memory.get_owner_id(disc_id)
+                owner_name = None
+                if owner_id:
+                    from ...admin.database import AdminDatabase
+                    _adb = AdminDatabase()
+                    with _adb.get_cursor() as cursor:
+                        cursor.execute("SELECT username FROM users WHERE id = ?", (owner_id,))
+                        row = cursor.fetchone()
+                        if row:
+                            owner_name = row["username"]
+                items.append(
+                    DiscussionSummaryItem(
+                        id=disc.id,
+                        project_id=getattr(disc, 'project_id', 'default'),
+                        topic=disc.topic,
+                        owner_id=owner_id,
+                        owner_name=owner_name,
+                        summary=None,
+                        message_count=0,
+                        status=disc.status.value,
+                        created_at=disc.created_at,
+                        updated_at=disc.completed_at or disc.started_at or disc.created_at,
+                    )
+                )
+
+    # Filter by project_id if specified
+    if project_id:
+        items = [i for i in items if i.project_id == project_id]
 
     has_more = len(memory_discussions) > limit or (not memory_discussions and len(items) == limit)
 
@@ -1126,6 +1248,7 @@ async def create_current_discussion(
             discussion_style=request.discussion_style or "",
             password_hash=password_hash,
             briefing=request.briefing or "",
+            project_id=request.project_id or "default",
         )
 
         # _current_discussion points to the most recently created discussion
@@ -1220,7 +1343,10 @@ async def join_current_discussion() -> JoinDiscussionResponse:
 
 
 @router.post("", response_model=CreateDiscussionResponse)
-async def create_discussion(request: CreateDiscussionRequest) -> CreateDiscussionResponse:
+async def create_discussion(
+    request: CreateDiscussionRequest,
+    user: dict = Depends(get_optional_user),
+) -> CreateDiscussionResponse:
     """Create a new discussion.
 
     This creates a discussion in PENDING state. Call /start to begin the discussion.
@@ -1238,6 +1364,10 @@ async def create_discussion(request: CreateDiscussionRequest) -> CreateDiscussio
         attachment=request.attachment,
     )
     save_discussion_state(discussion)
+
+    # Set owner_id if user is authenticated
+    if user:
+        _discussion_memory.set_owner_id(discussion_id, user["id"])
 
     return CreateDiscussionResponse(
         id=discussion_id,
@@ -1283,6 +1413,7 @@ async def list_active_discussions():
                     "status": state.status.value,
                     "created_at": state.created_at,
                     "agents": state.agents,
+                    "project_id": getattr(state, 'project_id', 'default'),
                 })
 
     # Also check disk state files for any not yet in memory
@@ -1302,6 +1433,7 @@ async def list_active_discussions():
                         "status": data.get("status", ""),
                         "created_at": data.get("created_at", ""),
                         "agents": data.get("agents", []),
+                        "project_id": data.get("project_id", "default"),
                     })
             except Exception:
                 pass
@@ -2235,3 +2367,61 @@ async def add_discussion_agenda_item(
         item=_agenda_item_to_response(item),
         message=f"已添加议题: {item.title}",
     )
+
+# =============================================================================
+# Discussion Management (delete / stop)
+# =============================================================================
+
+@router.delete("/{discussion_id}")
+async def delete_discussion(
+    discussion_id: str,
+    user: dict = Depends(get_optional_user),
+):
+    """Delete a discussion. Requires owner or superadmin."""
+    owner_id = _discussion_memory.get_owner_id(discussion_id)
+    if user:
+        if owner_id != user["id"] and user.get("role") != "superadmin":
+            raise HTTPException(403, "Not authorized to delete this discussion")
+    elif owner_id is not None:
+        # Discussion has an owner but no auth provided
+        raise HTTPException(401, "Authentication required")
+
+    # Stop if running
+    state = get_discussion_state(discussion_id)
+    if state and state.status in (DiscussionStatus.RUNNING, DiscussionStatus.PAUSED):
+        state.status = DiscussionStatus.FAILED
+        save_discussion_state(state)
+
+    # Delete from memory
+    success = _discussion_memory.delete(discussion_id)
+    if not success:
+        raise HTTPException(404, "Discussion not found")
+
+    return {"ok": True}
+
+
+@router.post("/{discussion_id}/stop")
+async def stop_discussion(
+    discussion_id: str,
+    user: dict = Depends(get_optional_user),
+):
+    """Stop/interrupt a running discussion. Requires owner or superadmin."""
+    owner_id = _discussion_memory.get_owner_id(discussion_id)
+    if user:
+        if owner_id != user["id"] and user.get("role") != "superadmin":
+            raise HTTPException(403, "Not authorized to stop this discussion")
+    elif owner_id is not None:
+        raise HTTPException(401, "Authentication required")
+
+    state = get_discussion_state(discussion_id)
+    if not state:
+        raise HTTPException(404, "Discussion not found")
+
+    if state.status not in (DiscussionStatus.RUNNING, DiscussionStatus.PAUSED, DiscussionStatus.PENDING):
+        raise HTTPException(400, f"Discussion is already {state.status.value}")
+
+    state.status = DiscussionStatus.FAILED
+    save_discussion_state(state)
+
+    return {"ok": True, "status": "failed"}
+

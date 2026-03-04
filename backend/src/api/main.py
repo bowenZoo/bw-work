@@ -34,6 +34,8 @@ from src.api.routes import (
     monitoring_router,
     project_router,
     restore_latest_discussion,
+    auth_router,
+    users_router,
 )
 from src.api.websocket import connection_manager, websocket_router
 from src.api.websocket.manager import global_connection_manager, set_event_loop
@@ -62,6 +64,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     admin_db = AdminDatabase()
     admin_db.init_db()
     admin_db.setup_initial_admin()
+    # Initialize user accounts admin
+    admin_db.setup_initial_user_admin()
     # Cleanup old audit logs (configurable, default 90 days)
     audit_logger = AuditLogger(admin_db)
     audit_logger.cleanup_old_logs()
@@ -147,3 +151,5 @@ app.include_router(monitoring_router)
 app.include_router(project_router)
 app.include_router(websocket_router)
 app.include_router(admin_router)
+app.include_router(auth_router)
+app.include_router(users_router)

@@ -24,11 +24,24 @@ async function request<T = any>(
 ): Promise<ApiResponse<T>> {
   const fullUrl = url.startsWith('/') ? `${API_BASE_URL}${url}` : url;
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  // Auto-attach auth token if available
+  try {
+    const raw = localStorage.getItem('bw_user_tokens');
+    if (raw) {
+      const tokens = JSON.parse(raw);
+      if (tokens.access_token) {
+        headers['Authorization'] = `Bearer ${tokens.access_token}`;
+      }
+    }
+  } catch { /* ignore */ }
+
   const options: RequestInit = {
     method,
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
   };
 
   if (data) {

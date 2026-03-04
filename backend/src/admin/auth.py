@@ -84,6 +84,7 @@ def create_access_token(
     subject: str,
     user_id: Optional[int] = None,
     expires_delta: Optional[timedelta] = None,
+    role: Optional[str] = None,
 ) -> str:
     """
     Create a JWT access token.
@@ -110,6 +111,9 @@ def create_access_token(
 
     if user_id is not None:
         payload["user_id"] = user_id
+
+    if role is not None:
+        payload["role"] = role
 
     return jwt.encode(payload, _ensure_jwt_secret(), algorithm=JWT_ALGORITHM)
 

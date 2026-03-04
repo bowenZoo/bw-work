@@ -6,8 +6,10 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
+from .auth import get_current_user, get_optional_user
+from ...admin.database import AdminDatabase
 
 from src.project.registry import ProjectRegistry
 from src.project.gdd.parser import GDDParser, MAX_FILE_SIZE, SUPPORTED_EXTENSIONS
@@ -16,6 +18,15 @@ from src.project.gdd.parsers.base import ParseError, ScanDocumentError
 from src.project.models import GDDStatus
 
 logger = logging.getLogger(__name__)
+
+def _get_disc_count(project_id: str) -> int:
+    """Get discussion count for a project from discussion memory DB."""
+    try:
+        from ...memory.discussion_memory import DiscussionMemory
+        dm = DiscussionMemory()
+        return dm.count_by_project(project_id)
+    except Exception:
+        return 0
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -50,6 +61,9 @@ class ProjectResponse(BaseModel):
     description: Optional[str] = Field(None, description="Project description")
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
     updated_at: str = Field(..., description="Last update timestamp (ISO format)")
+    owner_id: Optional[int] = None
+    is_public: bool = False
+    discussion_count: int = 0
 
 
 class ProjectListResponse(BaseModel):
@@ -121,17 +135,33 @@ class GDDListResponse(BaseModel):
 
 
 @router.post("", response_model=ProjectResponse, status_code=201)
-async def create_project(request: CreateProjectRequest) -> ProjectResponse:
+async def create_project(request: CreateProjectRequest, user: dict = Depends(get_current_user)) -> ProjectResponse:
     """Create a new project.
 
     Creates a new game design project with the specified name and optional description.
     A unique project ID will be generated based on the name.
     """
+    if user.get("role") != "superadmin":
+        raise HTTPException(status_code=403, detail="Only superadmin can create projects")
     try:
         project = _registry.create(
             name=request.name,
             description=request.description,
         )
+        # Set owner and save
+        project.owner_id = user["id"]
+        project.is_public = getattr(request, 'is_public', False)
+        import json as _json
+        meta_path = _registry._project_meta_path(project.id)
+        with open(meta_path, "w", encoding="utf-8") as f:
+            _json.dump(project.to_dict(), f, ensure_ascii=False, indent=2)
+        # Add creator as admin member
+        _db = AdminDatabase()
+        with _db.get_cursor() as cursor:
+            cursor.execute(
+                "INSERT OR IGNORE INTO project_members (project_id, user_id, role) VALUES (?, ?, 'admin')",
+                (project.id, user["id"])
+            )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -148,24 +178,40 @@ async def create_project(request: CreateProjectRequest) -> ProjectResponse:
 async def list_projects(
     limit: int = Query(default=20, ge=1, le=100, description="Maximum items per page"),
     offset: int = Query(default=0, ge=0, description="Number of items to skip"),
+    user: dict = Depends(get_current_user),
 ) -> ProjectListResponse:
     """List all projects.
 
     Returns a paginated list of projects sorted by creation time (newest first).
     """
-    projects = _registry.list(limit=limit, offset=offset)
-    total = _registry.count()
+    all_projects = _registry.list(limit=1000, offset=0)
+    
+    # Filter by access
+    if user.get("role") == "superadmin":
+        accessible = all_projects
+    else:
+        _db = AdminDatabase()
+        with _db.get_cursor() as cursor:
+            cursor.execute("SELECT project_id FROM project_members WHERE user_id = ?", (user["id"],))
+            member_ids = {row["project_id"] for row in cursor.fetchall()}
+        accessible = [p for p in all_projects if p.is_public or p.id in member_ids]
+    
+    total = len(accessible)
+    paged = accessible[offset:offset+limit]
 
     return ProjectListResponse(
         projects=[
-            ProjectResponse(
+ProjectResponse(
                 id=p.id,
                 name=p.name,
                 description=p.description,
                 created_at=p.created_at.isoformat(),
                 updated_at=p.updated_at.isoformat(),
+                owner_id=getattr(p, 'owner_id', None),
+                is_public=getattr(p, 'is_public', False),
+                discussion_count=_get_disc_count(p.id),
             )
-            for p in projects
+            for p in paged
         ],
         total=total,
         limit=limit,
@@ -174,7 +220,7 @@ async def list_projects(
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-async def get_project(project_id: str) -> ProjectResponse:
+async def get_project(project_id: str, user: dict = Depends(get_current_user)) -> ProjectResponse:
     """Get a project by ID.
 
     Returns the project details for the specified project ID.
@@ -1028,3 +1074,79 @@ async def export_design_documents(
             status_code=501,
             detail="PDF export is not yet implemented. Please use 'markdown' format."
         )
+
+
+# === Member Management ===
+
+class AddMemberRequest(BaseModel):
+    username: str
+    role: str = "member"  # member or admin
+
+
+@router.get("/{project_id}/members")
+async def list_project_members(project_id: str, user: dict = Depends(get_current_user)):
+    """List project members."""
+    project = _registry.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    _db = AdminDatabase()
+    with _db.get_cursor() as cursor:
+        cursor.execute("""
+            SELECT pm.user_id, u.username, u.display_name, pm.role, pm.joined_at
+            FROM project_members pm
+            JOIN users u ON pm.user_id = u.id
+            WHERE pm.project_id = ?
+            ORDER BY pm.role DESC, pm.joined_at
+        """, (project_id,))
+        return {"items": [dict(row) for row in cursor.fetchall()]}
+
+
+@router.post("/{project_id}/members")
+async def add_project_member(project_id: str, request: AddMemberRequest, user: dict = Depends(get_current_user)):
+    """Add a member to project. Project owner or superadmin only."""
+    project = _registry.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    if user.get("role") != "superadmin" and getattr(project, 'owner_id', None) != user["id"]:
+        raise HTTPException(status_code=403, detail="Only project owner or superadmin can manage members")
+    
+    _db = AdminDatabase()
+    with _db.get_cursor() as cursor:
+        cursor.execute("SELECT id FROM users WHERE username = ?", (request.username,))
+        target = cursor.fetchone()
+        if not target:
+            raise HTTPException(status_code=404, detail=f"User '{request.username}' not found")
+        
+        try:
+            cursor.execute(
+                "INSERT INTO project_members (project_id, user_id, role) VALUES (?, ?, ?)",
+                (project_id, target["id"], request.role)
+            )
+        except Exception as e:
+            if "UNIQUE" in str(e) or "PRIMARY" in str(e):
+                raise HTTPException(status_code=409, detail="User is already a member")
+            raise
+    
+    return {"message": f"Added {request.username} as {request.role}"}
+
+
+@router.delete("/{project_id}/members/{member_user_id}")
+async def remove_project_member(project_id: str, member_user_id: int, user: dict = Depends(get_current_user)):
+    """Remove a member from project."""
+    project = _registry.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    if user.get("role") != "superadmin" and getattr(project, 'owner_id', None) != user["id"]:
+        raise HTTPException(status_code=403, detail="Only project owner or superadmin can manage members")
+    
+    _db = AdminDatabase()
+    with _db.get_cursor() as cursor:
+        cursor.execute(
+            "DELETE FROM project_members WHERE project_id = ? AND user_id = ?",
+            (project_id, member_user_id)
+        )
+    
+    return {"message": "Removed"}

@@ -109,6 +109,9 @@ export interface DiscussionSummary {
   status: string | null;
   created_at: string;
   updated_at: string;
+  owner_id?: number;
+  owner_name?: string;
+  owner_avatar?: string;
 }
 
 export interface DiscussionListResponse {
@@ -347,6 +350,7 @@ export interface LobbyDiscussion {
   status: DiscussionStatus
   created_at: string
   agents: string[]
+  project_id?: string
 }
 
 // Discussion style
@@ -374,6 +378,7 @@ export interface DiscussionStyleFull {
 // Create discussion request with agent customization
 export interface CreateCurrentDiscussionRequest {
   topic: string
+  project_id?: string
   briefing?: string
   rounds?: number
   auto_pause_interval?: number

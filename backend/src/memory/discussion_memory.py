@@ -86,6 +86,8 @@ class DiscussionMemory(MemoryStore[Discussion]):
         columns = {row[1] for row in cursor.fetchall()}
         if "content_text" not in columns:
             cursor.execute("ALTER TABLE discussions ADD COLUMN content_text TEXT")
+        if "owner_id" not in columns:
+            cursor.execute("ALTER TABLE discussions ADD COLUMN owner_id INTEGER")
 
         conn.commit()
         conn.close()
@@ -224,9 +226,10 @@ class DiscussionMemory(MemoryStore[Discussion]):
                 updated_at,
                 archived,
                 file_path,
-                content_text
+                content_text,
+                owner_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 discussion.id,
@@ -239,6 +242,7 @@ class DiscussionMemory(MemoryStore[Discussion]):
                 0,
                 str(file_path),
                 self._build_content_text(discussion),
+                getattr(discussion, 'owner_id', None),
             ),
         )
 
@@ -472,6 +476,89 @@ class DiscussionMemory(MemoryStore[Discussion]):
                 results.append(discussion)
 
         return results
+
+    def list_by_owner(self, owner_id: int, offset: int = 0, limit: int = 100) -> list:
+        """List discussions owned by a specific user, plus public (unowned) ones."""
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id FROM discussions
+            WHERE (owner_id = ? OR owner_id IS NULL) AND archived = 0
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (owner_id, limit, offset),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        results = []
+        for row in rows:
+            discussion = self.load(row[0])
+            if discussion:
+                results.append(discussion)
+        return results
+
+    def get_owner_id(self, discussion_id: str):
+        """Get the owner_id for a discussion."""
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT owner_id FROM discussions WHERE id = ?", (discussion_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+
+    def set_owner_id(self, discussion_id: str, owner_id: int):
+        """Set the owner_id for a discussion."""
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE discussions SET owner_id = ? WHERE id = ?",
+            (owner_id, discussion_id),
+        )
+
+    def set_project_id(self, discussion_id: str, project_id: str) -> None:
+        """Update the project_id for a discussion in both SQLite and JSON file."""
+        # Update SQLite
+        conn = self._connect()
+        try:
+            conn.execute(
+                "UPDATE discussions SET project_id = ? WHERE id = ?",
+                (project_id, discussion_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        
+        # Update JSON file - load, modify, save
+        discussion = self.load(discussion_id)
+        if discussion:
+            old_pid = discussion.project_id
+            discussion.project_id = project_id
+            # Move file if project dir changed
+            old_path = self._get_discussion_path(old_pid, discussion_id)
+            new_path = self._get_discussion_path(project_id, discussion_id)
+            if old_path != new_path:
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                if old_path.exists():
+                    import shutil
+                    shutil.move(str(old_path), str(new_path))
+            # Save updated discussion
+            self.save(discussion)
+
+    def count_by_project(self, project_id: str) -> int:
+        """Count discussions in a project."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM discussions WHERE project_id = ? AND archived = 0",
+                (project_id,),
+            ).fetchone()
+            return row[0] if row else 0
+        finally:
+            conn.close()
+        conn.commit()
+        conn.close()
 
     def add_message(self, discussion_id: str, message: Message) -> bool:
         """
