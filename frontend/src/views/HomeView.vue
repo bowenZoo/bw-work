@@ -80,6 +80,8 @@ const allCards = computed<CardItem[]>(() => {
       rounds: d.rounds,
       created_at: d.created_at,
       isLive: true,
+      owner_name: (d as any).owner_name || null,
+      owner_avatar: (d as any).owner_avatar || null,
     });
   }
 
@@ -95,6 +97,8 @@ const allCards = computed<CardItem[]>(() => {
         rounds: 0,
         created_at: w.created_at,
         isLive: false,
+        owner_name: (w as any).owner_name || null,
+        owner_avatar: (w as any).owner_avatar || null,
       });
     }
   }
