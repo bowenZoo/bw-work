@@ -707,20 +707,14 @@ onMounted(() => {
       </template>
 
       <!-- Section: Other placeholders -->
-      <template v-else-if="activeSection === 'system-settings'">
-        <div class="section-placeholder">
-          <p>系统设置功能开发中...</p>
-        </div>
+      <template v-else-if="activeSection === 'system-settings' && userStore.isAdmin">
+        <SystemSettingsPanel />
       </template>
-      <template v-else-if="activeSection === 'audit-logs'">
-        <div class="section-placeholder">
-          <p>审计日志功能开发中...</p>
-        </div>
+      <template v-else-if="activeSection === 'audit-logs' && userStore.isAdmin">
+        <AuditLogPanel />
       </template>
       <template v-else-if="activeSection === 'profile'">
-        <div class="section-placeholder">
-          <p>个人中心功能开发中...</p>
-        </div>
+        <ProfilePanel />
       </template>
     </main>
 
