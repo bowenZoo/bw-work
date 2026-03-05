@@ -79,6 +79,7 @@ const statusMap: Record<string, { label: string; cls: string }> = {
 const newDiscussionTopic = ref('')
 const newDiscussionProjectId = ref('')
 const discussionGoal = ref('')
+const showAdvancedModal = ref(false)
 const newProjectName = ref('')
 const newProjectDescription = ref('')
 const creating = ref(false)
@@ -381,7 +382,6 @@ onUnmounted(() => { delete (window as any).__bwHall })
         <div class="dialog dialog-compact">
           <h3 class="dialog-title">发起新讨论</h3>
 
-          <!-- 核心字段 -->
           <div class="dialog-field">
             <label class="dialog-label">讨论话题 <span class="required">*</span></label>
             <textarea
@@ -405,7 +405,6 @@ onUnmounted(() => { delete (window as any).__bwHall })
             />
           </div>
 
-          <!-- 横排选项 -->
           <div class="dialog-row-3">
             <div class="dialog-field">
               <label class="dialog-label">关联项目</label>
@@ -429,7 +428,7 @@ onUnmounted(() => { delete (window as any).__bwHall })
             </div>
           </div>
 
-          <!-- 讨论风格 pill -->
+          <!-- 讨论风格 -->
           <div v-if="discussionStylesFull.length > 0" class="dialog-field">
             <label class="dialog-label">讨论风格</label>
             <div class="style-pills">
@@ -444,63 +443,27 @@ onUnmounted(() => { delete (window as any).__bwHall })
             </div>
           </div>
 
-          <!-- 折叠高级选项 -->
-          <details class="advanced-section">
-            <summary class="advanced-toggle">⚙️ 高级选项</summary>
-            <div class="advanced-body">
-              <!-- 人员选择 -->
-              <div class="dialog-field">
-                <AgentConfigEditor v-model:agents="selectedAgents" v-model:configs="agentConfigs" />
-              </div>
-              <!-- 密码 -->
-              <div class="dialog-field">
-                <label class="checkbox-label">
-                  <input type="checkbox" v-model="usePassword" />
-                  <span>设置讨论密码</span>
-                </label>
-                <div v-if="usePassword" class="password-field">
-                  <input v-model="password" :type="showPassword ? 'text' : 'password'" class="dialog-input" placeholder="输入密码" />
-                  <button class="btn-icon" @click="showPassword = !showPassword" type="button">{{ showPassword ? '🙈' : '👁️' }}</button>
-                </div>
-              </div>
-              <!-- 附件 -->
-              <div class="dialog-field">
-                <input ref="fileInputRef" type="file" accept=".md" style="display:none" @change="handleFileSelect" />
-                <div v-if="attachmentFile" class="attachment-info">
-                  <span>📎 {{ attachmentFile.name }} ({{ (attachmentFile.size / 1024).toFixed(1) }} KB)</span>
-                  <button class="attachment-remove" @click="removeAttachment">✕</button>
-                </div>
-                <button v-else class="btn-ghost" @click="triggerFileInput">📎 添加参考文档（.md）</button>
-              </div>
-              <!-- Prompt 预览编辑 -->
-              <div v-if="customOverrides" class="prompt-preview-section">
-                <div class="prompt-preview-title">📝 Prompt 预览 / 编辑</div>
-                <div class="prompt-fields-compact">
-                  <div class="prompt-field">
-                    <label class="prompt-field-label">目标</label>
-                    <textarea v-model="customOverrides.goal" class="prompt-field-input" placeholder="主策划的目标..." rows="2" />
-                  </div>
-                  <div class="prompt-field">
-                    <label class="prompt-field-label">背景设定</label>
-                    <textarea v-model="customOverrides.backstory" class="prompt-field-input" placeholder="主策划的背景设定..." rows="2" />
-                  </div>
-                  <div class="prompt-field">
-                    <label class="prompt-field-label">沟通风格</label>
-                    <textarea v-model="customOverrides.communication_style" class="prompt-field-input" placeholder="沟通风格描述..." rows="1" />
-                  </div>
-                  <div class="prompt-field">
-                    <label class="prompt-field-label">关注领域</label>
-                    <div class="focus-chips">
-                      <span v-for="(area, idx) in customOverrides.focus_areas" :key="idx" class="focus-chip">
-                        {{ area }} <button class="chip-remove" @click="removeFocusArea(idx)">✕</button>
-                      </span>
-                      <input v-model="newFocusArea" class="focus-add-input" placeholder="添加..." @keydown="handleFocusAreaKeydown" />
-                    </div>
-                  </div>
-                </div>
-              </div>
+          <!-- 密码 + 附件 + 高级 横排 -->
+          <div class="dialog-inline-row">
+            <label class="checkbox-label">
+              <input type="checkbox" v-model="usePassword" />
+              <span>讨论密码</span>
+            </label>
+            <input ref="fileInputRef" type="file" accept=".md" style="display:none" @change="handleFileSelect" />
+            <div v-if="attachmentFile" class="attachment-chip">
+              📎 {{ attachmentFile.name }} <button class="chip-remove" @click="removeAttachment">✕</button>
             </div>
-          </details>
+            <button v-else class="btn-ghost-sm" @click="triggerFileInput">📎 参考文档</button>
+            <button class="btn-ghost-sm" @click="showAdvancedModal = true">⚙️ 高级选项</button>
+          </div>
+
+          <!-- 密码输入（勾选后展开） -->
+          <div v-if="usePassword" class="dialog-field">
+            <div class="password-field">
+              <input v-model="password" :type="showPassword ? 'text' : 'password'" class="dialog-input" placeholder="输入密码" />
+              <button class="btn-icon" @click="showPassword = !showPassword" type="button">{{ showPassword ? '🙈' : '👁️' }}</button>
+            </div>
+          </div>
 
           <div class="dialog-actions">
             <button class="btn btn-secondary" @click="showNewDiscussion = false">取消</button>
@@ -508,7 +471,51 @@ onUnmounted(() => { delete (window as any).__bwHall })
           </div>
         </div>
       </div>
-    </Transition>
+
+      <!-- 高级选项独立弹窗 -->
+      <div v-if="showAdvancedModal" class="dialog-overlay" @click.self="showAdvancedModal = false" style="z-index:200">
+        <div class="dialog dialog-compact">
+          <h3 class="dialog-title">高级选项</h3>
+
+          <!-- 人员选择 -->
+          <div class="dialog-field">
+            <AgentConfigEditor v-model:agents="selectedAgents" v-model:configs="agentConfigs" />
+          </div>
+
+          <!-- Prompt 预览编辑 -->
+          <div v-if="customOverrides" class="prompt-preview-section">
+            <div class="prompt-preview-title">📝 Prompt 预览 / 编辑</div>
+            <div class="prompt-fields-compact">
+              <div class="prompt-field">
+                <label class="prompt-field-label">目标</label>
+                <textarea v-model="customOverrides.goal" class="prompt-field-input" placeholder="主策划的目标..." rows="2" />
+              </div>
+              <div class="prompt-field">
+                <label class="prompt-field-label">背景设定</label>
+                <textarea v-model="customOverrides.backstory" class="prompt-field-input" placeholder="主策划的背景设定..." rows="2" />
+              </div>
+              <div class="prompt-field">
+                <label class="prompt-field-label">沟通风格</label>
+                <textarea v-model="customOverrides.communication_style" class="prompt-field-input" placeholder="沟通风格描述..." rows="1" />
+              </div>
+              <div class="prompt-field">
+                <label class="prompt-field-label">关注领域</label>
+                <div class="focus-chips">
+                  <span v-for="(area, idx) in customOverrides.focus_areas" :key="idx" class="focus-chip">
+                    {{ area }} <button class="chip-remove" @click="removeFocusArea(idx)">✕</button>
+                  </span>
+                  <input v-model="newFocusArea" class="focus-add-input" placeholder="添加..." @keydown="handleFocusAreaKeydown" />
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-else class="hint-text" style="text-align:center;padding:16px">选择讨论风格后可编辑 Prompt</div>
+
+          <div class="dialog-actions">
+            <button class="btn btn-primary" @click="showAdvancedModal = false">完成</button>
+          </div>
+        </div>
+      </div></Transition>
 
     <!-- New Project Dialog -->
     <Transition name="fade">
@@ -932,12 +939,10 @@ onUnmounted(() => { delete (window as any).__bwHall })
 .dialog-compact { max-width: 560px; width: calc(100vw - 48px); }
 .dialog-row-3 { display: grid; grid-template-columns: 1fr 1fr 120px; gap: 12px; }
 .required { color: #ef4444; }
-.advanced-section { margin-top: 4px; }
-.advanced-toggle { cursor: pointer; font-size: 13px; color: #6b7280; padding: 6px 0; user-select: none; list-style: none; }
-.advanced-toggle::-webkit-details-marker { display: none; }
-.advanced-toggle::before { content: '▶ '; font-size: 10px; transition: transform 0.15s; display: inline-block; }
-details[open] > .advanced-toggle::before { transform: rotate(90deg); }
-.advanced-body { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; border-top: 1px solid #f0f0f0; margin-top: 8px; }
+.dialog-inline-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.btn-ghost-sm { background: none; border: 1px solid #e5e7eb; border-radius: 8px; padding: 4px 10px; font-size: 12px; color: #6b7280; cursor: pointer; white-space: nowrap; transition: all 0.15s; }
+.btn-ghost-sm:hover { border-color: #3b82f6; color: #3b82f6; }
+.attachment-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: #eff6ff; border-radius: 8px; font-size: 12px; color: #2563eb; }
 .prompt-preview-section { background: #f8fafc; border-radius: 10px; padding: 12px; }
 .prompt-preview-title { font-size: 12px; font-weight: 600; color: #6b7280; margin-bottom: 8px; }
 .prompt-fields-compact { display: flex; flex-direction: column; gap: 8px; }
