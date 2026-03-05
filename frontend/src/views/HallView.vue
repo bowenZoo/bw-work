@@ -472,6 +472,8 @@ onUnmounted(() => { delete (window as any).__bwHall })
         </div>
       </div>
 
+</Transition>
+    <Teleport to="body">
       <!-- 高级选项独立弹窗 -->
       <div v-if="showAdvancedModal" class="dialog-overlay" @click.self="showAdvancedModal = false" style="z-index:200">
         <div class="dialog dialog-compact">
@@ -515,7 +517,8 @@ onUnmounted(() => { delete (window as any).__bwHall })
             <button class="btn btn-primary" @click="showAdvancedModal = false">完成</button>
           </div>
         </div>
-      </div></Transition>
+      </div>
+    </Teleport>
 
     <!-- New Project Dialog -->
     <Transition name="fade">
