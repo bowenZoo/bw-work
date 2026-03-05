@@ -1452,6 +1452,7 @@ async def list_available_agents():
         "system_designer",
         "number_designer",
         "player_advocate",
+        "operations_analyst",
         "visual_concept",
     ]:
         try:

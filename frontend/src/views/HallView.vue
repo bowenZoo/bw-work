@@ -87,7 +87,7 @@ const AGENT_ROLES = [
   { id: 'system_designer', name: '系统策划', emoji: '⚙️', locked: false },
   { id: 'number_designer', name: '数值策划', emoji: '📊', locked: false },
   { id: 'player_advocate', name: '玩家代言人', emoji: '🎮', locked: false },
-  { id: 'operations_analyst', name: '运营策划', emoji: '📈', locked: false },
+  { id: 'operations_analyst', name: '市场运营', emoji: '📈', locked: false },
   { id: 'visual_concept', name: '视觉概念', emoji: '🎨', locked: false },
 ]
 const crewDefaultConfigs = ref<Record<string, any>>({})
