@@ -80,6 +80,7 @@ const newDiscussionTopic = ref('')
 const newDiscussionProjectId = ref('')
 const discussionGoal = ref('')
 const showAdvancedModal = ref(false)
+const advancedTab = ref<'base' | 'crew'>('base')
 const newProjectName = ref('')
 const newProjectDescription = ref('')
 const creating = ref(false)
@@ -479,17 +480,17 @@ onUnmounted(() => { delete (window as any).__bwHall })
         <div class="dialog dialog-compact">
           <h3 class="dialog-title">高级选项</h3>
 
-          <!-- 人员选择 -->
-          <div class="dialog-field">
-            <AgentConfigEditor v-model:agents="selectedAgents" v-model:configs="agentConfigs" />
+          <!-- Tab 切换 -->
+          <div class="adv-tabs">
+            <button class="adv-tab" :class="{ 'adv-tab-active': advancedTab === 'base' }" @click="advancedTab = 'base'">📋 基础</button>
+            <button class="adv-tab" :class="{ 'adv-tab-active': advancedTab === 'crew' }" @click="advancedTab = 'crew'">👥 人员</button>
           </div>
 
-          <!-- Prompt 预览编辑 -->
-          <div v-if="customOverrides" class="prompt-preview-section">
-            <div class="prompt-preview-title">📝 Prompt 预览 / 编辑</div>
-            <div class="prompt-fields-compact">
+          <!-- 基础 Tab -->
+          <div v-if="advancedTab === 'base'" class="adv-tab-body">
+            <div v-if="customOverrides" class="prompt-fields-compact">
               <div class="prompt-field">
-                <label class="prompt-field-label">目标</label>
+                <label class="prompt-field-label">讨论目标</label>
                 <textarea v-model="customOverrides.goal" class="prompt-field-input" placeholder="主策划的目标..." rows="2" />
               </div>
               <div class="prompt-field">
@@ -510,8 +511,13 @@ onUnmounted(() => { delete (window as any).__bwHall })
                 </div>
               </div>
             </div>
+            <div v-else class="hint-text" style="text-align:center;padding:16px">请先在主弹窗选择讨论风格</div>
           </div>
-          <div v-else class="hint-text" style="text-align:center;padding:16px">选择讨论风格后可编辑 Prompt</div>
+
+          <!-- 人员 Tab -->
+          <div v-if="advancedTab === 'crew'" class="adv-tab-body">
+            <AgentConfigEditor v-model:agents="selectedAgents" v-model:configs="agentConfigs" />
+          </div>
 
           <div class="dialog-actions">
             <button class="btn btn-primary" @click="showAdvancedModal = false">完成</button>
@@ -946,6 +952,13 @@ onUnmounted(() => { delete (window as any).__bwHall })
 .btn-ghost-sm { background: none; border: 1px solid #e5e7eb; border-radius: 8px; padding: 4px 10px; font-size: 12px; color: #6b7280; cursor: pointer; white-space: nowrap; transition: all 0.15s; }
 .btn-ghost-sm:hover { border-color: #3b82f6; color: #3b82f6; }
 .attachment-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: #eff6ff; border-radius: 8px; font-size: 12px; color: #2563eb; }
+
+/* 高级选项 Tab */
+.adv-tabs { display: flex; gap: 0; border-bottom: 2px solid #f0f0f0; margin-bottom: 12px; }
+.adv-tab { flex: 1; padding: 8px 0; background: none; border: none; font-size: 13px; font-weight: 500; color: #9ca3af; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.15s; }
+.adv-tab:hover { color: #6b7280; }
+.adv-tab-active { color: #3b82f6; border-bottom-color: #3b82f6; }
+.adv-tab-body { min-height: 200px; }
 .prompt-preview-section { background: #f8fafc; border-radius: 10px; padding: 12px; }
 .prompt-preview-title { font-size: 12px; font-weight: 600; color: #6b7280; margin-bottom: 8px; }
 .prompt-fields-compact { display: flex; flex-direction: column; gap: 8px; }
