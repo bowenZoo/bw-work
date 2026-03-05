@@ -2034,6 +2034,22 @@ class DiscussionCrew:
             set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
             cleanup_discussion_state(self._discussion_id)
 
+            # Auto-generate discussion output from final result
+            try:
+                from src.admin.database import AdminDatabase
+                adb = AdminDatabase()
+                final_text = str(result)
+                if final_text and len(final_text) > 50:
+                    adb.create_discussion_output(
+                        self._discussion_id,
+                        title=f"讨论产出: {self._topic[:50]}",
+                        content=final_text,
+                        output_type="new_doc"
+                    )
+                    logger.info("Auto-generated discussion output for %s", self._discussion_id)
+            except Exception as e:
+                logger.warning("Failed to auto-generate output: %s", e)
+
             # Broadcast completion status for all agents
             for agent in self._agents:
                 self._broadcast_status(agent.role, AgentStatus.IDLE)

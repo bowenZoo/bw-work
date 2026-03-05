@@ -213,6 +213,15 @@ async def get_project_detail(project_id: str, user: dict = Depends(get_current_u
     except Exception as e:
         logger.warning(f"Failed to load project discussions: {e}")
 
+    # Get outputs for discussions in this project
+    outputs_by_stage = {}
+    for sid, discs in discussions_by_stage.items():
+        for disc in discs:
+            disc_outputs = db.get_discussion_outputs(disc["id"])
+            for o in disc_outputs:
+                o["discussion_topic"] = disc.get("topic", "")
+                outputs_by_stage.setdefault(sid, []).append(o)
+
     stage_list = []
     for s in stages:
         s_docs = docs_by_stage.get(s["id"], [])
@@ -221,6 +230,7 @@ async def get_project_detail(project_id: str, user: dict = Depends(get_current_u
             "document_count": len(s_docs),
             "documents": s_docs,
             "discussions": discussions_by_stage.get(s["id"], []),
+            "outputs": outputs_by_stage.get(s["id"], []),
         })
 
     return {

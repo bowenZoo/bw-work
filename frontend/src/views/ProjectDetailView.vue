@@ -15,6 +15,36 @@ const { project, stages, loading, refresh, completeStage, createDocument } = use
 const showNewDoc = ref<string | null>(null)
 const newDocTitle = ref('')
 const creating = ref(false)
+const adoptingId = ref<string | null>(null)
+const showAdoptDialog = ref<any>(null) // output object
+const adoptAction = ref<'new_doc' | 'merge'>('new_doc')
+const adoptTitle = ref('')
+const adoptTargetDoc = ref('')
+
+async function doAdopt() {
+  if (!showAdoptDialog.value || adoptingId.value) return
+  adoptingId.value = showAdoptDialog.value.id
+  try {
+    const base = import.meta.env.VITE_API_BASE || ''
+    const body: any = { action: adoptAction.value }
+    if (adoptAction.value === 'new_doc') body.title = adoptTitle.value || showAdoptDialog.value.title
+    if (adoptAction.value === 'merge') body.document_id = adoptTargetDoc.value
+    const res = await fetch(\`\${base}/api/discussions/\${showAdoptDialog.value.discussion_id}/outputs/\${showAdoptDialog.value.id}/adopt\`, {
+      method: 'POST', headers: { Authorization: \`Bearer \${userStore.accessToken}\`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    if (!res.ok) { const e = await res.json(); alert(e.detail || '采纳失败'); return }
+    showAdoptDialog.value = null
+    refresh()
+  } finally { adoptingId.value = null }
+}
+
+function openAdopt(output: any, stageDocs: any[]) {
+  showAdoptDialog.value = { ...output, stageDocs }
+  adoptAction.value = 'new_doc'
+  adoptTitle.value = output.title
+  adoptTargetDoc.value = stageDocs.length ? stageDocs[0].id : ''
+}
 
 onMounted(() => {
   refresh()
@@ -142,6 +172,20 @@ async function createStageDiscussion(stageId: string) {
                 </div>
               </div>
             </div>
+            <div
+              v-for="output in (stage.outputs || [])"
+              :key="'out-'+output.id"
+              class="content-card output-card"
+              @click="openAdopt(output, stage.documents)"
+            >
+              <span class="content-icon">📝</span>
+              <div class="content-info">
+                <div class="content-title">{{ output.title }}</div>
+                <div class="content-meta">
+                  <span :class="'out-status-' + (output.status || 'draft')">{{ output.status === 'adopted' ? '✅ 已采纳' : '待采纳' }}</span>
+                </div>
+              </div>
+            </div>
           </div>
           <div v-else class="stage-empty">暂无内容</div>
 
@@ -168,6 +212,31 @@ async function createStageDiscussion(stageId: string) {
           <div class="dialog-actions">
             <button class="btn btn-secondary" @click="showNewDoc = null">取消</button>
             <button class="btn btn-primary" @click="doCreateDocument(showNewDoc!)" :disabled="creating">创建</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+    <!-- Adopt Dialog -->
+    <Transition name="fade">
+      <div v-if="showAdoptDialog" class="dialog-overlay" @click.self="showAdoptDialog = null">
+        <div class="dialog">
+          <h3>📝 采纳讨论产出</h3>
+          <p class="adopt-preview">{{ showAdoptDialog.title }}</p>
+          <div class="adopt-options">
+            <label class="adopt-option">
+              <input type="radio" v-model="adoptAction" value="new_doc" /> 创建新文档
+            </label>
+            <label class="adopt-option">
+              <input type="radio" v-model="adoptAction" value="merge" :disabled="!showAdoptDialog.stageDocs?.length" /> 合并到已有文档
+            </label>
+          </div>
+          <input v-if="adoptAction === 'new_doc'" v-model="adoptTitle" placeholder="文档标题..." class="dialog-input" />
+          <select v-if="adoptAction === 'merge' && showAdoptDialog.stageDocs?.length" v-model="adoptTargetDoc" class="dialog-input">
+            <option v-for="d in showAdoptDialog.stageDocs" :key="d.id" :value="d.id">{{ d.title }} (v{{ d.current_version }})</option>
+          </select>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" @click="showAdoptDialog = null">取消</button>
+            <button class="btn btn-primary" @click="doAdopt" :disabled="!!adoptingId">{{ adoptingId ? '处理中...' : '确认采纳' }}</button>
           </div>
         </div>
       </div>
@@ -344,6 +413,15 @@ async function createStageDiscussion(stageId: string) {
 }
 .dialog-input:focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+
+.output-card { border-color: #fbbf24; background: #fffbeb; }
+.output-card:hover { background: #fef3c7; }
+.out-status-draft { color: #f59e0b; font-weight: 500; }
+.out-status-adopted { color: #10b981; font-weight: 500; }
+.adopt-preview { font-size: 14px; color: #374151; background: #f9fafb; padding: 8px 12px; border-radius: 6px; margin: 0 0 12px; }
+.adopt-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.adopt-option { display: flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
+.adopt-option input[type=radio] { accent-color: #4f46e5; }
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
