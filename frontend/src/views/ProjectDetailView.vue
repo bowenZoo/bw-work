@@ -4,6 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useProjectDetail } from '@/composables/useProjectDetail'
 import { useUserStore } from '@/stores/user'
 import LetterAvatar from '@/components/common/LetterAvatar.vue'
+import { marked } from 'marked'
+
+marked.setOptions({ breaks: true, gfm: true })
 
 const route = useRoute()
 const router = useRouter()
@@ -21,6 +24,10 @@ const adoptAction = ref<'new_doc' | 'merge'>('new_doc')
 const adoptTitle = ref('')
 const adoptTargetDoc = ref('')
 const collapsedStages = ref<Set<string>>(new Set())
+const previewOutput = ref<any>(null)
+const showNewDiscDialog = ref<string | null>(null)
+const newDiscTopic = ref('')
+const creatingDisc = ref(false)
 
 async function doAdopt() {
   if (!showAdoptDialog.value || adoptingId.value) return
@@ -112,8 +119,8 @@ function formatTime(dt: string) {
 }
 
 async function createStageDiscussion(stageId: string) {
-  const topic = prompt('讨论主题:')
-  if (!topic?.trim()) return
+  if (!newDiscTopic.value.trim() || creatingDisc.value) return
+  creatingDisc.value = true
   try {
     const base = import.meta.env.VITE_API_BASE || ''
     const res = await fetch(`${base}/api/discussions`, {
@@ -122,13 +129,22 @@ async function createStageDiscussion(stageId: string) {
         Authorization: `Bearer ${userStore.accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ topic: topic.trim(), project_id: projectId(), stage_id: stageId }),
+      body: JSON.stringify({
+        topic: newDiscTopic.value.trim(),
+        project_id: projectId(),
+        target_type: 'stage',
+        target_id: stageId,
+      }),
     })
     if (!res.ok) throw new Error('Failed')
     const data = await res.json()
+    showNewDiscDialog.value = null
+    newDiscTopic.value = ''
     router.push(`/discussion/${data.id}`)
   } catch {
     alert('创建讨论失败')
+  } finally {
+    creatingDisc.value = false
   }
 }
 </script>
@@ -197,7 +213,7 @@ async function createStageDiscussion(stageId: string) {
               v-for="output in (stage.outputs || [])"
               :key="'out-'+output.id"
               class="content-card output-card"
-              @click="openAdopt(output, stage.documents)"
+              @click="previewOutput = output"
             >
               <span class="content-icon">📝</span>
               <div class="content-info">
@@ -210,9 +226,9 @@ async function createStageDiscussion(stageId: string) {
           </div>
           <div v-else class="stage-empty">暂无内容</div>
 
-          <div v-if="stage.status === 'active'" class="stage-actions">
-            <button class="btn btn-sm btn-secondary" @click="createStageDiscussion(stage.id)">+ 新讨论</button>
-            <button class="btn btn-sm btn-secondary" @click="showNewDoc = stage.id">+ 新文档</button>
+          <div v-if="stage.status === 'active' || stage.status === 'completed'" class="stage-actions">
+            <button class="btn btn-sm btn-secondary" @click="showNewDiscDialog = stage.id">+ 新讨论</button>
+            <button v-if="stage.status === 'active'" class="btn btn-sm btn-secondary" @click="showNewDoc = stage.id">+ 新文档</button>
           </div>
           </template>
         </div>
@@ -259,6 +275,47 @@ async function createStageDiscussion(stageId: string) {
           <div class="dialog-actions">
             <button class="btn btn-secondary" @click="showAdoptDialog = null">取消</button>
             <button class="btn btn-primary" @click="doAdopt" :disabled="!!adoptingId">{{ adoptingId ? '处理中...' : '确认采纳' }}</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+    <!-- Output Preview Modal -->
+    <Transition name="fade">
+      <div v-if="previewOutput" class="dialog-overlay" @click.self="previewOutput = null">
+        <div class="preview-modal">
+          <h3 class="preview-modal-title">{{ previewOutput.title }}</h3>
+          <div class="preview-modal-body markdown-body" v-html="marked.parse(previewOutput.content || '')"></div>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" @click="previewOutput = null">关闭</button>
+            <button
+              v-if="previewOutput.status !== 'adopted'"
+              class="btn btn-primary"
+              @click="() => { const o = previewOutput; previewOutput = null; openAdopt(o, stages.find((s: any) => (s.outputs || []).some((x: any) => x.id === o.id))?.documents || []) }"
+            >采纳</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+    <!-- New Discussion Dialog -->
+    <Transition name="fade">
+      <div v-if="showNewDiscDialog" class="dialog-overlay" @click.self="showNewDiscDialog = null">
+        <div class="dialog dialog-enhanced">
+          <h3 class="dialog-title">新建讨论</h3>
+          <div class="dialog-field">
+            <label class="dialog-label">讨论主题</label>
+            <textarea
+              v-model="newDiscTopic"
+              placeholder="输入讨论话题..."
+              class="dialog-textarea"
+              rows="3"
+              @keydown.meta.enter="createStageDiscussion(showNewDiscDialog!)"
+              @keydown.ctrl.enter="createStageDiscussion(showNewDiscDialog!)"
+              autofocus
+            />
+          </div>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" @click="showNewDiscDialog = null; newDiscTopic = ''">取消</button>
+            <button class="btn btn-primary" @click="createStageDiscussion(showNewDiscDialog!)" :disabled="creatingDisc">{{ creatingDisc ? '创建中...' : '创建' }}</button>
           </div>
         </div>
       </div>
@@ -467,4 +524,80 @@ async function createStageDiscussion(stageId: string) {
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+.preview-modal {
+  background: #fff;
+  border-radius: 16px;
+  padding: 28px;
+  width: min(700px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  display: flex;
+  flex-direction: column;
+}
+.preview-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.preview-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: 16px;
+}
+.markdown-body { font-size: 14px; line-height: 1.8; color: #374151; }
+.markdown-body h1 { font-size: 1.5em; font-weight: 700; margin: 0 0 12px; color: #111827; }
+.markdown-body h2 { font-size: 1.3em; font-weight: 700; margin: 20px 0 10px; color: #111827; }
+.markdown-body h3 { font-size: 1.15em; font-weight: 600; margin: 16px 0 8px; color: #1f2937; }
+.markdown-body p { margin: 0 0 10px; }
+.markdown-body ul, .markdown-body ol { margin: 0 0 10px; padding-left: 2em; }
+.markdown-body li { margin-bottom: 4px; }
+.markdown-body ul li { list-style-type: disc; }
+.markdown-body ol li { list-style-type: decimal; }
+.markdown-body code { background: #f3f4f6; color: #e11d48; font-size: 0.875em; padding: 2px 5px; border-radius: 4px; }
+.markdown-body pre { background: #1f2937; color: #f9fafb; padding: 14px; border-radius: 8px; overflow-x: auto; margin: 0 0 12px; }
+.markdown-body pre code { background: none; color: inherit; padding: 0; }
+.markdown-body blockquote { border-left: 4px solid #d1d5db; padding-left: 14px; margin: 0 0 10px; color: #6b7280; }
+.markdown-body table { width: 100%; border-collapse: collapse; margin: 0 0 12px; font-size: 14px; }
+.markdown-body th { background: #f3f4f6; font-weight: 600; text-align: left; padding: 6px 10px; border: 1px solid #d1d5db; }
+.markdown-body td { padding: 6px 10px; border: 1px solid #e5e7eb; }
+.markdown-body strong { font-weight: 700; color: #111827; }
+
+.dialog-enhanced {
+  border-radius: 16px;
+  padding: 28px;
+  width: min(440px, 90vw);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+}
+.dialog-title {
+  margin: 0 0 20px;
+  font-size: 19px;
+  font-weight: 700;
+  color: #111827;
+}
+.dialog-field { margin-bottom: 14px; }
+.dialog-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 6px;
+}
+.dialog-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+}
+.dialog-textarea:focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
 </style>

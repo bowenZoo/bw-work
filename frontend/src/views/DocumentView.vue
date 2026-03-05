@@ -76,6 +76,18 @@ function toggleVersions() { showVersions.value = !showVersions.value; if (showVe
 function formatTime(dt: string) { if (!dt) return ''; return new Date(dt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 const lineCount = computed(() => (editContent.value || '').split('\n').length)
 
+function exportMarkdown() {
+  if (!doc.value) return
+  const content = `# ${doc.value.title}\n\n${doc.value.content || ''}`
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${doc.value.title || 'document'}.md`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 onMounted(async () => { await fetchDoc(); await fetchVersions() })
 </script>
 
@@ -89,6 +101,7 @@ onMounted(async () => { await fetchDoc(); await fetchVersions() })
         <span class="version-badge">v{{ doc.current_version }}</span>
       </div>
       <div class="header-actions" v-if="doc">
+        <button v-if="!editing" class="btn btn-export" @click="exportMarkdown">导出 Markdown</button>
         <button v-if="!editing" class="btn btn-secondary" @click="toggleVersions">📋 历史 ({{ versions.length }})</button>
         <button v-if="!editing" class="btn btn-primary" @click="startEdit">✏️ 编辑</button>
         <button v-if="editing" class="btn btn-secondary" @click="cancelEdit">取消</button>
@@ -153,6 +166,8 @@ onMounted(async () => { await fetchDoc(); await fetchVersions() })
 .btn-primary:hover:not(:disabled) { background: #4338ca; }
 .btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
 .btn-secondary:hover { background: #e5e7eb; }
+.btn-export { background: #fff; color: #6b7280; border: 1px solid #d1d5db; font-size: 12px; padding: 4px 10px; }
+.btn-export:hover { color: #2563eb; border-color: #3b82f6; background: #eff6ff; }
 .doc-loading { text-align: center; padding: 60px; color: #9ca3af; font-size: 15px; }
 .doc-body { flex: 1; display: flex; overflow: hidden; }
 .version-panel { width: 260px; background: #fff; border-right: 1px solid #e5e7eb; padding: 16px; overflow-y: auto; flex-shrink: 0; }
