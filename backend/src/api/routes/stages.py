@@ -85,7 +85,9 @@ class ArchiveDiscussionRequest(BaseModel):
     outputs: list[dict] = []  # [{output_id, action, target_doc_id?}]
 
 class HallItemResponse(BaseModel):
-    type: str  # "discussion" or "project"
+    type: str
+    is_public: bool = False
+    user_role: Optional[str] = None
     id: str
     name: str
     description: str = ""
@@ -101,11 +103,33 @@ class ProjectDetailResponse(BaseModel):
     slug: str
     name: str
     description: str = ""
+    is_public: bool = False
+    user_role: str = None
     stages: list[StageResponse] = []
     # documents grouped by stage returned separately
 
 
 # === Hall (Homepage) ===
+
+
+def _check_access(project_id: str, user: dict, required_role: str = "viewer"):
+    """Check project access. Raises 403 if denied. Returns user_role."""
+    if user.get("role") == "superadmin":
+        return "admin"
+    db = AdminDatabase()
+    is_public = db.get_project_visibility(project_id)
+    user_role = db.get_user_project_role(project_id, user.get("id"))
+    ROLE_LEVEL = {"admin": 3, "editor": 2, "viewer": 1, "member": 1}
+    
+    if required_role == "viewer":
+        if is_public or user_role:
+            return user_role or "viewer"
+        raise HTTPException(status_code=403, detail="无权访问该私密项目")
+    
+    # editor or admin required
+    if not user_role or ROLE_LEVEL.get(user_role, 0) < ROLE_LEVEL.get(required_role, 0):
+        raise HTTPException(status_code=403, detail="需要编辑权限")
+    return user_role
 
 @router.get("/hall", response_model=HallResponse)
 async def get_hall(user: dict = Depends(get_current_user)):
@@ -127,12 +151,19 @@ async def get_hall(user: dict = Depends(get_current_user)):
         stages = db.get_project_stages(slug)
         completed = sum(1 for s in stages if s["status"] == "completed")
         total = len(stages)
+        _is_public = db.get_project_visibility(slug)
+        _user_role = db.get_user_project_role(slug, user.get("id")) if user.get("role") != "superadmin" else "admin"
+        # Filter: private projects only visible to members/superadmin
+        if not _is_public and not _user_role and user.get("role") != "superadmin":
+            continue
         items.append(HallItemResponse(
             type="project",
             id=slug,
             name=info.get("name", slug),
             description=info.get("description", ""),
             updated_at="",
+            is_public=_is_public,
+            user_role=_user_role,
             extra={"stage_progress": f"{completed}/{total}"},
         ))
 
@@ -167,6 +198,7 @@ async def get_hall(user: dict = Depends(get_current_user)):
 
 @router.get("/projects/{project_id}/detail")
 async def get_project_detail(project_id: str, user: dict = Depends(get_current_user)):
+    user_role = _check_access(project_id, user, "viewer")
     """Get full project detail: info + stages + documents + discussions per stage."""
     # Load project from file registry (not admin DB)
     import json, os
@@ -178,8 +210,9 @@ async def get_project_detail(project_id: str, user: dict = Depends(get_current_u
         raise HTTPException(status_code=500, detail="Project index not found")
     if project_id not in index:
         raise HTTPException(status_code=404, detail="Project not found")
-    project = {"id": project_id, "name": index[project_id].get("name", project_id), "description": index[project_id].get("description", ""), "created_at": "", "updated_at": ""}
     db = AdminDatabase()
+    _is_pub = db.get_project_visibility(project_id)
+    project = {"id": project_id, "name": index[project_id].get("name", project_id), "description": index[project_id].get("description", ""), "is_public": _is_pub, "user_role": user_role, "created_at": "", "updated_at": ""}
 
     stages = db.get_project_stages(project_id)
 
@@ -243,6 +276,7 @@ async def get_project_detail(project_id: str, user: dict = Depends(get_current_u
 
 @router.get("/projects/{project_id}/stages", response_model=StageListResponse)
 async def list_stages(project_id: str, user: dict = Depends(get_current_user)):
+    _check_access(project_id, user, "viewer")
     db = AdminDatabase()
     stages = db.get_project_stages(project_id)
     # Add document counts
@@ -258,6 +292,7 @@ async def list_stages(project_id: str, user: dict = Depends(get_current_user)):
 @router.put("/projects/{project_id}/stages/{stage_id}")
 async def update_stage(project_id: str, stage_id: str, request: UpdateStageRequest,
                        user: dict = Depends(get_current_user)):
+    _check_access(project_id, user, "editor")
     db = AdminDatabase()
     kwargs = {k: v for k, v in request.dict(exclude_none=True).items()}
     if not db.update_stage(stage_id, **kwargs):
@@ -267,6 +302,7 @@ async def update_stage(project_id: str, stage_id: str, request: UpdateStageReque
 
 @router.post("/projects/{project_id}/stages/{stage_id}/complete")
 async def complete_stage(project_id: str, stage_id: str, user: dict = Depends(get_current_user)):
+    _check_access(project_id, user, "editor")
     db = AdminDatabase()
     result = db.complete_stage(stage_id)
     return {"message": "Stage completed", "unlocked": result["unlocked"]}
@@ -277,6 +313,7 @@ async def complete_stage(project_id: str, stage_id: str, user: dict = Depends(ge
 @router.post("/projects/{project_id}/stages/{stage_id}/documents", response_model=DocumentResponse)
 async def create_document(project_id: str, stage_id: str, request: CreateDocumentRequest,
                           user: dict = Depends(get_current_user)):
+    _check_access(project_id, user, "editor")
     db = AdminDatabase()
     doc = db.create_document(project_id, stage_id, request.title, request.content, user.get("id"))
     full = db.get_document(doc["id"])

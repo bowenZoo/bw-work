@@ -33,6 +33,8 @@ export interface Project {
   id: string
   name: string
   description: string
+  is_public: boolean
+  user_role: string | null
   created_at: string
   updated_at: string
 }

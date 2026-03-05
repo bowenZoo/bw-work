@@ -570,6 +570,41 @@ class AdminDatabase:
             return cursor.lastrowid
 
 
+    def check_project_access(self, project_slug: str, user_id: int, required_role: str = "viewer") -> str:
+        """Check user's role in a project. Returns role string or None if no access.
+        Role hierarchy: admin > editor > viewer"""
+        ROLE_LEVEL = {"admin": 3, "editor": 2, "viewer": 1, "member": 1}
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT role FROM project_members WHERE project_id = ? AND user_id = ?",
+                           (project_slug, user_id))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            user_role = row["role"] if hasattr(row, "keys") else row[0]
+            if ROLE_LEVEL.get(user_role, 0) >= ROLE_LEVEL.get(required_role, 0):
+                return user_role
+            return None
+
+    def get_user_project_role(self, project_slug: str, user_id: int) -> str:
+        """Get user's role in a project. Returns role string or None."""
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT role FROM project_members WHERE project_id = ? AND user_id = ?",
+                           (project_slug, user_id))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return row["role"] if hasattr(row, "keys") else row[0]
+
+    def get_project_visibility(self, project_slug: str) -> bool:
+        """Check if project is public. Returns True if public."""
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT is_public FROM projects WHERE slug = ?", (project_slug,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+            val = row["is_public"] if hasattr(row, "keys") else row[0]
+            return bool(val)
+
     def resolve_project_id(self, project_id) -> int:
         """Resolve a project slug or integer id to the DB integer id."""
         if isinstance(project_id, int):

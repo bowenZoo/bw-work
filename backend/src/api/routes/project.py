@@ -142,8 +142,6 @@ async def create_project(request: CreateProjectRequest, user: dict = Depends(get
     Creates a new game design project with the specified name and optional description.
     A unique project ID will be generated based on the name.
     """
-    if user.get("role") != "superadmin":
-        raise HTTPException(status_code=403, detail="Only superadmin can create projects")
     try:
         project = _registry.create(
             name=request.name,

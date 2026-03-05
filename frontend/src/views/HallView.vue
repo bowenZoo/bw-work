@@ -428,7 +428,7 @@ onUnmounted(() => { delete (window as any).__bwHall })
               :class="statusMap[itemStatus(item)].cls"
             >{{ statusMap[itemStatus(item)].label }}</span>
           </div>
-          <h3 class="card-title">{{ item.name }}</h3>
+          <h3 class="card-title"><span v-if="item.type==='project'" class="vis-icon">{{ item.is_public ? '🌐' : '🔒' }}</span>{{ item.name }}</h3>
           <p class="card-desc" v-if="item.description">{{ item.description }}</p>
           <div class="card-footer">
             <span v-if="item.type === 'discussion' && item.extra?.owner_name" class="card-meta">

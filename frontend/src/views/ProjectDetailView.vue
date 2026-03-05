@@ -30,6 +30,11 @@ const newDiscTopic = ref('')
 const creatingDisc = ref(false)
 
 // Member management
+const canEdit = computed(() => {
+  const role = project.value?.user_role
+  return role === 'admin' || role === 'editor' || userStore.role === 'superadmin'
+})
+
 const showMemberDialog = ref(false)
 const members = ref<any[]>([])
 const loadingMembers = ref(false)
@@ -280,7 +285,7 @@ async function createStageDiscussion(stageId: string) {
       <button class="back-btn" @click="router.push('/')">← 返回大厅</button>
       <h1 v-if="project">{{ project.name }}</h1>
       <div style="margin-left: auto;">
-        <button class="btn btn-sm btn-secondary" @click="openMemberDialog">👥 成员</button>
+        <button v-if="canEdit" class="btn btn-sm btn-secondary" @click="openMemberDialog">👥 成员</button>
       </div>
     </header>
 
@@ -288,7 +293,7 @@ async function createStageDiscussion(stageId: string) {
 
     <div v-else class="stages">
       <div v-if="isOwner" class="stages-toolbar">
-        <button class="btn btn-sm btn-secondary" @click="openStageDialog">⚙️ 管理阶段</button>
+        <button v-if="canEdit" class="btn btn-sm btn-secondary" @click="openStageDialog">⚙️ 管理阶段</button>
       </div>
       <div v-for="stage in stages" :key="stage.id" class="stage-section" :class="stage.status">
         <div class="stage-header" @click="toggleStage(stage.id)" style="cursor: pointer;">
@@ -357,7 +362,7 @@ async function createStageDiscussion(stageId: string) {
           </div>
           <div v-else class="stage-empty">暂无内容</div>
 
-          <div v-if="stage.status === 'active' || stage.status === 'completed'" class="stage-actions">
+          <div v-if="canEdit && (stage.status === 'active' || stage.status === 'completed')" class="stage-actions">
             <button class="btn btn-sm btn-secondary" @click="showNewDiscDialog = stage.id">+ 新讨论</button>
             <button v-if="stage.status === 'active'" class="btn btn-sm btn-secondary" @click="showNewDoc = stage.id">+ 新文档</button>
           </div>
