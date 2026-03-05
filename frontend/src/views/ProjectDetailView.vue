@@ -34,9 +34,9 @@ const creatingDisc = ref(false)
 async function requestAccess(role: string) {
   const base = import.meta.env.VITE_API_BASE || ''
   try {
-    const res = await fetch(\`\${base}/api/projects/\${route.params.id}/access-request\`, {
+    const res = await fetch(`${base}/api/projects/${route.params.id}/access-request`, {
       method: 'POST',
-      headers: { Authorization: \`Bearer \${userStore.accessToken}\`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${userStore.accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ role }),
     })
     if (res.ok) {
