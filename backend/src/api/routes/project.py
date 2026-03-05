@@ -275,18 +275,36 @@ async def update_project(project_id: str, request: UpdateProjectRequest) -> Proj
     )
 
 
-@router.delete("/{project_id}", response_model=MessageResponse)
-async def delete_project(project_id: str) -> MessageResponse:
-    """Delete a project.
+@router.delete("/{project_id}")
+async def delete_project(project_id: str, user: dict = Depends(get_current_user)):
+    """Delete a project (superadmin only). Hard-deletes project and all related data."""
+    if user.get("role") != "superadmin":
+        raise HTTPException(status_code=403, detail="Only superadmin can delete projects")
 
-    Performs a soft delete of the project. The project data directory is preserved
-    but the project will no longer appear in listings.
-    """
-    deleted = _registry.delete(project_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Project not found")
+    _db = AdminDatabase()
+    with _db.get_cursor() as cursor:
+        cursor.execute("SELECT id FROM projects WHERE slug = ?", (project_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Project not found")
+        db_id = row["id"] if hasattr(row, "keys") else row[0]
 
-    return MessageResponse(message=f"Project {project_id} deleted successfully")
+    with _db.get_cursor() as cursor:
+        cursor.execute(
+            "DELETE FROM document_versions WHERE document_id IN (SELECT id FROM documents WHERE project_id = ?)",
+            (db_id,)
+        )
+        cursor.execute("DELETE FROM documents WHERE project_id = ?", (db_id,))
+        cursor.execute("DELETE FROM project_stages WHERE project_id = ?", (db_id,))
+        cursor.execute("DELETE FROM project_members WHERE project_id = ?", (project_id,))
+        cursor.execute("DELETE FROM projects WHERE id = ?", (db_id,))
+
+    try:
+        _registry.delete(project_id)
+    except Exception:
+        pass
+
+    return {"ok": True, "message": "项目已删除"}
 
 
 # GDD API Endpoints

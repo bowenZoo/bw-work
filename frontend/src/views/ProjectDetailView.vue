@@ -105,6 +105,32 @@ async function rejectRequest(userId: number) {
   }
 }
 
+const showDeleteConfirm = ref(false)
+const deleting = ref(false)
+
+async function deleteProject() {
+  if (deleting.value) return
+  deleting.value = true
+  try {
+    const base = import.meta.env.VITE_API_BASE || ''
+    const res = await fetch(`${base}/api/projects/${projectId()}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    })
+    if (!res.ok) {
+      const e = await res.json()
+      alert(e.detail || '删除失败')
+      return
+    }
+    router.push('/')
+  } catch {
+    alert('网络错误')
+  } finally {
+    deleting.value = false
+    showDeleteConfirm.value = false
+  }
+}
+
 const showMemberDialog = ref(false)
 const members = ref<any[]>([])
 const loadingMembers = ref(false)
@@ -360,8 +386,9 @@ async function createStageDiscussion(stageId: string) {
     <header class="pd-header">
       <button class="back-btn" @click="router.push('/')">← 返回大厅</button>
       <h1 v-if="project">{{ project.name }}</h1>
-      <div style="margin-left: auto;">
+      <div style="margin-left: auto; display: flex; gap: 8px;">
         <button v-if="canEdit" class="btn btn-sm btn-secondary" @click="openMemberDialog">👥 成员</button>
+        <button v-if="userStore.role === 'superadmin'" class="btn btn-sm btn-danger" @click="showDeleteConfirm = true">🗑️ 删除项目</button>
       </div>
     </header>
 
@@ -600,6 +627,20 @@ async function createStageDiscussion(stageId: string) {
           </div>
           <div class="dialog-actions">
             <button class="btn btn-secondary" @click="showStageDialog = false">关闭</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+    <!-- Delete Confirm Dialog -->
+    <Transition name="fade">
+      <div v-if="showDeleteConfirm" class="dialog-overlay" @click.self="showDeleteConfirm = false">
+        <div class="dialog">
+          <h3>⚠️ 确认删除项目</h3>
+          <p style="color: #ef4444; font-weight: 500;">你确定要删除项目「{{ project?.name }}」吗？</p>
+          <p style="color: #6b7280; font-size: 13px;">此操作不可撤销，项目的所有阶段、文档、讨论记录将被永久删除。</p>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" @click="showDeleteConfirm = false">取消</button>
+            <button class="btn btn-danger" @click="deleteProject" :disabled="deleting">{{ deleting ? '删除中...' : '确认删除' }}</button>
           </div>
         </div>
       </div>

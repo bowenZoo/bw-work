@@ -393,6 +393,17 @@ function registerTools() {
         return { ok: true, action: p.action, remainingRequests: document.querySelectorAll('.pending-item').length }
       }
     },
+    {
+      name: 'bw_delete_project',
+      description: 'Delete a project (superadmin only)',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      execute: async (p: any) => {
+        const token = JSON.parse(localStorage.getItem('bw_user_tokens') || '{}').access_token
+        const res = await fetch('/api/projects/' + p.id, { method: 'DELETE', headers: { Authorization: 'Bearer ' + token } })
+        const data = await res.json()
+        return { status: res.status, ...data }
+      }
+    },
   ]
 
   for (const t of tools) {
