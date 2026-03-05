@@ -79,6 +79,19 @@ const newDiscussionProjectId = ref('')
 const newProjectName = ref('')
 const newProjectDescription = ref('')
 const creating = ref(false)
+const selectedTemplate = ref('')
+
+const discussionTemplates = [
+  { label: '自由讨论（空模板）', value: '' },
+  { label: '核心玩法讨论', value: '请从玩家体验、创新性、可行性三个角度讨论以下核心玩法设计：' },
+  { label: '数值平衡评审', value: '请评审以下数值设计的平衡性，关注成长曲线、资源产出消耗比、付费点设计：' },
+  { label: '美术风格探讨', value: '请从目标用户、技术可行性、市场差异化角度讨论以下美术风格方案：' },
+  { label: '技术方案评估', value: '请从性能、开发成本、可维护性角度评估以下技术方案：' },
+]
+
+function onTemplateChange() {
+  newDiscussionTopic.value = selectedTemplate.value
+}
 
 const projectItems = computed(() =>
   items.value.filter(item => item.type === 'project')
@@ -292,6 +305,12 @@ onUnmounted(() => { delete (window as any).__bwHall })
       <div v-if="showNewDiscussion" class="dialog-overlay" @click.self="showNewDiscussion = false">
         <div class="dialog dialog-enhanced">
           <h3 class="dialog-title">发起新讨论</h3>
+          <div class="dialog-field">
+            <label class="dialog-label">选择模板</label>
+            <select v-model="selectedTemplate" class="dialog-input" @change="onTemplateChange">
+              <option v-for="t in discussionTemplates" :key="t.label" :value="t.value">{{ t.label }}</option>
+            </select>
+          </div>
           <div class="dialog-field">
             <label class="dialog-label">讨论话题</label>
             <textarea

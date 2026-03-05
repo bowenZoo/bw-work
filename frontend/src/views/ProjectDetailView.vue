@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useProjectDetail } from '@/composables/useProjectDetail'
 import { useUserStore } from '@/stores/user'
@@ -28,6 +28,131 @@ const previewOutput = ref<any>(null)
 const showNewDiscDialog = ref<string | null>(null)
 const newDiscTopic = ref('')
 const creatingDisc = ref(false)
+
+// Member management
+const showMemberDialog = ref(false)
+const members = ref<any[]>([])
+const loadingMembers = ref(false)
+const inviteUsername = ref('')
+const inviteRole = ref('editor')
+const inviting = ref(false)
+
+async function fetchMembers() {
+  loadingMembers.value = true
+  try {
+    const base = import.meta.env.VITE_API_BASE || ''
+    const res = await fetch(`${base}/api/projects/${projectId()}/members`, {
+      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    })
+    if (res.ok) members.value = await res.json()
+  } finally {
+    loadingMembers.value = false
+  }
+}
+
+async function inviteMember() {
+  if (!inviteUsername.value.trim() || inviting.value) return
+  inviting.value = true
+  try {
+    const base = import.meta.env.VITE_API_BASE || ''
+    const res = await fetch(`${base}/api/projects/${projectId()}/members`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${userStore.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: inviteUsername.value.trim(), role: inviteRole.value }),
+    })
+    if (!res.ok) { const e = await res.json(); alert(e.detail || '邀请失败'); return }
+    inviteUsername.value = ''
+    inviteRole.value = 'editor'
+    await fetchMembers()
+  } finally {
+    inviting.value = false
+  }
+}
+
+async function removeMember(memberId: string) {
+  if (!confirm('确认移除该成员？')) return
+  const base = import.meta.env.VITE_API_BASE || ''
+  const res = await fetch(`${base}/api/projects/${projectId()}/members/${memberId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${userStore.accessToken}` },
+  })
+  if (!res.ok) { alert('移除失败'); return }
+  await fetchMembers()
+}
+
+function openMemberDialog() {
+  showMemberDialog.value = true
+  fetchMembers()
+}
+
+// Stage management
+const showStageDialog = ref(false)
+const editingStages = ref<any[]>([])
+const newStageName = ref('')
+const savingStage = ref(false)
+
+function openStageDialog() {
+  editingStages.value = stages.value.map((s: any) => ({ ...s, editName: s.name }))
+  showStageDialog.value = true
+}
+
+async function saveStageRename(stage: any) {
+  if (!stage.editName.trim() || stage.editName === stage.name) return
+  savingStage.value = true
+  try {
+    const base = import.meta.env.VITE_API_BASE || ''
+    const res = await fetch(`${base}/api/projects/${projectId()}/stages/${stage.id}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${userStore.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: stage.editName.trim() }),
+    })
+    if (!res.ok) { alert('保存失败'); return }
+    await refresh()
+    editingStages.value = stages.value.map((s: any) => ({ ...s, editName: s.name }))
+  } finally {
+    savingStage.value = false
+  }
+}
+
+async function addCustomStage() {
+  if (!newStageName.value.trim()) return
+  savingStage.value = true
+  try {
+    const base = import.meta.env.VITE_API_BASE || ''
+    const slug = newStageName.value.trim().toLowerCase().replace(/\s+/g, '_')
+    const order = editingStages.value.length
+    const res = await fetch(`${base}/api/projects/${projectId()}/stages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${userStore.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newStageName.value.trim(), slug, order }),
+    })
+    if (!res.ok) { alert('添加失败'); return }
+    newStageName.value = ''
+    await refresh()
+    editingStages.value = stages.value.map((s: any) => ({ ...s, editName: s.name }))
+  } finally {
+    savingStage.value = false
+  }
+}
+
+async function deleteCustomStage(stageId: string) {
+  if (!confirm('确认删除该自定义阶段？')) return
+  savingStage.value = true
+  try {
+    const base = import.meta.env.VITE_API_BASE || ''
+    const res = await fetch(`${base}/api/projects/${projectId()}/stages/${stageId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    })
+    if (!res.ok) { alert('删除失败'); return }
+    await refresh()
+    editingStages.value = stages.value.map((s: any) => ({ ...s, editName: s.name }))
+  } finally {
+    savingStage.value = false
+  }
+}
+
+const isOwner = computed(() => project.value?.owner_id === userStore.user?.id)
 
 async function doAdopt() {
   if (!showAdoptDialog.value || adoptingId.value) return
@@ -154,11 +279,17 @@ async function createStageDiscussion(stageId: string) {
     <header class="pd-header">
       <button class="back-btn" @click="router.push('/')">← 返回大厅</button>
       <h1 v-if="project">{{ project.name }}</h1>
+      <div style="margin-left: auto;">
+        <button class="btn btn-sm btn-secondary" @click="openMemberDialog">👥 成员</button>
+      </div>
     </header>
 
     <div v-if="loading" class="pd-loading">加载中...</div>
 
     <div v-else class="stages">
+      <div v-if="isOwner" class="stages-toolbar">
+        <button class="btn btn-sm btn-secondary" @click="openStageDialog">⚙️ 管理阶段</button>
+      </div>
       <div v-for="stage in stages" :key="stage.id" class="stage-section" :class="stage.status">
         <div class="stage-header" @click="toggleStage(stage.id)" style="cursor: pointer;">
           <span class="stage-toggle" :class="{ collapsed: isStageCollapsed(stage.id) }">▶</span>
@@ -316,6 +447,69 @@ async function createStageDiscussion(stageId: string) {
           <div class="dialog-actions">
             <button class="btn btn-secondary" @click="showNewDiscDialog = null; newDiscTopic = ''">取消</button>
             <button class="btn btn-primary" @click="createStageDiscussion(showNewDiscDialog!)" :disabled="creatingDisc">{{ creatingDisc ? '创建中...' : '创建' }}</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+    <!-- Member Management Dialog -->
+    <Transition name="fade">
+      <div v-if="showMemberDialog" class="dialog-overlay" @click.self="showMemberDialog = false">
+        <div class="dialog dialog-wide">
+          <h3 class="dialog-title">👥 成员管理</h3>
+          <div v-if="loadingMembers" class="member-loading">加载中...</div>
+          <div v-else class="member-list">
+            <div v-for="m in members" :key="m.id" class="member-item">
+              <div class="member-info">
+                <span class="member-name">{{ m.username || m.user_id }}</span>
+                <span class="member-role-badge" :class="'role-' + m.role">{{ m.role }}</span>
+              </div>
+              <button v-if="m.role !== 'owner'" class="btn-remove" @click="removeMember(m.id)">移除</button>
+            </div>
+            <div v-if="members.length === 0" class="member-empty">暂无成员</div>
+          </div>
+          <div class="member-invite">
+            <input v-model="inviteUsername" placeholder="输入用户名..." class="dialog-input invite-input" />
+            <select v-model="inviteRole" class="dialog-input invite-role">
+              <option value="editor">editor</option>
+              <option value="viewer">viewer</option>
+            </select>
+            <button class="btn btn-primary btn-sm" @click="inviteMember" :disabled="inviting">邀请</button>
+          </div>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" @click="showMemberDialog = false">关闭</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+    <!-- Stage Management Dialog -->
+    <Transition name="fade">
+      <div v-if="showStageDialog" class="dialog-overlay" @click.self="showStageDialog = false">
+        <div class="dialog dialog-wide">
+          <h3 class="dialog-title">⚙️ 管理阶段</h3>
+          <div class="stage-edit-list">
+            <div v-for="s in editingStages" :key="s.id" class="stage-edit-item">
+              <input v-model="s.editName" class="dialog-input stage-edit-input" />
+              <button
+                v-if="s.editName !== s.name"
+                class="btn btn-sm btn-primary"
+                @click="saveStageRename(s)"
+                :disabled="savingStage"
+              >保存</button>
+              <button
+                v-if="s.is_custom"
+                class="btn-remove"
+                @click="deleteCustomStage(s.id)"
+                :disabled="savingStage"
+              >删除</button>
+              <span v-if="!s.is_custom" class="stage-default-tag">默认</span>
+            </div>
+          </div>
+          <div class="stage-add-row">
+            <input v-model="newStageName" placeholder="自定义阶段名称..." class="dialog-input stage-edit-input" @keyup.enter="addCustomStage" />
+            <button class="btn btn-sm btn-primary" @click="addCustomStage" :disabled="savingStage || !newStageName.trim()">+ 添加</button>
+          </div>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" @click="showStageDialog = false">关闭</button>
           </div>
         </div>
       </div>
@@ -600,4 +794,82 @@ async function createStageDiscussion(stageId: string) {
   line-height: 1.5;
 }
 .dialog-textarea:focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
+
+.dialog-wide {
+  border-radius: 16px;
+  padding: 28px;
+  width: min(500px, 90vw);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+}
+.stages-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+/* Member dialog */
+.member-loading { text-align: center; color: #9ca3af; padding: 20px; }
+.member-list { margin-bottom: 16px; max-height: 260px; overflow-y: auto; }
+.member-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+.member-info { display: flex; align-items: center; gap: 10px; }
+.member-name { font-size: 14px; font-weight: 500; color: #111827; }
+.member-role-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+.role-owner { background: #fef3c7; color: #d97706; }
+.role-editor { background: #eff6ff; color: #3b82f6; }
+.role-viewer { background: #f3f4f6; color: #6b7280; }
+.member-empty { text-align: center; color: #d1d5db; font-size: 13px; padding: 16px; }
+.btn-remove {
+  background: none;
+  border: 1px solid #fca5a5;
+  color: #ef4444;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.btn-remove:hover { background: #fef2f2; }
+.member-invite {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.invite-input { flex: 1; }
+.invite-role { width: 100px; flex-shrink: 0; }
+
+/* Stage edit dialog */
+.stage-edit-list { margin-bottom: 16px; max-height: 320px; overflow-y: auto; }
+.stage-edit-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+.stage-edit-input { flex: 1; }
+.stage-default-tag {
+  font-size: 11px;
+  color: #9ca3af;
+  background: #f3f4f6;
+  padding: 2px 8px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.stage-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
 </style>
