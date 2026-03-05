@@ -235,6 +235,8 @@ function registerTools() {
           id: i.id,
           name: i.name,
           status: i.extra?.status || '',
+          is_public: i.is_public,
+          user_role: i.user_role,
         }))
       }
     },
