@@ -1841,4 +1841,168 @@ onUnmounted(() => {
 .archive-actions .btn-primary { background: #4f46e5; color: #fff; }
 .archive-actions .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .archive-actions .btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+
+/* ========= 视觉优化 2026-03-05 ========= */
+
+/* 页面背景 */
+.discussion-layout {
+  background: #f8fafc !important;
+}
+
+/* 消息区域优化 */
+.message-feed {
+  border: none !important;
+  border-radius: 12px !important;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+/* 右侧面板优化 */
+.right-panel {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  border: 1px solid #f0f0f0;
+}
+
+/* 状态badge优化 */
+.status-badge {
+  padding: 2px 10px !important;
+  border-radius: 12px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+}
+.status-active { background: #eff6ff !important; color: #2563eb !important; }
+.status-running { background: #eff6ff !important; color: #2563eb !important; }
+.status-completed { background: #f0fdf4 !important; color: #16a34a !important; }
+.status-waiting { background: #fffbeb !important; color: #d97706 !important; }
+.status-paused { background: #fffbeb !important; color: #d97706 !important; }
+.status-archived { background: #f3f4f6 !important; color: #6b7280 !important; }
+
+/* 操作按钮优化 */
+.action-btn-sm {
+  border-radius: 8px !important;
+  transition: all 0.15s !important;
+}
+.action-btn-sm:hover {
+  background: rgba(59,130,246,0.1) !important;
+  color: #3b82f6 !important;
+}
+.action-btn-sm.is-paused {
+  background: #eff6ff !important;
+  color: #3b82f6 !important;
+}
+
+/* 返回按钮 */
+.back-btn {
+  border-radius: 8px !important;
+  padding: 6px 12px !important;
+  transition: all 0.15s !important;
+}
+.back-btn:hover {
+  background: rgba(59,130,246,0.08) !important;
+  color: #3b82f6 !important;
+}
+
+/* 归档按钮 */
+.archive-btn {
+  border-radius: 8px !important;
+  transition: all 0.15s !important;
+}
+
+/* 继续讨论面板优化 */
+.continue-area {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  border: 1px solid #f0f0f0;
+  margin-top: 8px;
+}
+
+.continue-trigger-btn {
+  border-radius: 10px !important;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+  color: #fff !important;
+  border: none !important;
+  font-weight: 600 !important;
+  transition: all 0.2s !important;
+  box-shadow: 0 2px 8px rgba(102,126,234,0.3) !important;
+}
+.continue-trigger-btn:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 12px rgba(102,126,234,0.4) !important;
+}
+
+.continue-text-input {
+  border-radius: 10px !important;
+  border: 1px solid #e5e7eb !important;
+  transition: border-color 0.15s !important;
+}
+.continue-text-input:focus {
+  border-color: #667eea !important;
+  box-shadow: 0 0 0 3px rgba(102,126,234,0.1) !important;
+}
+
+.continue-confirm-btn {
+  border-radius: 10px !important;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(102,126,234,0.3) !important;
+}
+
+/* 自动暂停横幅 */
+.auto-pause-banner {
+  border-radius: 10px !important;
+  margin: 8px 12px !important;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06) !important;
+}
+
+/* 等待占位优化 */
+.waiting-placeholder {
+  background: #fff !important;
+  border-radius: 16px !important;
+}
+.waiting-text {
+  color: #374151 !important;
+  font-weight: 500 !important;
+}
+.waiting-subtext {
+  color: #9ca3af !important;
+}
+
+/* 归档弹窗优化 */
+.archive-dialog {
+  border-radius: 16px !important;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.15) !important;
+}
+.archive-select {
+  border-radius: 10px !important;
+}
+.archive-actions .btn-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+  border-radius: 10px !important;
+}
+
+/* 分隔线手柄优化 */
+.divider-handle {
+  border-radius: 3px !important;
+  background: #d1d5db !important;
+  transition: background 0.15s !important;
+}
+.panel-divider:hover .divider-handle {
+  background: #3b82f6 !important;
+}
+
+/* Prompt编辑器优化 */
+.prompt-editor {
+  border-radius: 10px !important;
+  background: #f8fafc !important;
+}
+
+/* 风格pill */
+.style-pill {
+  border-radius: 16px !important;
+  transition: all 0.15s !important;
+}
+
 </style>

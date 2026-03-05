@@ -166,7 +166,10 @@ onMounted(async () => {
   }
   if (userStore.isAuthenticated) {
     await refresh()
-    loadStyles()
+    await loadStyles()
+    if (discussionStylesFull.value.length > 0) {
+      onStyleSelect(discussionStylesFull.value[0].id)
+    }
   } else {
     showLoginModal.value = true
   }
@@ -906,17 +909,17 @@ onUnmounted(() => { delete (window as any).__bwHall })
 }
 
 /* === 新建讨论弹窗扩展样式 === */
-.dialog-wide { max-width: 800px; width: calc(100vw - 48px); }
-.dialog-two-col { display: flex; gap: 24px; max-height: 60vh; overflow-y: auto; }
-.dialog-col-left { flex: 1; min-width: 0; }
-.dialog-col-right { flex: 1; min-width: 0; background: #f8fafc; border-radius: 10px; padding: 16px; }
+.dialog-wide { max-width: 900px; width: calc(100vw - 48px); max-height: 90vh; overflow-y: auto; }
+.dialog-two-col { display: flex; gap: 20px; }
+.dialog-col-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.dialog-col-right { flex: 1; min-width: 0; background: #f8fafc; border-radius: 10px; padding: 12px; max-height: 70vh; overflow-y: auto; }
 .prompt-preview-title { font-size: 13px; font-weight: 600; color: #6b7280; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-.prompt-scroll { display: flex; flex-direction: column; gap: 12px; }
+.prompt-scroll { display: flex; flex-direction: column; gap: 8px; }
 .prompt-field { display: flex; flex-direction: column; gap: 4px; }
 .prompt-field-label { font-size: 12px; font-weight: 600; color: #374151; }
-.prompt-field-input { width: 100%; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 13px; resize: vertical; min-height: 60px; font-family: inherit; background: #fff; }
+.prompt-field-input { width: 100%; padding: 6px 8px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 12px; resize: vertical; min-height: 44px; font-family: inherit; background: #fff; line-height: 1.5; }
 .prompt-field-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.1); }
-.prompt-empty { display: flex; align-items: center; justify-content: center; height: 200px; color: #9ca3af; font-size: 14px; }
+.prompt-empty { display: flex; align-items: center; justify-content: center; height: 120px; color: #9ca3af; font-size: 13px; }
 .focus-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .focus-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; background: #eff6ff; color: #2563eb; border-radius: 12px; font-size: 12px; }
 .chip-remove { background: none; border: none; color: #93c5fd; cursor: pointer; font-size: 12px; padding: 0 2px; }
