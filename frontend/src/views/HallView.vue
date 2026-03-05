@@ -120,7 +120,12 @@ function addAgent(id: string) {
   crewSelectedId.value = id
 }
 function removeAgent(id: string) {
-  selectedAgents.value = selectedAgents.value.filter(a => a !== id)
+  if (selectedAgents.value.length === 0) {
+    // Empty means all — materialize, then remove
+    selectedAgents.value = AGENT_ROLES.map(r => r.id).filter(a => a !== id)
+  } else {
+    selectedAgents.value = selectedAgents.value.filter(a => a !== id)
+  }
   if (crewSelectedId.value === id) crewSelectedId.value = null
 }
 function hasAgentOverrides(id: string) {
