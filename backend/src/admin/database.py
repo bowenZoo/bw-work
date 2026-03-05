@@ -555,9 +555,35 @@ class AdminDatabase:
         {"template_id": "art-assets",    "name": "美术资源需求清单",   "sort": 9, "prereqs": ["art-style"]},
     ]
 
-    def init_project_stages(self, project_id: str) -> list[dict]:
+
+    def get_or_create_project_db_id(self, slug: str, name: str = "", created_by: int = 0) -> int:
+        """Get the integer DB id for a project slug, creating a row if needed."""
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT id FROM projects WHERE slug = ?", (slug,))
+            row = cursor.fetchone()
+            if row:
+                return row["id"] if isinstance(row, dict) or hasattr(row, 'keys') else row[0]
+            cursor.execute(
+                "INSERT INTO projects (slug, name, created_by) VALUES (?, ?, ?)",
+                (slug, name or slug, created_by)
+            )
+            return cursor.lastrowid
+
+
+    def resolve_project_id(self, project_id) -> int:
+        """Resolve a project slug or integer id to the DB integer id."""
+        if isinstance(project_id, int):
+            return project_id
+        try:
+            return int(project_id)
+        except (ValueError, TypeError):
+            pass
+        return self.get_or_create_project_db_id(str(project_id))
+
+    def init_project_stages(self, project_id) -> list[dict]:
         """Initialize default stages for a new project. Returns created stages."""
         import uuid, json
+        project_id = self.resolve_project_id(project_id)
         stages = []
         with self.get_cursor() as cursor:
             for s in self.DEFAULT_STAGES:
@@ -572,9 +598,10 @@ class AdminDatabase:
                                "sort_order": s["sort"], "status": status, "prerequisites": s["prereqs"]})
         return stages
 
-    def get_project_stages(self, project_id: str) -> list[dict]:
+    def get_project_stages(self, project_id) -> list[dict]:
         """Get all stages for a project, with computed status."""
         import json
+        project_id = self.resolve_project_id(project_id)
         with self.get_cursor() as cursor:
             cursor.execute(
                 "SELECT * FROM project_stages WHERE project_id = ? ORDER BY sort_order", (project_id,)
@@ -626,7 +653,8 @@ class AdminDatabase:
     # Document Operations
     # =========================================================================
 
-    def create_document(self, project_id: str, stage_id: str, title: str, content: str = "", created_by: int = None) -> dict:
+    def create_document(self, project_id, stage_id: str, title: str, content: str = "", created_by: int = None) -> dict:
+        project_id = self.resolve_project_id(project_id)
         import uuid
         doc_id = str(uuid.uuid4())
         ver_id = str(uuid.uuid4())
@@ -654,7 +682,8 @@ class AdminDatabase:
             cursor.execute("SELECT * FROM documents WHERE stage_id = ? ORDER BY created_at", (stage_id,))
             return [dict(r) for r in cursor.fetchall()]
 
-    def get_project_documents(self, project_id: str) -> list[dict]:
+    def get_project_documents(self, project_id) -> list[dict]:
+        project_id = self.resolve_project_id(project_id)
         with self.get_cursor() as cursor:
             cursor.execute("SELECT * FROM documents WHERE project_id = ? ORDER BY created_at", (project_id,))
             return [dict(r) for r in cursor.fetchall()]

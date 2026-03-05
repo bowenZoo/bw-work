@@ -163,13 +163,12 @@ async def create_project(request: CreateProjectRequest, user: dict = Depends(get
                 "INSERT OR IGNORE INTO project_members (project_id, user_id, role) VALUES (?, ?, 'admin')",
                 (project.id, user["id"])
             )
-        # Insert into admin DB projects table (required for FK constraints on stages)
+        # Get/create DB integer id for FK constraints
+        db_project_id = _db.get_or_create_project_db_id(project.id, request.name, user["id"])
+        # Update is_public
         with _db.get_cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO projects (slug, name, description, is_public, created_by) VALUES (?, ?, ?, ?, ?)",
-                (project.id, request.name, request.description or '', getattr(request, 'is_public', False), user["id"])
-            )
-            db_project_id = cursor.lastrowid
+            cursor.execute("UPDATE projects SET description = ?, is_public = ? WHERE id = ?",
+                           (request.description or '', request.is_public, db_project_id))
         # Initialize default stages using the DB integer id
         _db.init_project_stages(db_project_id)
     except ValueError as e:
