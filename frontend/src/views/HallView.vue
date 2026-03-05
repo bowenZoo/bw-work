@@ -36,6 +36,8 @@ watch(() => userStore.isAuthenticated, (val) => {
   if (!val) {
     items.value = []
     showLoginModal.value = true
+  } else {
+    refresh()
   }
 })
 

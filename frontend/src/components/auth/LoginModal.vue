@@ -20,6 +20,7 @@ async function handleLogin() {
   loading.value = true;
   try {
     await userStore.login(username.value, password.value);
+    emit('success');
     emit('close');
   } catch (e: any) { error.value = e.message || '登录失败'; }
   finally { loading.value = false; }
@@ -31,6 +32,7 @@ async function handleRegister() {
   loading.value = true;
   try {
     await userStore.register(username.value, password.value, displayName.value || undefined);
+    emit('success');
     emit('close');
   } catch (e: any) { error.value = e.message || '注册失败'; }
   finally { loading.value = false; }
