@@ -212,7 +212,7 @@ onUnmounted(() => { delete (window as any).__bwHall })
 <template>
   <div class="hall">
     <header class="hall-header">
-      <h1 class="hall-title">BW-Work</h1>
+      <h1 class="hall-title">🎮 BW-Work</h1>
       <div class="hall-actions" v-if="userStore.isAuthenticated">
         <button class="btn btn-secondary" @click="showNewDiscussion = true">+ 新讨论</button>
         <button class="btn btn-secondary" @click="showNewProject = true">+ 新项目</button>
@@ -256,6 +256,7 @@ onUnmounted(() => { delete (window as any).__bwHall })
           v-for="item in filteredItems"
           :key="`${item.type}-${item.id}`"
           class="hall-card"
+          :class="[item.type === 'discussion' ? (itemStatus(item) === 'completed' ? 'card-border-gray' : 'card-border-blue') : (itemStatus(item) === 'completed' ? 'card-border-gray' : 'card-border-green')]"
           @click="onCardClick(item)"
         >
           <div class="card-header">
@@ -288,8 +289,14 @@ onUnmounted(() => { delete (window as any).__bwHall })
               </div>
               <span class="progress-label">{{ item.extra.completed_stages || 0 }}/{{ item.extra.total_stages }} 阶段</span>
             </div>
-            <span v-else-if="item.type === 'project' && item.extra?.stage_progress" class="card-meta">
-              进度 {{ item.extra.stage_progress }}
+            <span v-else-if="item.type === 'project' && item.extra?.stage_progress" class="card-progress">
+              <div class="progress-bar">
+                <div
+                  class="progress-fill"
+                  :style="{ width: `${(parseInt(item.extra.stage_progress) / parseInt(item.extra.stage_progress.split('/')[1] || '1')) * 100}%` }"
+                />
+              </div>
+              <span class="progress-label">进度 {{ item.extra.stage_progress }}</span>
             </span>
             <span class="card-time">{{ formatTime(item.updated_at) }}</span>
           </div>
@@ -378,7 +385,7 @@ onUnmounted(() => { delete (window as any).__bwHall })
 <style scoped>
 .hall {
   min-height: 100vh;
-  background: #f9fafb;
+  background: #f8fafc;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 .hall-header {
@@ -401,7 +408,7 @@ onUnmounted(() => { delete (window as any).__bwHall })
 .hall-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 .hall-body {
   max-width: 1200px;
@@ -431,7 +438,7 @@ onUnmounted(() => { delete (window as any).__bwHall })
 }
 .hall-tabs {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .tab-btn {
@@ -439,17 +446,16 @@ onUnmounted(() => { delete (window as any).__bwHall })
   border-radius: 20px;
   font-size: 13px;
   font-weight: 500;
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  color: #374151;
+  border: none;
+  background: transparent;
+  color: #6b7280;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 .tab-btn:hover { background: #f3f4f6; }
 .tab-btn.active {
   background: #3b82f6;
   color: #fff;
-  border-color: #3b82f6;
 }
 .card-status-badge {
   font-size: 11px;
@@ -486,6 +492,15 @@ onUnmounted(() => { delete (window as any).__bwHall })
   box-shadow: 0 8px 24px rgba(0,0,0,0.15);
   transform: translateY(-2px);
 }
+.card-border-blue {
+  border-left: 3px solid #3b82f6;
+}
+.card-border-green {
+  border-left: 3px solid #10b981;
+}
+.card-border-gray {
+  border-left: 3px solid #9ca3af;
+}
 .card-header {
   display: flex;
   align-items: center;
@@ -502,12 +517,12 @@ onUnmounted(() => { delete (window as any).__bwHall })
   font-weight: 500;
 }
 .card-type-badge.discussion {
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #3b82f6;
+  color: #fff;
 }
 .card-type-badge.project {
-  background: #f0fdf4;
-  color: #10b981;
+  background: #10b981;
+  color: #fff;
 }
 .card-title {
   font-size: 16px;
