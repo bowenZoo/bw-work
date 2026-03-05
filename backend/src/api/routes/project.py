@@ -44,6 +44,7 @@ class CreateProjectRequest(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=200, description="Project name")
     description: Optional[str] = Field(None, max_length=2000, description="Project description")
+    is_public: bool = False
 
 
 class UpdateProjectRequest(BaseModel):
@@ -155,15 +156,22 @@ async def create_project(request: CreateProjectRequest, user: dict = Depends(get
         meta_path = _registry._project_meta_path(project.id)
         with open(meta_path, "w", encoding="utf-8") as f:
             _json.dump(project.to_dict(), f, ensure_ascii=False, indent=2)
-        # Add creator as admin member
+        # Add creator as admin member (use slug as project_id for members - no FK constraint)
         _db = AdminDatabase()
         with _db.get_cursor() as cursor:
             cursor.execute(
                 "INSERT OR IGNORE INTO project_members (project_id, user_id, role) VALUES (?, ?, 'admin')",
                 (project.id, user["id"])
             )
-        # Initialize default stages for the project
-        _db.init_project_stages(project.id)
+        # Insert into admin DB projects table (required for FK constraints on stages)
+        with _db.get_cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO projects (slug, name, description, is_public, created_by) VALUES (?, ?, ?, ?, ?)",
+                (project.id, request.name, request.description or '', getattr(request, 'is_public', False), user["id"])
+            )
+            db_project_id = cursor.lastrowid
+        # Initialize default stages using the DB integer id
+        _db.init_project_stages(db_project_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1082,7 +1090,7 @@ async def export_design_documents(
 
 class AddMemberRequest(BaseModel):
     username: str
-    role: str = "member"  # member or admin
+    role: str = "editor"  # editor, viewer, or admin
 
 
 @router.get("/{project_id}/members")
@@ -1095,7 +1103,7 @@ async def list_project_members(project_id: str, user: dict = Depends(get_current
     _db = AdminDatabase()
     with _db.get_cursor() as cursor:
         cursor.execute("""
-            SELECT pm.user_id, u.username, u.display_name, pm.role, pm.joined_at
+            SELECT pm.user_id as id, u.username, u.display_name, pm.role, pm.joined_at
             FROM project_members pm
             JOIN users u ON pm.user_id = u.id
             WHERE pm.project_id = ?

@@ -461,7 +461,7 @@ async function createStageDiscussion(stageId: string) {
             <div v-for="m in members" :key="m.id" class="member-item">
               <div class="member-info">
                 <span class="member-name">{{ m.username || m.user_id }}</span>
-                <span class="member-role-badge" :class="'role-' + m.role">{{ m.role }}</span>
+                <span class="member-role-badge" :class="'role-' + m.role">{{ {admin:'管理员',editor:'编辑',viewer:'查看',member:'成员',owner:'创建者'}[m.role] || m.role }}</span>
               </div>
               <button v-if="m.role !== 'owner'" class="btn-remove" @click="removeMember(m.id)">移除</button>
             </div>
@@ -470,8 +470,8 @@ async function createStageDiscussion(stageId: string) {
           <div class="member-invite">
             <input v-model="inviteUsername" placeholder="输入用户名..." class="dialog-input invite-input" />
             <select v-model="inviteRole" class="dialog-input invite-role">
-              <option value="editor">editor</option>
-              <option value="viewer">viewer</option>
+              <option value="editor">编辑</option>
+              <option value="viewer">查看</option>
             </select>
             <button class="btn btn-primary btn-sm" @click="inviteMember" :disabled="inviting">邀请</button>
           </div>

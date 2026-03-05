@@ -112,10 +112,11 @@ export function useHall() {
     })
   }
 
-  async function createProject(name: string, description?: string): Promise<any> {
+  async function createProject(name: string, description?: string, isPublic?: boolean): Promise<any> {
     const base = import.meta.env.VITE_API_BASE || ''
-    const body: Record<string, string> = { name }
+    const body: Record<string, any> = { name }
     if (description) body.description = description
+    if (isPublic !== undefined) body.is_public = isPublic
     const res = await fetch(`${base}/api/projects`, {
       method: 'POST',
       headers: {

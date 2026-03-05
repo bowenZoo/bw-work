@@ -172,6 +172,7 @@ watch(crewSelectedId, (id) => {
 
 const newProjectName = ref('')
 const newProjectDescription = ref('')
+const newProjectIsPublic = ref(true)
 const creating = ref(false)
 const selectedTemplate = ref('')
 
@@ -331,7 +332,7 @@ async function doCreateProject() {
   if (!newProjectName.value.trim() || creating.value) return
   creating.value = true
   try {
-    const data = await createProject(newProjectName.value.trim(), newProjectDescription.value.trim() || undefined)
+    const data = await createProject(newProjectName.value.trim(), newProjectDescription.value.trim() || undefined, newProjectIsPublic.value)
     showNewProject.value = false
     newProjectName.value = ''
     newProjectDescription.value = ''
@@ -689,6 +690,14 @@ onUnmounted(() => { delete (window as any).__bwHall })
               class="dialog-textarea"
               rows="3"
             />
+          </div>
+          <div class="dialog-field">
+            <label class="dialog-label">可见性</label>
+            <div class="visibility-pills">
+              <button class="vis-pill" :class="{ 'vis-pill-active': newProjectIsPublic }" @click="newProjectIsPublic = true">🌐 公开</button>
+              <button class="vis-pill" :class="{ 'vis-pill-active': !newProjectIsPublic }" @click="newProjectIsPublic = false">🔒 私密</button>
+            </div>
+            <span class="hint-text">{{ newProjectIsPublic ? '所有用户可查看，编辑需申请权限' : '仅成员可见，需申请查看或编辑权限' }}</span>
           </div>
           <div class="dialog-actions">
             <button class="btn btn-secondary" @click="showNewProject = false">取消</button>
@@ -1155,6 +1164,11 @@ onUnmounted(() => { delete (window as any).__bwHall })
 .attachment-remove:hover { color: #dc2626; }
 .auto-pause-row { display: flex; align-items: center; gap: 8px; }
 .auto-pause-input { width: 70px !important; }
+
+.visibility-pills { display: flex; gap: 8px; }
+.vis-pill { padding: 6px 16px; border-radius: 20px; border: 1.5px solid #e5e7eb; background: #fff; font-size: 13px; cursor: pointer; transition: all 0.15s; }
+.vis-pill:hover { border-color: #93c5fd; }
+.vis-pill-active { border-color: #3b82f6; background: rgba(59,130,246,0.06); color: #3b82f6; font-weight: 500; }
 .hint-text { font-size: 12px; color: #9ca3af; }
 
 @media (max-width: 768px) {
