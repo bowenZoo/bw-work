@@ -225,6 +225,69 @@ class AdminDatabase:
                 )
             """)
 
+            # Project stages table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS project_stages (
+                    id TEXT PRIMARY KEY,
+                    project_id INTEGER NOT NULL,
+                    template_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    sort_order INTEGER NOT NULL,
+                    status TEXT DEFAULT 'locked',
+                    prerequisites TEXT DEFAULT '[]',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Documents table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS documents (
+                    id TEXT PRIMARY KEY,
+                    project_id INTEGER NOT NULL,
+                    stage_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    content TEXT DEFAULT '',
+                    current_version INTEGER DEFAULT 1,
+                    created_by INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (stage_id) REFERENCES project_stages(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Document versions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS document_versions (
+                    id TEXT PRIMARY KEY,
+                    document_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    diff_summary TEXT DEFAULT '',
+                    source_type TEXT DEFAULT 'manual',
+                    source_id TEXT,
+                    created_by INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Discussion outputs table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS discussion_outputs (
+                    id TEXT PRIMARY KEY,
+                    discussion_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    output_type TEXT DEFAULT 'new_doc',
+                    status TEXT DEFAULT 'draft',
+                    adopted_document_id TEXT,
+                    adopted_version INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
     # =========================================================================
     # Admin User Operations
     # =========================================================================
@@ -477,6 +540,216 @@ class AdminDatabase:
             logger.info(f"Initial superadmin user created: {username}")
 
     # =========================================================================
+    # Stage Operations
+    # =========================================================================
+
+    DEFAULT_STAGES = [
+        {"template_id": "concept",       "name": "概念孵化",         "sort": 1, "prereqs": []},
+        {"template_id": "core-gameplay", "name": "核心玩法 GDD",     "sort": 2, "prereqs": ["concept"]},
+        {"template_id": "art-style",     "name": "美术风格定义",      "sort": 3, "prereqs": ["concept"]},
+        {"template_id": "tech-prototype","name": "技术选型 & 原型",   "sort": 4, "prereqs": ["concept"]},
+        {"template_id": "system-design", "name": "系统设计文档",      "sort": 5, "prereqs": ["core-gameplay"]},
+        {"template_id": "numbers",       "name": "数值框架",         "sort": 6, "prereqs": ["core-gameplay"]},
+        {"template_id": "ui-ux",         "name": "UI/UX 界面设计",   "sort": 7, "prereqs": ["core-gameplay"]},
+        {"template_id": "level-content", "name": "关卡/内容规划",     "sort": 8, "prereqs": ["system-design"]},
+        {"template_id": "art-assets",    "name": "美术资源需求清单",   "sort": 9, "prereqs": ["art-style"]},
+    ]
+
+    def init_project_stages(self, project_id: str) -> list[dict]:
+        """Initialize default stages for a new project. Returns created stages."""
+        import uuid, json
+        stages = []
+        with self.get_cursor() as cursor:
+            for s in self.DEFAULT_STAGES:
+                stage_id = str(uuid.uuid4())
+                status = "active" if not s["prereqs"] else "locked"
+                cursor.execute(
+                    """INSERT INTO project_stages (id, project_id, template_id, name, sort_order, status, prerequisites)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (stage_id, project_id, s["template_id"], s["name"], s["sort"], status, json.dumps(s["prereqs"]))
+                )
+                stages.append({"id": stage_id, "template_id": s["template_id"], "name": s["name"],
+                               "sort_order": s["sort"], "status": status, "prerequisites": s["prereqs"]})
+        return stages
+
+    def get_project_stages(self, project_id: str) -> list[dict]:
+        """Get all stages for a project, with computed status."""
+        import json
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM project_stages WHERE project_id = ? ORDER BY sort_order", (project_id,)
+            )
+            rows = cursor.fetchall()
+            stages = []
+            for r in rows:
+                d = dict(r)
+                d["prerequisites"] = json.loads(d.get("prerequisites", "[]"))
+                stages.append(d)
+            # Compute effective status based on prerequisites
+            status_map = {s["template_id"]: s["status"] for s in stages}
+            for s in stages:
+                if s["status"] == "locked":
+                    prereqs_met = all(status_map.get(p) == "completed" for p in s["prerequisites"])
+                    if prereqs_met:
+                        s["status"] = "active"
+                        # Persist the unlock
+                        cursor.execute("UPDATE project_stages SET status = 'active' WHERE id = ?", (s["id"],))
+            return stages
+
+    def update_stage(self, stage_id: str, **kwargs) -> bool:
+        if not kwargs:
+            return False
+        allowed = {"name", "description", "status"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return False
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [stage_id]
+        with self.get_cursor() as cursor:
+            cursor.execute(f"UPDATE project_stages SET {sets}, updated_at = CURRENT_TIMESTAMP WHERE id = ?", vals)
+            return cursor.rowcount > 0
+
+    def complete_stage(self, stage_id: str) -> dict:
+        """Mark stage as completed and return newly unlocked stages."""
+        with self.get_cursor() as cursor:
+            cursor.execute("UPDATE project_stages SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (stage_id,))
+            cursor.execute("SELECT project_id FROM project_stages WHERE id = ?", (stage_id,))
+            row = cursor.fetchone()
+            if not row:
+                return {"unlocked": []}
+        # Re-compute will auto-unlock dependents
+        stages = self.get_project_stages(dict(row)["project_id"])
+        unlocked = [s for s in stages if s["status"] == "active"]
+        return {"unlocked": unlocked}
+
+    # =========================================================================
+    # Document Operations
+    # =========================================================================
+
+    def create_document(self, project_id: str, stage_id: str, title: str, content: str = "", created_by: int = None) -> dict:
+        import uuid
+        doc_id = str(uuid.uuid4())
+        ver_id = str(uuid.uuid4())
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """INSERT INTO documents (id, project_id, stage_id, title, content, current_version, created_by)
+                   VALUES (?, ?, ?, ?, ?, 1, ?)""",
+                (doc_id, project_id, stage_id, title, content, created_by)
+            )
+            cursor.execute(
+                """INSERT INTO document_versions (id, document_id, version, content, source_type, created_by)
+                   VALUES (?, ?, 1, ?, 'manual', ?)""",
+                (ver_id, doc_id, content, created_by)
+            )
+        return {"id": doc_id, "title": title, "current_version": 1}
+
+    def get_document(self, doc_id: str) -> Optional[dict]:
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_stage_documents(self, stage_id: str) -> list[dict]:
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM documents WHERE stage_id = ? ORDER BY created_at", (stage_id,))
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_project_documents(self, project_id: str) -> list[dict]:
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM documents WHERE project_id = ? ORDER BY created_at", (project_id,))
+            return [dict(r) for r in cursor.fetchall()]
+
+    def update_document(self, doc_id: str, title: str = None, content: str = None,
+                        source_type: str = "manual", source_id: str = None, updated_by: int = None) -> Optional[dict]:
+        """Update document content, creating a new version."""
+        import uuid
+        doc = self.get_document(doc_id)
+        if not doc:
+            return None
+        new_version = doc["current_version"] + 1
+        with self.get_cursor() as cursor:
+            updates = ["updated_at = CURRENT_TIMESTAMP"]
+            params = []
+            if title is not None:
+                updates.append("title = ?")
+                params.append(title)
+            if content is not None:
+                updates.append("content = ?")
+                params.append(content)
+                updates.append("current_version = ?")
+                params.append(new_version)
+                # Create version record
+                ver_id = str(uuid.uuid4())
+                cursor.execute(
+                    """INSERT INTO document_versions (id, document_id, version, content, source_type, source_id, created_by)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (ver_id, doc_id, new_version, content, source_type, source_id, updated_by)
+                )
+            params.append(doc_id)
+            cursor.execute(f"UPDATE documents SET {', '.join(updates)} WHERE id = ?", params)
+        return self.get_document(doc_id)
+
+    def get_document_versions(self, doc_id: str) -> list[dict]:
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM document_versions WHERE document_id = ? ORDER BY version DESC", (doc_id,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_document_version(self, doc_id: str, version: int) -> Optional[dict]:
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM document_versions WHERE document_id = ? AND version = ?", (doc_id, version)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def revert_document(self, doc_id: str, version: int, reverted_by: int = None) -> Optional[dict]:
+        """Revert document to a specific version (creates new version with old content)."""
+        ver = self.get_document_version(doc_id, version)
+        if not ver:
+            return None
+        return self.update_document(doc_id, content=ver["content"], source_type="manual", updated_by=reverted_by)
+
+    # =========================================================================
+    # Discussion Output Operations
+    # =========================================================================
+
+    def create_discussion_output(self, discussion_id: str, title: str, content: str,
+                                  output_type: str = "new_doc") -> dict:
+        import uuid
+        oid = str(uuid.uuid4())
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """INSERT INTO discussion_outputs (id, discussion_id, title, content, output_type)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (oid, discussion_id, title, content, output_type)
+            )
+        return {"id": oid, "title": title, "status": "draft"}
+
+    def get_discussion_outputs(self, discussion_id: str) -> list[dict]:
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM discussion_outputs WHERE discussion_id = ? ORDER BY created_at", (discussion_id,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def adopt_output(self, output_id: str, document_id: str, version: int) -> bool:
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """UPDATE discussion_outputs
+                   SET status = 'adopted', adopted_document_id = ?, adopted_version = ?
+                   WHERE id = ?""",
+                (document_id, version, output_id)
+            )
+            return cursor.rowcount > 0
+
+    def dismiss_output(self, output_id: str) -> bool:
+        with self.get_cursor() as cursor:
+            cursor.execute("UPDATE discussion_outputs SET status = 'dismissed' WHERE id = ?", (output_id,))
+            return cursor.rowcount > 0
+
+        # =========================================================================
     # Refresh Token Operations
     # =========================================================================
 

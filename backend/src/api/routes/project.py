@@ -162,6 +162,8 @@ async def create_project(request: CreateProjectRequest, user: dict = Depends(get
                 "INSERT OR IGNORE INTO project_members (project_id, user_id, role) VALUES (?, ?, 'admin')",
                 (project.id, user["id"])
             )
+        # Initialize default stages for the project
+        _db.init_project_stages(project.id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

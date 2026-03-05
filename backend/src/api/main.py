@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.api.routes import (
+    stages_router,
     checkpoint_router,
     cleanup_stale_discussions,
     design_docs_router,
@@ -153,3 +154,4 @@ app.include_router(websocket_router)
 app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(stages_router)

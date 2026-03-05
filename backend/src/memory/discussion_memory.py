@@ -88,6 +88,12 @@ class DiscussionMemory(MemoryStore[Discussion]):
             cursor.execute("ALTER TABLE discussions ADD COLUMN content_text TEXT")
         if "owner_id" not in columns:
             cursor.execute("ALTER TABLE discussions ADD COLUMN owner_id INTEGER")
+        if "target_type" not in columns:
+            cursor.execute("ALTER TABLE discussions ADD COLUMN target_type TEXT")
+        if "target_id" not in columns:
+            cursor.execute("ALTER TABLE discussions ADD COLUMN target_id TEXT")
+        if "archived_from" not in columns:
+            cursor.execute("ALTER TABLE discussions ADD COLUMN archived_from TEXT")
 
         conn.commit()
         conn.close()
