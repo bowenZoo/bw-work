@@ -2,6 +2,9 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { marked } from 'marked'
+
+marked.setOptions({ breaks: true, gfm: true })
 
 const route = useRoute()
 const router = useRouter()
@@ -117,9 +120,12 @@ onMounted(async () => { await fetchDoc(); await fetchVersions() })
           <button @click="revertTo(previewVersion.id)">回退到此版本</button>
         </div>
         <textarea v-if="editing" v-model="editContent" class="content-editor" placeholder="在这里编写文档内容..." />
-        <div v-else-if="previewVersion" class="content-display"><pre>{{ previewVersion.content }}</pre></div>
+        <div v-else-if="previewVersion" class="content-display">
+          <div v-if="previewVersion.content" class="markdown-body" v-html="marked.parse(previewVersion.content)" />
+          <div v-else class="empty-doc">此版本无内容</div>
+        </div>
         <div v-else class="content-display">
-          <pre v-if="doc.content">{{ doc.content }}</pre>
+          <div v-if="doc.content" class="markdown-body" v-html="marked.parse(doc.content)" />
           <div v-else class="empty-doc">文档还没有内容，点击「编辑」开始编写</div>
         </div>
         <div v-if="editing" class="editor-footer"><span class="line-count">{{ lineCount }} 行</span></div>
@@ -167,6 +173,28 @@ onMounted(async () => { await fetchDoc(); await fetchVersions() })
 .preview-banner button { background: none; border: none; color: #4f46e5; cursor: pointer; font-size: 12px; text-decoration: underline; }
 .content-display { background: #fff; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); min-height: 400px; }
 .content-display pre { white-space: pre-wrap; word-wrap: break-word; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 1.8; color: #374151; margin: 0; }
+.markdown-body { font-size: 14px; line-height: 1.8; color: #374151; }
+.markdown-body h1 { font-size: 1.875em; font-weight: 700; margin: 0 0 16px; color: #111827; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; }
+.markdown-body h2 { font-size: 1.5em; font-weight: 700; margin: 24px 0 12px; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+.markdown-body h3 { font-size: 1.25em; font-weight: 600; margin: 20px 0 10px; color: #1f2937; }
+.markdown-body h4 { font-size: 1.1em; font-weight: 600; margin: 16px 0 8px; color: #374151; }
+.markdown-body p { margin: 0 0 12px; }
+.markdown-body ul, .markdown-body ol { margin: 0 0 12px; padding-left: 2em; }
+.markdown-body li { margin-bottom: 4px; }
+.markdown-body ul li { list-style-type: disc; }
+.markdown-body ol li { list-style-type: decimal; }
+.markdown-body code { background: #f3f4f6; color: #e11d48; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.875em; padding: 2px 5px; border-radius: 4px; }
+.markdown-body pre { background: #1f2937; color: #f9fafb; padding: 16px; border-radius: 8px; overflow-x: auto; margin: 0 0 16px; }
+.markdown-body pre code { background: none; color: inherit; padding: 0; font-size: 0.875em; }
+.markdown-body blockquote { border-left: 4px solid #d1d5db; padding-left: 16px; margin: 0 0 12px; color: #6b7280; }
+.markdown-body table { width: 100%; border-collapse: collapse; margin: 0 0 16px; font-size: 14px; }
+.markdown-body th { background: #f3f4f6; font-weight: 600; text-align: left; padding: 8px 12px; border: 1px solid #d1d5db; color: #374151; }
+.markdown-body td { padding: 8px 12px; border: 1px solid #e5e7eb; vertical-align: top; }
+.markdown-body tr:nth-child(even) td { background: #f9fafb; }
+.markdown-body a { color: #4f46e5; text-decoration: underline; }
+.markdown-body hr { border: none; border-top: 1px solid #e5e7eb; margin: 24px 0; }
+.markdown-body strong { font-weight: 700; color: #111827; }
+.markdown-body em { font-style: italic; }
 .content-editor { width: 100%; min-height: 500px; background: #fff; border: 2px solid #4f46e5; border-radius: 12px; padding: 24px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px; line-height: 1.8; color: #374151; resize: vertical; box-sizing: border-box; }
 .content-editor:focus { outline: none; border-color: #4338ca; }
 .editor-footer { display: flex; justify-content: flex-end; padding: 8px 0; }

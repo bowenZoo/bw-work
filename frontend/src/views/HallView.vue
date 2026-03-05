@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useHall } from '@/composables/useHall'
 import { useUserStore } from '@/stores/user'
@@ -13,6 +13,51 @@ const { items, loading, refresh, createProject } = useHall()
 const showLoginModal = ref(false)
 const showNewDiscussion = ref(false)
 const showNewProject = ref(false)
+
+const searchQuery = ref('')
+const activeTab = ref('all')
+
+const tabs = [
+  { key: 'all', label: '全部' },
+  { key: 'discussion', label: '💬 讨论' },
+  { key: 'project', label: '📁 项目' },
+  { key: 'completed', label: '✅ 已完成' },
+  { key: 'archived', label: '📦 已归档' },
+]
+
+function itemStatus(item: any): string {
+  return item.extra?.status || ''
+}
+
+const filteredItems = computed(() => {
+  let list = items.value
+  const q = searchQuery.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter(item =>
+      item.name.toLowerCase().includes(q) ||
+      (item.description || '').toLowerCase().includes(q)
+    )
+  }
+  if (activeTab.value === 'discussion') {
+    list = list.filter(item => item.type === 'discussion')
+  } else if (activeTab.value === 'project') {
+    list = list.filter(item => item.type === 'project')
+  } else if (activeTab.value === 'completed') {
+    list = list.filter(item => itemStatus(item) === 'completed')
+  } else if (activeTab.value === 'archived') {
+    list = list.filter(item => itemStatus(item) === 'archived')
+  }
+  return list
+})
+
+const statusMap: Record<string, { label: string; cls: string }> = {
+  active:    { label: '进行中', cls: 'status-active' },
+  running:   { label: '进行中', cls: 'status-active' },
+  waiting:   { label: '等待中', cls: 'status-waiting' },
+  paused:    { label: '等待中', cls: 'status-waiting' },
+  completed: { label: '已完成', cls: 'status-completed' },
+  archived:  { label: '已归档', cls: 'status-archived' },
+}
 const newDiscussionTopic = ref('')
 const newProjectName = ref('')
 const creating = ref(false)
@@ -124,30 +169,56 @@ function onLoginSuccess() {
     <div v-else-if="items.length === 0 && userStore.isAuthenticated" class="hall-empty">
       还没有任何讨论或项目，点击上方按钮创建吧！
     </div>
-    <div v-else class="hall-grid">
-      <div
-        v-for="item in items"
-        :key="`${item.type}-${item.id}`"
-        class="hall-card"
-        @click="onCardClick(item)"
-      >
-        <div class="card-header">
-          <span class="card-icon">{{ item.type === 'discussion' ? '💬' : '📁' }}</span>
-          <span class="card-type-badge" :class="item.type">{{ item.type === 'discussion' ? '讨论' : '项目' }}</span>
+    <div v-else class="hall-body">
+      <!-- Search + Tabs -->
+      <div class="hall-toolbar">
+        <input
+          v-model="searchQuery"
+          class="hall-search"
+          placeholder="搜索标题或描述..."
+        />
+        <div class="hall-tabs">
+          <button
+            v-for="tab in tabs"
+            :key="tab.key"
+            class="tab-btn"
+            :class="{ active: activeTab === tab.key }"
+            @click="activeTab = tab.key"
+          >{{ tab.label }}</button>
         </div>
-        <h3 class="card-title">{{ item.name }}</h3>
-        <p class="card-desc" v-if="item.description">{{ item.description }}</p>
-        <div class="card-footer">
-          <span v-if="item.type === 'discussion' && item.extra?.owner_name" class="card-meta">
-            {{ item.extra.owner_name }}
-          </span>
-          <span v-if="item.type === 'discussion' && item.extra?.message_count != null" class="card-meta">
-            {{ item.extra.message_count }} 条消息
-          </span>
-          <span v-if="item.type === 'project' && item.extra?.stage_progress" class="card-meta">
-            进度 {{ item.extra.stage_progress }}
-          </span>
-          <span class="card-time">{{ formatTime(item.updated_at) }}</span>
+      </div>
+
+      <div v-if="filteredItems.length === 0" class="hall-empty">没有匹配的结果</div>
+      <div v-else class="hall-grid">
+        <div
+          v-for="item in filteredItems"
+          :key="`${item.type}-${item.id}`"
+          class="hall-card"
+          @click="onCardClick(item)"
+        >
+          <div class="card-header">
+            <span class="card-icon">{{ item.type === 'discussion' ? '💬' : '📁' }}</span>
+            <span class="card-type-badge" :class="item.type">{{ item.type === 'discussion' ? '讨论' : '项目' }}</span>
+            <span
+              v-if="statusMap[itemStatus(item)]"
+              class="card-status-badge"
+              :class="statusMap[itemStatus(item)].cls"
+            >{{ statusMap[itemStatus(item)].label }}</span>
+          </div>
+          <h3 class="card-title">{{ item.name }}</h3>
+          <p class="card-desc" v-if="item.description">{{ item.description }}</p>
+          <div class="card-footer">
+            <span v-if="item.type === 'discussion' && item.extra?.owner_name" class="card-meta">
+              {{ item.extra.owner_name }}
+            </span>
+            <span v-if="item.type === 'discussion' && item.extra?.message_count != null" class="card-meta">
+              {{ item.extra.message_count }} 条消息
+            </span>
+            <span v-if="item.type === 'project' && item.extra?.stage_progress" class="card-meta">
+              进度 {{ item.extra.stage_progress }}
+            </span>
+            <span class="card-time">{{ formatTime(item.updated_at) }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -225,6 +296,66 @@ function onLoginSuccess() {
   align-items: center;
   gap: 10px;
 }
+.hall-body {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.hall-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.hall-search {
+  flex: 0 0 260px;
+  padding: 8px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 20px;
+  font-size: 14px;
+  outline: none;
+  background: #fff;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.hall-search:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.15);
+}
+.hall-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tab-btn {
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover { background: #f3f4f6; }
+.tab-btn.active {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+}
+.card-status-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-weight: 500;
+  margin-left: auto;
+}
+.status-active    { background: #eff6ff; color: #2563eb; }
+.status-waiting   { background: #fffbeb; color: #d97706; }
+.status-completed { background: #f0fdf4; color: #16a34a; }
+.status-archived  { background: #f3f4f6; color: #6b7280; }
+
 .hall-loading, .hall-empty {
   text-align: center;
   padding: 60px 20px;
@@ -235,9 +366,6 @@ function onLoginSuccess() {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
-  padding: 24px;
-  max-width: 1200px;
-  margin: 0 auto;
 }
 .hall-card {
   background: #fff;
