@@ -388,6 +388,28 @@ class DiscussionCrew:
         """Get the project ID."""
         return self._project_id
 
+    def _gather_project_documents(self) -> str:
+        """Gather all project documents for discussion penetration."""
+        try:
+            from src.admin.database import AdminDatabase
+            db = AdminDatabase()
+            docs = db.get_project_documents(self._project_id)
+            if not docs:
+                return ""
+            parts = []
+            for doc in docs:
+                title = doc.get("title", "未命名")
+                content = doc.get("content", "")
+                if content:
+                    if len(content) > 3000:
+                        content = content[:3000] + "\n... (已截断)"
+                    parts.append(f"### {title}\n{content}")
+            return "\n\n".join(parts) if parts else ""
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to gather project documents: {e}")
+            return ""
+
     def _reset_task_sequence(self) -> None:
         """Reset the task sequence tracking for status updates."""
         self._task_agent_roles = []
@@ -1360,6 +1382,11 @@ class DiscussionCrew:
         # Build CrewAI agents
         lead_agent = self._lead_planner.build_agent()
         discussion_agents = [a.build_agent() for a in self._discussion_agents]
+
+        # Document penetration: inject project documents as context
+        doc_context = self._gather_project_documents()
+        if doc_context:
+            history_section += f"\n\n---\n项目已有文档（参考但不重复）：\n{doc_context}\n---\n"
 
         # Phase 0: Lead Planner Opening
         opening_description = self._lead_planner.create_opening_prompt(topic, attachment)
