@@ -12,6 +12,7 @@ from src.api.routes.project import router as project_router
 from src.api.routes.auth import router as auth_router
 from src.api.routes.users import router as users_router
 from src.api.routes.stages import router as stages_router
+from src.api.routes.notifications import router as notifications_router
 
 __all__ = [
     "checkpoint_router",
@@ -28,4 +29,5 @@ __all__ = [
     "auth_router",
     "users_router",
     "stages_router",
+    "notifications_router",
 ]

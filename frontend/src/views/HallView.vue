@@ -300,11 +300,61 @@ function formatTime(dt: string) {
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
 }
 
+// Access request modal state
+const showAccessModal = ref(false)
+const accessModalProject = ref<any>(null)
+const accessRequesting = ref(false)
+const accessRequestDone = ref(false)
+const accessPendingRole = ref('')
+
 function onCardClick(item: any) {
   if (item.type === 'discussion') {
     router.push(`/discussion/${item.id}`)
-  } else {
-    router.push(`/project/${item.id}`)
+    return
+  }
+  if (!item.is_public && !item.user_role) {
+    accessModalProject.value = item
+    accessRequestDone.value = false
+    accessPendingRole.value = ''
+    showAccessModal.value = true
+    return
+  }
+  if (!item.is_public && item.user_role && String(item.user_role).startsWith('pending_')) {
+    accessModalProject.value = item
+    accessRequestDone.value = true
+    accessPendingRole.value = item.user_role.replace('pending_', '')
+    showAccessModal.value = true
+    return
+  }
+  router.push(`/project/${item.id}`)
+}
+
+async function requestAccess(role: string) {
+  if (accessRequesting.value || !accessModalProject.value) return
+  accessRequesting.value = true
+  try {
+    const base = import.meta.env.VITE_API_BASE || ''
+    const res = await fetch(`${base}/api/projects/${accessModalProject.value.id}/access-request`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${userStore.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ role }),
+    })
+    if (res.ok) {
+      accessRequestDone.value = true
+      accessPendingRole.value = role
+      const itm = items.value.find(i => i.id === accessModalProject.value.id && i.type === 'project')
+      if (itm) (itm as any).user_role = `pending_${role}`
+    } else {
+      const data = await res.json().catch(() => ({}))
+      alert(data.detail || '申请失败')
+    }
+  } catch {
+    alert('网络错误')
+  } finally {
+    accessRequesting.value = false
   }
 }
 
@@ -713,6 +763,32 @@ onUnmounted(() => { delete (window as any).__bwHall })
           <div class="dialog-actions">
             <button class="btn btn-secondary" @click="showNewProject = false">取消</button>
             <button class="btn btn-primary" @click="doCreateProject" :disabled="creating">创建</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Access Request Modal -->
+    <Transition name="fade">
+      <div v-if="showAccessModal" class="dialog-overlay" @click.self="showAccessModal = false">
+        <div class="dialog dialog-enhanced">
+          <h3 class="dialog-title">🔒 这是私密项目</h3>
+          <div v-if="!accessRequestDone" class="access-modal-body">
+            <p class="access-project-name">{{ accessModalProject?.name }}</p>
+            <p class="access-hint">你没有访问权限，可以申请加入</p>
+            <div class="access-actions">
+              <button class="btn btn-primary" @click="requestAccess('viewer')" :disabled="accessRequesting">申请查看权限</button>
+              <button class="btn btn-primary" @click="requestAccess('editor')" :disabled="accessRequesting">申请编辑权限</button>
+              <button class="btn btn-secondary" @click="showAccessModal = false">取消</button>
+            </div>
+          </div>
+          <div v-else class="access-modal-body">
+            <p class="access-done-icon">✅</p>
+            <p class="access-done-text">已提交申请，等待管理员审批</p>
+            <p class="access-done-hint">申请角色：{{ accessPendingRole === 'viewer' ? '查看者' : '编辑者' }}</p>
+            <div class="access-actions">
+              <button class="btn btn-secondary" @click="showAccessModal = false">关闭</button>
+            </div>
           </div>
         </div>
       </div>
@@ -1181,6 +1257,15 @@ onUnmounted(() => { delete (window as any).__bwHall })
 .vis-pill:hover { border-color: #93c5fd; }
 .vis-pill-active { border-color: #3b82f6; background: rgba(59,130,246,0.06); color: #3b82f6; font-weight: 500; }
 .hint-text { font-size: 12px; color: #9ca3af; }
+
+/* Access Request Modal */
+.access-modal-body { text-align: center; padding: 8px 0; }
+.access-project-name { font-size: 18px; font-weight: 600; color: #111827; margin: 0 0 8px; }
+.access-hint { font-size: 14px; color: #6b7280; margin: 0 0 20px; }
+.access-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.access-done-icon { font-size: 40px; margin: 0 0 8px; }
+.access-done-text { font-size: 16px; font-weight: 500; color: #111827; margin: 0 0 4px; }
+.access-done-hint { font-size: 13px; color: #9ca3af; margin: 0 0 16px; }
 
 @media (max-width: 768px) {
   .dialog-wide { max-width: calc(100vw - 32px); }
