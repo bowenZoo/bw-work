@@ -456,10 +456,19 @@ function handlePause() { pause(); }
 function handleSeek(index: number) { seek(index); }
 function handleSpeedChange(newSpeed: number) { setSpeed(newSpeed); }
 
-// Navigate back to home
+// Navigate back - to project if came from project, otherwise to hall
+const cameFromProject = computed(() => {
+  return route.query.from === 'project' && route.query.projectId
+})
+const backLabel = computed(() => cameFromProject.value ? '返回项目' : '返回大厅')
+
 function goBackToHome() {
-  const pId = route.params.projectId as string;
-  router.push(pId ? `/project/${pId}` : '/');
+  if (cameFromProject.value) {
+    router.push(`/project/${route.query.projectId}`)
+  } else {
+    const pId = route.params.projectId as string
+    router.push(pId ? `/project/${pId}` : '/')
+  }
 }
 
 async function submitContinue() {
@@ -688,7 +697,7 @@ onUnmounted(() => {
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
           </svg>
-          <span>返回主页</span>
+          <span>{{ backLabel }}</span>
         </button>
       </template>
     </Header>

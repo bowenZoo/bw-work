@@ -121,21 +121,6 @@ function registerTools() {
       }
     },
     {
-      name: 'bw_create_project',
-      description: 'Create a project (admin only)',
-      inputSchema: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' }, is_public: { type: 'boolean' } }, required: ['name'] },
-      execute: async (p: any) => {
-        const slug = p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30) + '-' + Math.random().toString(36).slice(2, 6)
-        const res = await fetch('/api/projects', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({ ...p, slug })
-        })
-        if (!res.ok) return { error: (await res.json()).detail }
-        return await res.json()
-      }
-    },
-    {
       name: 'bw_list_project_members',
       description: 'List members of a project',
       inputSchema: { type: 'object', properties: { project_id: { type: 'string' } }, required: ['project_id'] },
@@ -216,6 +201,70 @@ function registerTools() {
         const mask = document.querySelector('.modal-mask') as HTMLElement
         if (mask) mask.click()
         await new Promise(r => setTimeout(r, 300))
+        return { ok: true }
+      }
+    },
+
+    // === Hall Tools ===
+    {
+      name: 'bw_hall_stats',
+      description: 'Get hall page stats: total_items, discussions_count, projects_count, active_filter, search_query',
+      inputSchema: { type: 'object', properties: {} },
+      execute: async () => {
+        const hall = (window as any).__bwHall
+        if (!hall) return { error: 'Not on hall page' }
+        const items = hall.filteredItems || []
+        return {
+          total_items: items.length,
+          discussions_count: items.filter((i: any) => i.type === 'discussion').length,
+          projects_count: items.filter((i: any) => i.type === 'project').length,
+          active_filter: hall.activeTab,
+          search_query: hall.searchQuery,
+        }
+      }
+    },
+    {
+      name: 'bw_hall_items',
+      description: 'Get current visible hall card list [{type, id, name, status}]',
+      inputSchema: { type: 'object', properties: {} },
+      execute: async () => {
+        const hall = (window as any).__bwHall
+        if (!hall) return { error: 'Not on hall page' }
+        return (hall.filteredItems || []).map((i: any) => ({
+          type: i.type,
+          id: i.id,
+          name: i.name,
+          status: i.extra?.status || '',
+        }))
+      }
+    },
+    {
+      name: 'bw_create_discussion',
+      description: 'Create a new discussion by filling and submitting the dialog',
+      inputSchema: { type: 'object', properties: { topic: { type: 'string' }, project_id: { type: 'string' } }, required: ['topic'] },
+      execute: async (p: any) => {
+        const hall = (window as any).__bwHall
+        if (!hall) return { error: 'Not on hall page' }
+        hall.newDiscussionTopic.value = p.topic
+        hall.newDiscussionProjectId.value = p.project_id || ''
+        hall.showNewDiscussion.value = true
+        await new Promise(r => setTimeout(r, 100))
+        await hall.doCreateDiscussion()
+        return { ok: true }
+      }
+    },
+    {
+      name: 'bw_create_project',
+      description: 'Create a new project by filling and submitting the dialog',
+      inputSchema: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' } }, required: ['name'] },
+      execute: async (p: any) => {
+        const hall = (window as any).__bwHall
+        if (!hall) return { error: 'Not on hall page' }
+        hall.newProjectName.value = p.name
+        hall.newProjectDescription.value = p.description || ''
+        hall.showNewProject.value = true
+        await new Promise(r => setTimeout(r, 100))
+        await hall.doCreateProject()
         return { ok: true }
       }
     },

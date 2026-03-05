@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useHall } from '@/composables/useHall'
 import { useUserStore } from '@/stores/user'
@@ -29,6 +29,13 @@ function itemStatus(item: any): string {
   return item.extra?.status || ''
 }
 
+const statusOrder: Record<string, number> = {
+  active: 0, running: 0,
+  waiting: 1, paused: 1,
+  completed: 2,
+  archived: 3,
+}
+
 const filteredItems = computed(() => {
   let list = items.value
   const q = searchQuery.value.trim().toLowerCase()
@@ -47,7 +54,16 @@ const filteredItems = computed(() => {
   } else if (activeTab.value === 'archived') {
     list = list.filter(item => itemStatus(item) === 'archived')
   }
-  return list
+  return [...list].sort((a, b) => {
+    if (a.type === 'discussion' && b.type === 'discussion') {
+      const sa = statusOrder[itemStatus(a)] ?? 99
+      const sb = statusOrder[itemStatus(b)] ?? 99
+      if (sa !== sb) return sa - sb
+    }
+    const ta = new Date(a.updated_at || 0).getTime()
+    const tb = new Date(b.updated_at || 0).getTime()
+    return tb - ta
+  })
 })
 
 const statusMap: Record<string, { label: string; cls: string }> = {
@@ -160,6 +176,24 @@ function onLoginSuccess() {
   showLoginModal.value = false
   refresh()
 }
+
+// Expose hall data for webmcp tools
+const hallExpose = {
+  get filteredItems() { return filteredItems.value },
+  get items() { return items.value },
+  get activeTab() { return activeTab.value },
+  get searchQuery() { return searchQuery.value },
+  showNewDiscussion,
+  showNewProject,
+  newDiscussionTopic,
+  newDiscussionProjectId,
+  newProjectName,
+  newProjectDescription,
+  doCreateDiscussion,
+  doCreateProject,
+}
+;(window as any).__bwHall = hallExpose
+onUnmounted(() => { delete (window as any).__bwHall })
 </script>
 
 <template>
