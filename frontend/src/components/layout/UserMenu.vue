@@ -27,8 +27,9 @@ function openPanel(section: string) {
 
 async function doLogout() {
   await userStore.logout()
-  router.push('/')
   close()
+  router.push('/')
+  // HallView will detect !isAuthenticated and show login
 }
 </script>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useHall } from '@/composables/useHall'
 import { useUserStore } from '@/stores/user'
@@ -27,6 +27,15 @@ onMounted(async () => {
   }
   if (userStore.isAuthenticated) {
     await refresh()
+  } else {
+    showLoginModal.value = true
+  }
+})
+
+watch(() => userStore.isAuthenticated, (val) => {
+  if (!val) {
+    items.value = []
+    showLoginModal.value = true
   }
 })
 
