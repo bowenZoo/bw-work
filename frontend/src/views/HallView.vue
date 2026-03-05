@@ -90,6 +90,16 @@ const AGENT_ROLES = [
   { id: 'operations_analyst', name: '运营策划', emoji: '📈', locked: false },
   { id: 'visual_concept', name: '视觉概念', emoji: '🎨', locked: false },
 ]
+const crewDefaultConfigs = ref<Record<string, any>>({})
+
+async function loadCrewDefaults() {
+  try {
+    const { getAvailableAgents } = await import('@/api/discussion')
+    const result = await getAvailableAgents()
+    crewDefaultConfigs.value = result.agents || {}
+  } catch {}
+}
+
 const crewSelectedId = ref<string | null>(null)
 const showAgentPicker = ref(false)
 const crewFocusText = ref('')
@@ -105,10 +115,20 @@ const availableAgentRoles = computed(() => {
 const crewSelectedRole = computed(() => AGENT_ROLES.find(r => r.id === crewSelectedId.value))
 const crewSelectedConfig = computed(() => {
   if (!crewSelectedId.value) return null
-  if (!agentConfigs.value[crewSelectedId.value]) {
-    agentConfigs.value[crewSelectedId.value] = { goal: '', backstory: '', focus_areas: [] }
+  const id = crewSelectedId.value
+  const defaults = crewDefaultConfigs.value[id] || {}
+  if (!agentConfigs.value[id]) {
+    agentConfigs.value[id] = {}
   }
-  return agentConfigs.value[crewSelectedId.value]
+  const overrides = agentConfigs.value[id]
+  return {
+    get goal() { return overrides.goal ?? defaults.goal ?? '' },
+    set goal(v: string) { overrides.goal = v },
+    get backstory() { return overrides.backstory ?? defaults.backstory ?? '' },
+    set backstory(v: string) { overrides.backstory = v },
+    get focus_areas() { return overrides.focus_areas ?? defaults.focus_areas ?? [] },
+    set focus_areas(v: string[]) { overrides.focus_areas = v },
+  }
 })
 
 function addAgent(id: string) {
@@ -129,7 +149,12 @@ function removeAgent(id: string) {
   if (crewSelectedId.value === id) crewSelectedId.value = null
 }
 function hasAgentOverrides(id: string) {
-  return !!agentConfigs.value[id] && Object.keys(agentConfigs.value[id]).length > 0
+  const o = agentConfigs.value[id]
+  if (!o) return false
+  const d = crewDefaultConfigs.value[id] || {}
+  return (o.goal !== undefined && o.goal !== d.goal) ||
+         (o.backstory !== undefined && o.backstory !== d.backstory) ||
+         (o.focus_areas !== undefined)
 }
 function resetAgentConfig(id: string) {
   delete agentConfigs.value[id]
@@ -140,11 +165,9 @@ function syncFocusAreas() {
 }
 
 watch(crewSelectedId, (id) => {
-  if (id && agentConfigs.value[id]?.focus_areas) {
-    crewFocusText.value = agentConfigs.value[id].focus_areas?.join(', ') || ''
-  } else {
-    crewFocusText.value = ''
-  }
+  if (!id) { crewFocusText.value = ''; return }
+  const areas = agentConfigs.value[id]?.focus_areas ?? crewDefaultConfigs.value[id]?.focus_areas ?? []
+  crewFocusText.value = areas.join(', ')
 })
 
 const newProjectName = ref('')
@@ -521,7 +544,7 @@ onUnmounted(() => { delete (window as any).__bwHall })
               📎 {{ attachmentFile.name }} <button class="chip-remove" @click="removeAttachment">✕</button>
             </div>
             <button v-else class="btn-ghost-sm" @click="triggerFileInput">📎 参考文档</button>
-            <button class="btn-ghost-sm" @click="showAdvancedModal = true">⚙️ 高级选项</button>
+            <button class="btn-ghost-sm" @click="showAdvancedModal = true; loadCrewDefaults()">⚙️ 高级选项</button>
           </div>
 
           <!-- 密码输入（勾选后展开） -->
