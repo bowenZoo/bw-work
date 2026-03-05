@@ -78,6 +78,7 @@ const statusMap: Record<string, { label: string; cls: string }> = {
 }
 const newDiscussionTopic = ref('')
 const newDiscussionProjectId = ref('')
+const discussionGoal = ref('')
 const newProjectName = ref('')
 const newProjectDescription = ref('')
 const creating = ref(false)
@@ -141,6 +142,7 @@ function handleFocusAreaKeydown(e: KeyboardEvent) {
 function resetDiscussionForm() {
   newDiscussionTopic.value = ''
   newDiscussionProjectId.value = ''
+  discussionGoal.value = ''
   selectedTemplate.value = ''
   usePassword.value = false
   password.value = ''
@@ -215,6 +217,7 @@ async function doCreateDiscussion() {
     const data = await createDiscussion({
       topic: newDiscussionTopic.value.trim(),
       projectId: newDiscussionProjectId.value || undefined,
+      briefing: discussionGoal.value.trim() || undefined,
       autoPauseInterval: autoPauseInterval.value,
       attachment,
       agents: selectedAgents.value.length > 0 ? selectedAgents.value : undefined,
@@ -264,6 +267,7 @@ const hallExpose = {
   showNewProject,
   newDiscussionTopic,
   newDiscussionProjectId,
+  discussionGoal,
   newProjectName,
   newProjectDescription,
   doCreateDiscussion,
@@ -374,44 +378,79 @@ onUnmounted(() => { delete (window as any).__bwHall })
     <!-- New Discussion Dialog -->
     <Transition name="fade">
       <div v-if="showNewDiscussion" class="dialog-overlay" @click.self="showNewDiscussion = false">
-        <div class="dialog dialog-wide">
+        <div class="dialog dialog-compact">
           <h3 class="dialog-title">发起新讨论</h3>
-          <div class="dialog-two-col">
-            <!-- 左侧：表单 -->
-            <div class="dialog-col-left">
-              <div class="dialog-field">
-                <label class="dialog-label">选择模板</label>
-                <select v-model="selectedTemplate" class="dialog-input" @change="onTemplateChange">
-                  <option v-for="t in discussionTemplates" :key="t.label" :value="t.value">{{ t.label }}</option>
-                </select>
+
+          <!-- 核心字段 -->
+          <div class="dialog-field">
+            <label class="dialog-label">讨论话题 <span class="required">*</span></label>
+            <textarea
+              v-model="newDiscussionTopic"
+              placeholder="输入讨论话题..."
+              class="dialog-textarea"
+              rows="2"
+              @keydown.meta.enter="doCreateDiscussion"
+              @keydown.ctrl.enter="doCreateDiscussion"
+              autofocus
+            />
+          </div>
+
+          <div class="dialog-field">
+            <label class="dialog-label">讨论目标 / 期望产出</label>
+            <textarea
+              v-model="discussionGoal"
+              placeholder="例如：输出一份核心玩法GDD文档，包含战斗系统、成长曲线、付费设计..."
+              class="dialog-textarea"
+              rows="2"
+            />
+          </div>
+
+          <!-- 横排选项 -->
+          <div class="dialog-row-3">
+            <div class="dialog-field">
+              <label class="dialog-label">关联项目</label>
+              <select v-model="newDiscussionProjectId" class="dialog-input">
+                <option value="">不关联</option>
+                <option v-for="p in projectItems" :key="p.id" :value="p.id">{{ p.name }}</option>
+              </select>
+            </div>
+            <div class="dialog-field">
+              <label class="dialog-label">讨论模板</label>
+              <select v-model="selectedTemplate" class="dialog-input" @change="onTemplateChange">
+                <option v-for="t in discussionTemplates" :key="t.label" :value="t.value">{{ t.label }}</option>
+              </select>
+            </div>
+            <div class="dialog-field">
+              <label class="dialog-label">暂停间隔</label>
+              <div class="auto-pause-row">
+                <input v-model.number="autoPauseInterval" type="number" min="0" max="50" class="dialog-input auto-pause-input" />
+                <span class="hint-text">轮</span>
               </div>
+            </div>
+          </div>
+
+          <!-- 讨论风格 pill -->
+          <div v-if="discussionStylesFull.length > 0" class="dialog-field">
+            <label class="dialog-label">讨论风格</label>
+            <div class="style-pills">
+              <button
+                v-for="style in discussionStylesFull"
+                :key="style.id"
+                class="style-pill"
+                :class="{ 'style-pill-active': selectedStyle === style.id }"
+                @click="onStyleSelect(style.id)"
+                :title="style.description"
+              >{{ style.name }}</button>
+            </div>
+          </div>
+
+          <!-- 折叠高级选项 -->
+          <details class="advanced-section">
+            <summary class="advanced-toggle">⚙️ 高级选项</summary>
+            <div class="advanced-body">
+              <!-- 人员选择 -->
               <div class="dialog-field">
-                <label class="dialog-label">讨论话题</label>
-                <textarea
-                  v-model="newDiscussionTopic"
-                  placeholder="输入讨论话题..."
-                  class="dialog-textarea"
-                  rows="3"
-                  @keydown.meta.enter="doCreateDiscussion"
-                  @keydown.ctrl.enter="doCreateDiscussion"
-                  autofocus
-                />
-              </div>
-              <div class="dialog-field">
-                <label class="dialog-label">关联项目（可选）</label>
-                <select v-model="newDiscussionProjectId" class="dialog-input">
-                  <option value="">不关联项目</option>
-                  <option v-for="p in projectItems" :key="p.id" :value="p.id">{{ p.name }}</option>
-                </select>
-              </div>
-              <!-- 附件 -->
-              <div class="dialog-field">
-                <input ref="fileInputRef" type="file" accept=".md" style="display:none" @change="handleFileSelect" />
-                <div v-if="attachmentFile" class="attachment-info">
-                  <span>📎 {{ attachmentFile.name }} ({{ (attachmentFile.size / 1024).toFixed(1) }} KB)</span>
-                  <button class="attachment-remove" @click="removeAttachment">✕</button>
-                </div>
-                <button v-else class="btn-ghost" @click="triggerFileInput">📎 添加参考文档（.md）</button>
+                <AgentConfigEditor v-model:agents="selectedAgents" v-model:configs="agentConfigs" />
               </div>
               <!-- 密码 -->
               <div class="dialog-field">
@@ -424,64 +463,45 @@ onUnmounted(() => { delete (window as any).__bwHall })
                   <button class="btn-icon" @click="showPassword = !showPassword" type="button">{{ showPassword ? '🙈' : '👁️' }}</button>
                 </div>
               </div>
-              <!-- 自动暂停 -->
+              <!-- 附件 -->
               <div class="dialog-field">
-                <label class="dialog-label">自动暂停间隔</label>
-                <div class="auto-pause-row">
-                  <input v-model.number="autoPauseInterval" type="number" min="0" max="50" class="dialog-input auto-pause-input" />
-                  <span class="hint-text">{{ autoPauseInterval > 0 ? `每 ${autoPauseInterval} 轮暂停` : '不自动暂停' }}</span>
+                <input ref="fileInputRef" type="file" accept=".md" style="display:none" @change="handleFileSelect" />
+                <div v-if="attachmentFile" class="attachment-info">
+                  <span>📎 {{ attachmentFile.name }} ({{ (attachmentFile.size / 1024).toFixed(1) }} KB)</span>
+                  <button class="attachment-remove" @click="removeAttachment">✕</button>
                 </div>
+                <button v-else class="btn-ghost" @click="triggerFileInput">📎 添加参考文档（.md）</button>
               </div>
-              <!-- 人员选择 -->
-              <div class="dialog-field">
-                <AgentConfigEditor v-model:agents="selectedAgents" v-model:configs="agentConfigs" />
-              </div>
-              <!-- 讨论风格 -->
-              <div v-if="discussionStylesFull.length > 0" class="dialog-field">
-                <label class="dialog-label">讨论风格</label>
-                <div class="style-pills">
-                  <button
-                    v-for="style in discussionStylesFull"
-                    :key="style.id"
-                    class="style-pill"
-                    :class="{ 'style-pill-active': selectedStyle === style.id }"
-                    @click="onStyleSelect(style.id)"
-                    :title="style.description"
-                  >{{ style.name }}</button>
-                </div>
-              </div>
-            </div>
-            <!-- 右侧：Prompt 预览编辑 -->
-            <div class="dialog-col-right">
-              <div class="prompt-preview-title">Prompt 预览</div>
-              <div v-if="customOverrides" class="prompt-scroll">
-                <div class="prompt-field">
-                  <label class="prompt-field-label">目标</label>
-                  <textarea v-model="customOverrides.goal" class="prompt-field-input" placeholder="主策划的目标..." />
-                </div>
-                <div class="prompt-field">
-                  <label class="prompt-field-label">背景设定</label>
-                  <textarea v-model="customOverrides.backstory" class="prompt-field-input" placeholder="主策划的背景设定..." />
-                </div>
-                <div class="prompt-field">
-                  <label class="prompt-field-label">沟通风格</label>
-                  <textarea v-model="customOverrides.communication_style" class="prompt-field-input" placeholder="沟通风格描述..." />
-                </div>
-                <div class="prompt-field">
-                  <label class="prompt-field-label">关注领域</label>
-                  <div class="focus-chips">
-                    <span v-for="(area, idx) in customOverrides.focus_areas" :key="idx" class="focus-chip">
-                      {{ area }} <button class="chip-remove" @click="removeFocusArea(idx)">✕</button>
-                    </span>
-                    <input v-model="newFocusArea" class="focus-add-input" placeholder="添加领域..." @keydown="handleFocusAreaKeydown" />
+              <!-- Prompt 预览编辑 -->
+              <div v-if="customOverrides" class="prompt-preview-section">
+                <div class="prompt-preview-title">📝 Prompt 预览 / 编辑</div>
+                <div class="prompt-fields-compact">
+                  <div class="prompt-field">
+                    <label class="prompt-field-label">目标</label>
+                    <textarea v-model="customOverrides.goal" class="prompt-field-input" placeholder="主策划的目标..." rows="2" />
+                  </div>
+                  <div class="prompt-field">
+                    <label class="prompt-field-label">背景设定</label>
+                    <textarea v-model="customOverrides.backstory" class="prompt-field-input" placeholder="主策划的背景设定..." rows="2" />
+                  </div>
+                  <div class="prompt-field">
+                    <label class="prompt-field-label">沟通风格</label>
+                    <textarea v-model="customOverrides.communication_style" class="prompt-field-input" placeholder="沟通风格描述..." rows="1" />
+                  </div>
+                  <div class="prompt-field">
+                    <label class="prompt-field-label">关注领域</label>
+                    <div class="focus-chips">
+                      <span v-for="(area, idx) in customOverrides.focus_areas" :key="idx" class="focus-chip">
+                        {{ area }} <button class="chip-remove" @click="removeFocusArea(idx)">✕</button>
+                      </span>
+                      <input v-model="newFocusArea" class="focus-add-input" placeholder="添加..." @keydown="handleFocusAreaKeydown" />
+                    </div>
                   </div>
                 </div>
               </div>
-              <div v-else class="prompt-empty">
-                <p>👈 选择讨论风格后可预览和编辑 Prompt</p>
-              </div>
             </div>
-          </div>
+          </details>
+
           <div class="dialog-actions">
             <button class="btn btn-secondary" @click="showNewDiscussion = false">取消</button>
             <button class="btn btn-primary" @click="doCreateDiscussion" :disabled="creating">创建 (⌘+Enter)</button>
@@ -908,18 +928,24 @@ onUnmounted(() => { delete (window as any).__bwHall })
   }
 }
 
-/* === 新建讨论弹窗扩展样式 === */
-.dialog-wide { max-width: 900px; width: calc(100vw - 48px); max-height: 90vh; overflow-y: auto; }
-.dialog-two-col { display: flex; gap: 20px; }
-.dialog-col-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
-.dialog-col-right { flex: 1; min-width: 0; background: #f8fafc; border-radius: 10px; padding: 12px; max-height: 70vh; overflow-y: auto; }
-.prompt-preview-title { font-size: 13px; font-weight: 600; color: #6b7280; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-.prompt-scroll { display: flex; flex-direction: column; gap: 8px; }
+/* === 新建讨论弹窗样式 === */
+.dialog-compact { max-width: 560px; width: calc(100vw - 48px); }
+.dialog-row-3 { display: grid; grid-template-columns: 1fr 1fr 120px; gap: 12px; }
+.required { color: #ef4444; }
+.advanced-section { margin-top: 4px; }
+.advanced-toggle { cursor: pointer; font-size: 13px; color: #6b7280; padding: 6px 0; user-select: none; list-style: none; }
+.advanced-toggle::-webkit-details-marker { display: none; }
+.advanced-toggle::before { content: '▶ '; font-size: 10px; transition: transform 0.15s; display: inline-block; }
+details[open] > .advanced-toggle::before { transform: rotate(90deg); }
+.advanced-body { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; border-top: 1px solid #f0f0f0; margin-top: 8px; }
+.prompt-preview-section { background: #f8fafc; border-radius: 10px; padding: 12px; }
+.prompt-preview-title { font-size: 12px; font-weight: 600; color: #6b7280; margin-bottom: 8px; }
+.prompt-fields-compact { display: flex; flex-direction: column; gap: 8px; }
 .prompt-field { display: flex; flex-direction: column; gap: 4px; }
 .prompt-field-label { font-size: 12px; font-weight: 600; color: #374151; }
 .prompt-field-input { width: 100%; padding: 6px 8px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 12px; resize: vertical; min-height: 44px; font-family: inherit; background: #fff; line-height: 1.5; }
 .prompt-field-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.1); }
-.prompt-empty { display: flex; align-items: center; justify-content: center; height: 120px; color: #9ca3af; font-size: 13px; }
+
 .focus-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .focus-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; background: #eff6ff; color: #2563eb; border-radius: 12px; font-size: 12px; }
 .chip-remove { background: none; border: none; color: #93c5fd; cursor: pointer; font-size: 12px; padding: 0 2px; }
