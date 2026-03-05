@@ -872,4 +872,77 @@ async function createStageDiscussion(stageId: string) {
   align-items: center;
   margin-bottom: 12px;
 }
+
+@media (max-width: 768px) {
+  .pd-header {
+    padding: 12px 16px;
+    gap: 10px;
+  }
+  .pd-header h1 {
+    font-size: 17px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .stages {
+    padding: 16px 12px;
+  }
+  .stage-section {
+    padding: 14px;
+  }
+  .stage-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .stage-name {
+    font-size: 15px;
+  }
+  .stage-content-grid {
+    grid-template-columns: 1fr;
+  }
+  .stage-actions {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+  .stage-actions .btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .dialog {
+    width: calc(100vw - 32px);
+    padding: 20px;
+  }
+  .dialog-enhanced {
+    width: calc(100vw - 32px);
+    padding: 20px;
+  }
+  .dialog-wide {
+    width: calc(100vw - 32px);
+    padding: 20px;
+  }
+  .dialog-title {
+    font-size: 17px;
+  }
+  .preview-modal {
+    width: calc(100vw - 24px);
+    padding: 20px;
+    max-height: 85vh;
+  }
+  .member-invite {
+    flex-wrap: wrap;
+  }
+  .invite-input {
+    flex: 1 1 100%;
+  }
+  .invite-role {
+    width: auto;
+    flex: 1;
+  }
+  .stage-edit-item {
+    flex-wrap: wrap;
+  }
+}
 </style>

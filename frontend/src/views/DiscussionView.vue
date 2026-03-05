@@ -1792,11 +1792,39 @@ onUnmounted(() => {
 
 @media (max-width: 768px) {
   .discussion-main {
-    padding: 8px;
+    padding: 4px;
   }
 
   .right-panel {
     max-height: 200px;
+  }
+
+  .discussion-footer {
+    padding: 8px 12px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .continue-panel {
+    padding: 10px;
+    max-height: 50vh;
+  }
+
+  .error-card {
+    max-width: calc(100vw - 32px);
+    margin: 12px;
+    padding: 12px 16px;
+  }
+
+  .archive-dialog {
+    width: calc(100vw - 32px);
+    padding: 20px;
+  }
+
+  .auto-pause-banner {
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 8px 12px;
   }
 }
 .archive-btn { background: #f0fdf4; color: #16a34a; border: 1px solid #86efac; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }

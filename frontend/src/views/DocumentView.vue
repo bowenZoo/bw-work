@@ -215,4 +215,64 @@ onMounted(async () => { await fetchDoc(); await fetchVersions() })
 .editor-footer { display: flex; justify-content: flex-end; padding: 8px 0; }
 .line-count { font-size: 12px; color: #9ca3af; }
 .empty-doc { text-align: center; padding: 60px 20px; color: #9ca3af; font-size: 15px; }
+
+@media (max-width: 768px) {
+  .doc-header {
+    padding: 10px 12px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .doc-info {
+    flex: 1 1 100%;
+    order: 2;
+  }
+  .doc-info h1 {
+    font-size: 16px;
+  }
+  .title-input {
+    font-size: 16px;
+  }
+  .back-btn {
+    order: 1;
+  }
+  .header-actions {
+    order: 3;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+  }
+  .header-actions .btn {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+  .doc-body {
+    flex-direction: column;
+  }
+  .version-panel {
+    width: 100%;
+    max-height: 50vh;
+    border-right: none;
+    border-bottom: 1px solid #e5e7eb;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 20px rgba(0,0,0,0.15);
+  }
+  .doc-content {
+    padding: 16px 12px;
+  }
+  .content-display {
+    padding: 20px 16px;
+  }
+  .content-editor {
+    padding: 16px;
+    min-height: 300px;
+  }
+}
 </style>

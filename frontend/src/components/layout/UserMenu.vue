@@ -135,4 +135,19 @@ async function doLogout() {
 .dropdown-enter-active { transition: opacity 0.15s, transform 0.15s; }
 .dropdown-leave-active { transition: opacity 0.1s, transform 0.1s; }
 .dropdown-enter-from, .dropdown-leave-to { opacity: 0; transform: translateY(-6px); }
+
+@media (max-width: 768px) {
+  .username {
+    display: none;
+  }
+  .user-menu-trigger {
+    padding: 4px 6px;
+  }
+  .menu-dropdown {
+    right: 0;
+    left: auto;
+    max-width: calc(100vw - 24px);
+    min-width: 180px;
+  }
+}
 </style>

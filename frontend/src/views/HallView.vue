@@ -692,4 +692,59 @@ onUnmounted(() => { delete (window as any).__bwHall })
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+@media (max-width: 768px) {
+  .hall-header {
+    padding: 12px 16px;
+  }
+  .hall-title {
+    font-size: 17px;
+  }
+  .hall-actions {
+    gap: 6px;
+  }
+  .hall-actions .btn {
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+  .hall-body {
+    padding: 16px 12px;
+  }
+  .hall-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .hall-search {
+    flex: none;
+    width: 100%;
+  }
+  .hall-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .hall-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .tab-btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .hall-grid {
+    grid-template-columns: 1fr;
+  }
+  .card-title {
+    font-size: 15px;
+  }
+  .dialog-enhanced {
+    width: calc(100vw - 32px);
+    padding: 20px;
+  }
+  .dialog-title {
+    font-size: 17px;
+  }
+}
 </style>
