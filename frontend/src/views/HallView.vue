@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useHall } from '@/composables/useHall'
 import { useUserStore } from '@/stores/user'
@@ -81,6 +81,67 @@ const newDiscussionProjectId = ref('')
 const discussionGoal = ref('')
 const showAdvancedModal = ref(false)
 const advancedTab = ref<'base' | 'crew'>('base')
+// === Crew Tab Logic ===
+const AGENT_ROLES = [
+  { id: 'lead_planner', name: '主策划', emoji: '👔', locked: true },
+  { id: 'system_designer', name: '系统策划', emoji: '⚙️', locked: false },
+  { id: 'number_designer', name: '数值策划', emoji: '📊', locked: false },
+  { id: 'player_advocate', name: '玩家代言人', emoji: '🎮', locked: false },
+  { id: 'operations_analyst', name: '运营策划', emoji: '📈', locked: false },
+  { id: 'visual_concept', name: '视觉概念', emoji: '🎨', locked: false },
+]
+const crewSelectedId = ref<string | null>(null)
+const showAgentPicker = ref(false)
+const crewFocusText = ref('')
+
+const enabledAgentRoles = computed(() => {
+  if (selectedAgents.value.length === 0) return AGENT_ROLES
+  return AGENT_ROLES.filter(r => r.locked || selectedAgents.value.includes(r.id))
+})
+const availableAgentRoles = computed(() => {
+  if (selectedAgents.value.length === 0) return []
+  return AGENT_ROLES.filter(r => !r.locked && !selectedAgents.value.includes(r.id))
+})
+const crewSelectedRole = computed(() => AGENT_ROLES.find(r => r.id === crewSelectedId.value))
+const crewSelectedConfig = computed(() => {
+  if (!crewSelectedId.value) return null
+  if (!agentConfigs.value[crewSelectedId.value]) {
+    agentConfigs.value[crewSelectedId.value] = { goal: '', backstory: '', focus_areas: [] }
+  }
+  return agentConfigs.value[crewSelectedId.value]
+})
+
+function addAgent(id: string) {
+  if (selectedAgents.value.length === 0) {
+    selectedAgents.value = AGENT_ROLES.filter(r => r.locked).map(r => r.id)
+  }
+  if (!selectedAgents.value.includes(id)) selectedAgents.value.push(id)
+  showAgentPicker.value = false
+  crewSelectedId.value = id
+}
+function removeAgent(id: string) {
+  selectedAgents.value = selectedAgents.value.filter(a => a !== id)
+  if (crewSelectedId.value === id) crewSelectedId.value = null
+}
+function hasAgentOverrides(id: string) {
+  return !!agentConfigs.value[id] && Object.keys(agentConfigs.value[id]).length > 0
+}
+function resetAgentConfig(id: string) {
+  delete agentConfigs.value[id]
+}
+function syncFocusAreas() {
+  if (!crewSelectedId.value || !crewSelectedConfig.value) return
+  crewSelectedConfig.value.focus_areas = crewFocusText.value.split(',').map(s => s.trim()).filter(Boolean)
+}
+
+watch(crewSelectedId, (id) => {
+  if (id && agentConfigs.value[id]?.focus_areas) {
+    crewFocusText.value = agentConfigs.value[id].focus_areas?.join(', ') || ''
+  } else {
+    crewFocusText.value = ''
+  }
+})
+
 const newProjectName = ref('')
 const newProjectDescription = ref('')
 const creating = ref(false)
@@ -516,7 +577,58 @@ onUnmounted(() => { delete (window as any).__bwHall })
 
           <!-- 人员 Tab -->
           <div v-if="advancedTab === 'crew'" class="adv-tab-body">
-            <AgentConfigEditor v-model:agents="selectedAgents" v-model:configs="agentConfigs" />
+            <div class="crew-panel">
+              <!-- 参与人员列表 -->
+              <div class="crew-list">
+                <button
+                  v-for="role in enabledAgentRoles"
+                  :key="role.id"
+                  class="crew-item"
+                  :class="{ 'crew-item-active': crewSelectedId === role.id }"
+                  @click="crewSelectedId = role.id"
+                >
+                  <span class="crew-emoji">{{ role.emoji }}</span>
+                  <span class="crew-name">{{ role.name }}</span>
+                  <span v-if="role.locked" class="crew-lock">必选</span>
+                  <button v-else class="crew-remove" @click.stop="removeAgent(role.id)" title="移除">−</button>
+                </button>
+                <!-- 添加按钮 -->
+                <div v-if="availableAgentRoles.length > 0" class="crew-add-wrap">
+                  <button class="crew-add-btn" @click="showAgentPicker = !showAgentPicker">＋</button>
+                  <div v-if="showAgentPicker" class="crew-picker">
+                    <button
+                      v-for="role in availableAgentRoles"
+                      :key="role.id"
+                      class="crew-picker-item"
+                      @click="addAgent(role.id)"
+                    >{{ role.emoji }} {{ role.name }}</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 选中人员的提示词 -->
+              <div v-if="crewSelectedId && crewSelectedConfig" class="crew-detail">
+                <div class="crew-detail-header">
+                  <span>{{ crewSelectedRole?.emoji }} {{ crewSelectedRole?.name }} 提示词</span>
+                  <button v-if="hasAgentOverrides(crewSelectedId)" class="crew-reset" @click="resetAgentConfig(crewSelectedId)">↺ 恢复默认</button>
+                </div>
+                <div class="crew-fields">
+                  <div class="crew-field">
+                    <label>目标</label>
+                    <textarea v-model="crewSelectedConfig.goal" rows="2" class="crew-input" />
+                  </div>
+                  <div class="crew-field">
+                    <label>背景</label>
+                    <textarea v-model="crewSelectedConfig.backstory" rows="2" class="crew-input" />
+                  </div>
+                  <div class="crew-field">
+                    <label>关注领域</label>
+                    <input v-model="crewFocusText" class="crew-input" placeholder="逗号分隔" @blur="syncFocusAreas" />
+                  </div>
+                </div>
+              </div>
+              <div v-else class="hint-text" style="text-align:center;padding:12px">点击人员查看提示词</div>
+            </div>
           </div>
 
           <div class="dialog-actions">
@@ -953,6 +1065,32 @@ onUnmounted(() => { delete (window as any).__bwHall })
 .btn-ghost-sm:hover { border-color: #3b82f6; color: #3b82f6; }
 .attachment-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: #eff6ff; border-radius: 8px; font-size: 12px; color: #2563eb; }
 
+
+/* === Crew Panel === */
+.crew-panel { display: flex; flex-direction: column; gap: 10px; }
+.crew-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.crew-item { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border-radius: 20px; font-size: 13px; border: 1.5px solid #e5e7eb; background: #fff; cursor: pointer; transition: all 0.15s; }
+.crew-item:hover { border-color: #93c5fd; }
+.crew-item-active { border-color: #3b82f6; background: rgba(59,130,246,0.06); }
+.crew-emoji { font-size: 14px; }
+.crew-name { font-weight: 500; color: #374151; }
+.crew-lock { font-size: 10px; padding: 0 4px; background: #e5e7eb; color: #6b7280; border-radius: 3px; }
+.crew-remove { background: none; border: none; color: #d1d5db; font-size: 16px; cursor: pointer; padding: 0 2px; line-height: 1; }
+.crew-remove:hover { color: #ef4444; }
+.crew-add-wrap { position: relative; }
+.crew-add-btn { width: 30px; height: 30px; border-radius: 50%; border: 1.5px dashed #d1d5db; background: #fff; font-size: 16px; color: #9ca3af; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+.crew-add-btn:hover { border-color: #3b82f6; color: #3b82f6; }
+.crew-picker { position: absolute; top: 36px; left: 0; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 10; min-width: 140px; }
+.crew-picker-item { display: block; width: 100%; text-align: left; padding: 8px 12px; font-size: 13px; border: none; background: none; cursor: pointer; }
+.crew-picker-item:hover { background: #f3f4f6; }
+.crew-detail { border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px; background: #f8fafc; }
+.crew-detail-header { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 8px; }
+.crew-reset { font-size: 12px; color: #9ca3af; background: none; border: none; cursor: pointer; }
+.crew-reset:hover { color: #3b82f6; }
+.crew-fields { display: flex; flex-direction: column; gap: 8px; }
+.crew-field label { font-size: 11px; font-weight: 500; color: #6b7280; display: block; margin-bottom: 2px; }
+.crew-input { width: 100%; padding: 5px 8px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 12px; font-family: inherit; resize: vertical; transition: border-color 0.15s; }
+.crew-input:focus { outline: none; border-color: #3b82f6; }
 /* 高级选项 Tab */
 .adv-tabs { display: flex; gap: 0; border-bottom: 2px solid #f0f0f0; margin-bottom: 12px; }
 .adv-tab { flex: 1; padding: 8px 0; background: none; border: none; font-size: 13px; font-weight: 500; color: #9ca3af; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.15s; }
