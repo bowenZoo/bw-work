@@ -270,6 +270,129 @@ function registerTools() {
         return { ok: true }
       }
     },
+    {
+      name: 'bw_open_new_discussion',
+      description: 'Open new discussion dialog on hall page',
+      inputSchema: { type: 'object', properties: {} },
+      execute: async () => {
+        const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('新讨论')) as HTMLElement
+        if (!btn) return { error: 'Not on hall page or button not found' }
+        btn.click()
+        await new Promise(r => setTimeout(r, 500))
+        return { ok: true, dialogOpen: !!document.querySelector('.dialog-overlay') }
+      }
+    },
+    {
+      name: 'bw_open_advanced_options',
+      description: 'Open advanced options panel in new discussion dialog, optionally switch to a tab',
+      inputSchema: { type: 'object', properties: { tab: { type: 'string', description: 'Tab name: 基础 or 人员' } } },
+      execute: async (p: any) => {
+        const advBtn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('高级选项')) as HTMLElement
+        if (advBtn) { advBtn.click(); await new Promise(r => setTimeout(r, 300)) }
+        if (p?.tab) {
+          const tab = Array.from(document.querySelectorAll('.adv-tab')).find(t => t.textContent?.includes(p.tab)) as HTMLElement
+          if (tab) { tab.click(); await new Promise(r => setTimeout(r, 300)) }
+        }
+        return { ok: true }
+      }
+    },
+    {
+      name: 'bw_crew_list',
+      description: 'Get current crew members in personnel tab',
+      inputSchema: { type: 'object', properties: {} },
+      execute: async () => {
+        const items = Array.from(document.querySelectorAll('.crew-item'))
+        const active = document.querySelector('.crew-item-active')
+        return {
+          crew: items.map(i => ({
+            name: i.querySelector('.crew-name')?.textContent?.trim() || i.textContent?.trim(),
+            active: i === active,
+            removable: !!i.querySelector('.crew-remove'),
+            locked: !!i.querySelector('.crew-lock')
+          })),
+          activeAgent: active?.querySelector('.crew-name')?.textContent?.trim() || active?.textContent?.trim() || null
+        }
+      }
+    },
+    {
+      name: 'bw_crew_remove',
+      description: 'Remove a crew member by name (partial match)',
+      inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+      execute: async (p: any) => {
+        const items = Array.from(document.querySelectorAll('.crew-item'))
+        const target = items.find(i => i.textContent?.includes(p.name))
+        if (!target) return { error: 'Agent not found: ' + p.name }
+        const removeBtn = target.querySelector('.crew-remove') as HTMLElement
+        if (!removeBtn) return { error: 'Agent is locked: ' + p.name }
+        target.click(); await new Promise(r => setTimeout(r, 200))
+        removeBtn.click(); await new Promise(r => setTimeout(r, 300))
+        const newActive = document.querySelector('.crew-item-active')
+        const remaining = Array.from(document.querySelectorAll('.crew-item')).map(i => i.querySelector('.crew-name')?.textContent?.trim() || i.textContent?.trim())
+        return { ok: true, removed: p.name, newActive: newActive?.querySelector('.crew-name')?.textContent?.trim() || newActive?.textContent?.trim(), remaining }
+      }
+    },
+    {
+      name: 'bw_access_modal_state',
+      description: 'Check if access-denied modal is showing and its buttons',
+      inputSchema: { type: 'object', properties: {} },
+      execute: async () => {
+        const overlay = document.querySelector('.access-overlay')
+        const modal = overlay?.querySelector('.access-modal')
+        const btns = modal ? Array.from(modal.querySelectorAll('button')).map(b => b.textContent?.trim()) : []
+        return { visible: !!overlay, buttons: btns }
+      }
+    },
+    {
+      name: 'bw_request_access',
+      description: 'Click access request button in the modal (role: viewer or editor)',
+      inputSchema: { type: 'object', properties: { role: { type: 'string' } }, required: ['role'] },
+      execute: async (p: any) => {
+        const keyword = p.role === 'viewer' ? '查看' : '编辑'
+        const btn = Array.from(document.querySelectorAll('.access-modal button')).find(b => b.textContent?.includes(keyword)) as HTMLElement
+        if (!btn) return { error: 'No button for ' + keyword }
+        const origAlert = window.alert
+        let alertMsg = ''
+        window.alert = (msg: string) => { alertMsg = msg }
+        btn.click()
+        await new Promise(r => setTimeout(r, 2000))
+        window.alert = origAlert
+        return { ok: true, alertMessage: alertMsg }
+      }
+    },
+    {
+      name: 'bw_pending_requests',
+      description: 'Get pending access requests bar (admin view on project detail)',
+      inputSchema: { type: 'object', properties: {} },
+      execute: async () => {
+        const bar = document.querySelector('.pending-bar')
+        if (!bar) return { visible: false, count: 0, requests: [] }
+        const items = Array.from(bar.querySelectorAll('.pending-item'))
+        return {
+          visible: true,
+          count: items.length,
+          requests: items.map(i => ({
+            text: i.textContent?.trim(),
+            hasApprove: !!i.querySelector('.btn-primary'),
+            hasReject: !!i.querySelector('.btn-danger')
+          }))
+        }
+      }
+    },
+    {
+      name: 'bw_approve_request',
+      description: 'Approve or reject a pending access request by index',
+      inputSchema: { type: 'object', properties: { index: { type: 'number' }, action: { type: 'string' } }, required: ['index', 'action'] },
+      execute: async (p: any) => {
+        const items = Array.from(document.querySelectorAll('.pending-item'))
+        const item = items[p.index || 0]
+        if (!item) return { error: 'No request at index ' + p.index }
+        const btn = p.action === 'approve' ? item.querySelector('.btn-primary') as HTMLElement : item.querySelector('.btn-danger') as HTMLElement
+        if (!btn) return { error: 'No ' + p.action + ' button' }
+        btn.click()
+        await new Promise(r => setTimeout(r, 2000))
+        return { ok: true, action: p.action, remainingRequests: document.querySelectorAll('.pending-item').length }
+      }
+    },
   ]
 
   for (const t of tools) {
