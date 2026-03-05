@@ -199,7 +199,11 @@ function onLoginSuccess() {
         </div>
       </div>
 
-      <div v-if="filteredItems.length === 0" class="hall-empty">没有匹配的结果</div>
+      <div v-if="filteredItems.length === 0" class="hall-filter-empty">
+        <div class="empty-icon">🔍</div>
+        <p class="empty-text">没有找到匹配的内容</p>
+        <p class="empty-hint">试试其他关键词或切换分类</p>
+      </div>
       <div v-else class="hall-grid">
         <div
           v-for="item in filteredItems"
@@ -222,13 +226,28 @@ function onLoginSuccess() {
             <span v-if="item.type === 'discussion' && item.extra?.owner_name" class="card-meta">
               {{ item.extra.owner_name }}
             </span>
+            <span v-if="item.type === 'discussion' && item.extra?.participants_count != null" class="card-meta">
+              👥 {{ item.extra.participants_count }} 人参与
+            </span>
             <span v-if="item.type === 'discussion' && item.extra?.message_count != null" class="card-meta">
               {{ item.extra.message_count }} 条消息
             </span>
-            <span v-if="item.type === 'project' && item.extra?.stage_progress" class="card-meta">
+            <div v-if="item.type === 'project' && item.extra?.total_stages" class="card-progress">
+              <div class="progress-bar">
+                <div
+                  class="progress-fill"
+                  :style="{ width: `${((item.extra.completed_stages || 0) / item.extra.total_stages) * 100}%` }"
+                />
+              </div>
+              <span class="progress-label">{{ item.extra.completed_stages || 0 }}/{{ item.extra.total_stages }} 阶段</span>
+            </div>
+            <span v-else-if="item.type === 'project' && item.extra?.stage_progress" class="card-meta">
               进度 {{ item.extra.stage_progress }}
             </span>
             <span class="card-time">{{ formatTime(item.updated_at) }}</span>
+          </div>
+          <div v-if="item.type === 'discussion' && item.extra?.last_active_at" class="card-last-active">
+            最后活跃 {{ formatTime(item.extra.last_active_at) }}
           </div>
         </div>
       </div>
@@ -411,8 +430,8 @@ function onLoginSuccess() {
   transition: box-shadow 0.15s, transform 0.15s;
 }
 .hall-card:hover {
-  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
-  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  transform: translateY(-2px);
 }
 .card-header {
   display: flex;
@@ -469,6 +488,56 @@ function onLoginSuccess() {
   font-size: 12px;
   color: #9ca3af;
   margin-left: auto;
+}
+.card-last-active {
+  font-size: 11px;
+  color: #b0b8c4;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #f3f4f6;
+}
+.card-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: #10b981;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.progress-label {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+.hall-filter-empty {
+  text-align: center;
+  padding: 60px 20px;
+}
+.empty-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+.empty-text {
+  font-size: 16px;
+  color: #6b7280;
+  margin: 0 0 6px;
+  font-weight: 500;
+}
+.empty-hint {
+  font-size: 13px;
+  color: #9ca3af;
+  margin: 0;
 }
 
 /* Buttons */
