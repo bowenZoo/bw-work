@@ -20,10 +20,67 @@ import { useDiscussion } from '@/composables/useDiscussion';
 import { useAgentsStore } from '@/stores/agents';
 import { useDiscussionStore } from '@/stores/discussion';
 import api from '@/api';
+import { useUserStore } from '@/stores/user';
 import { getDiscussionStyles } from '@/api/discussion';
 import type { AgendaItem, AgentStatus, DiscussionStyle, DiscussionStyleFull, DiscussionStyleOverrides } from '@/types';
 
 // Props for playback mode
+// Archive state
+const showArchiveDialog = ref(false)
+const archiveProjects = ref<any[]>([])
+const archiveStages = ref<any[]>([])
+const selectedProject = ref('')
+const selectedStage = ref('')
+const archiving = ref(false)
+const isHallDiscussion = computed(() => {
+  const pid = discussion.value?.project_id
+  return !pid || pid === '' || pid === 'lobby'
+})
+
+async function openArchiveDialog() {
+  showArchiveDialog.value = true
+  try {
+    const res = await fetch('/api/hall', { headers: { Authorization: `Bearer ${userStore.accessToken}` } })
+    if (res.ok) {
+      const data = await res.json()
+      archiveProjects.value = data.items.filter((i: any) => i.type === 'project')
+    }
+  } catch {}
+}
+
+async function onProjectSelected() {
+  if (!selectedProject.value) { archiveStages.value = []; return }
+  try {
+    const res = await fetch(`/api/projects/${selectedProject.value}/stages`, { headers: { Authorization: `Bearer ${userStore.accessToken}` } })
+    if (res.ok) {
+      const data = await res.json()
+      archiveStages.value = (data.stages || []).filter((s: any) => s.status !== 'locked')
+    }
+  } catch {}
+}
+
+async function doArchive() {
+  if (!selectedProject.value || !selectedStage.value || archiving.value) return
+  archiving.value = true
+  try {
+    const res = await fetch(`/api/discussions/${discussionId.value || route.params.id}/archive`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${userStore.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: selectedProject.value, stage_id: selectedStage.value })
+    })
+    if (res.ok) {
+      showArchiveDialog.value = false
+      alert('归档成功！')
+      router.push(`/project/${selectedProject.value}`)
+    } else {
+      const err = await res.json()
+      alert(err.detail || '归档失败')
+    }
+  } finally { archiving.value = false }
+}
+
+const userStore = useUserStore();
+
 const props = defineProps<{
   mode?: 'live' | 'playback';
 }>();
@@ -619,6 +676,12 @@ onUnmounted(() => {
       </template>
       <template #extra>
         <button
+          v-if="isHallDiscussion && discussionStatus === 'completed'"
+          class="archive-btn"
+          @click="openArchiveDialog"
+          title="归档到项目"
+        >📦 归档</button>
+        <button
           class="back-btn"
           @click="goBackToHome"
         >
@@ -960,6 +1023,33 @@ onUnmounted(() => {
     />
 
   </div>
+
+    <!-- Archive Dialog -->
+    <Transition name="fade">
+      <div v-if="showArchiveDialog" class="dialog-overlay" @click.self="showArchiveDialog = false">
+        <div class="archive-dialog">
+          <h3>📦 归档讨论到项目</h3>
+          <div class="archive-field">
+            <label>选择项目</label>
+            <select v-model="selectedProject" @change="onProjectSelected" class="archive-select">
+              <option value="">请选择项目...</option>
+              <option v-for="p in archiveProjects" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+          </div>
+          <div class="archive-field" v-if="archiveStages.length">
+            <label>选择阶段</label>
+            <select v-model="selectedStage" class="archive-select">
+              <option value="">请选择阶段...</option>
+              <option v-for="s in archiveStages" :key="s.id" :value="s.id">{{ s.name }} ({{ s.status === 'completed' ? '已完成' : '进行中' }})</option>
+            </select>
+          </div>
+          <div class="archive-actions">
+            <button class="btn btn-secondary" @click="showArchiveDialog = false">取消</button>
+            <button class="btn btn-primary" @click="doArchive" :disabled="!selectedProject || !selectedStage || archiving">{{ archiving ? '归档中...' : '确认归档' }}</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
 </template>
 
 <style scoped>
@@ -1700,4 +1790,18 @@ onUnmounted(() => {
     max-height: 200px;
   }
 }
+.archive-btn { background: #f0fdf4; color: #16a34a; border: 1px solid #86efac; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.archive-btn:hover { background: #dcfce7; }
+.dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.archive-dialog { background: #fff; border-radius: 12px; padding: 24px; width: 380px; box-shadow: 0 8px 30px rgba(0,0,0,0.15); }
+.archive-dialog h3 { margin: 0 0 16px; font-size: 16px; }
+.archive-field { margin-bottom: 12px; }
+.archive-field label { display: block; font-size: 13px; color: #6b7280; margin-bottom: 4px; }
+.archive-select { width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
+.archive-select:focus { outline: none; border-color: #4f46e5; }
+.archive-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.archive-actions .btn { padding: 6px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none; font-weight: 500; }
+.archive-actions .btn-primary { background: #4f46e5; color: #fff; }
+.archive-actions .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.archive-actions .btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
 </style>
