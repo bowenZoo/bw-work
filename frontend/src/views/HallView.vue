@@ -100,7 +100,7 @@ async function loadCrewDefaults() {
   } catch {}
 }
 
-const crewSelectedId = ref<string | null>(null)
+const crewSelectedId = ref<string | null>('lead_planner')
 const showAgentPicker = ref(false)
 const crewFocusText = ref('')
 

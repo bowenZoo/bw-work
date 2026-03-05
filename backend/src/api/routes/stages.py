@@ -202,10 +202,12 @@ class AccessRequestBody(BaseModel):
 @router.post("/projects/{project_id}/access-request")
 async def request_project_access(project_id: str, request: AccessRequestBody, user: dict = Depends(get_current_user)):
     """Request access to a private project. Creates a pending membership."""
+    if not project_id or project_id == "undefined":
+        raise HTTPException(status_code=400, detail="无效的项目ID")
     db = AdminDatabase()
     # Check if already a member
     existing_role = db.get_user_project_role(project_id, user.get("id"))
-    if existing_role:
+    if existing_role and not existing_role.startswith("pending_"):
         raise HTTPException(status_code=400, detail="你已经是该项目成员")
     # Create pending access request in project_members with role="pending_viewer" or "pending_editor"
     pending_role = f"pending_{request.role}"
