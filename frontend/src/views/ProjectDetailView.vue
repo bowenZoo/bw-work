@@ -30,8 +30,8 @@ async function doAdopt() {
     const body: any = { action: adoptAction.value }
     if (adoptAction.value === 'new_doc') body.title = adoptTitle.value || showAdoptDialog.value.title
     if (adoptAction.value === 'merge') body.document_id = adoptTargetDoc.value
-    const res = await fetch(\`\${base}/api/discussions/\${showAdoptDialog.value.discussion_id}/outputs/\${showAdoptDialog.value.id}/adopt\`, {
-      method: 'POST', headers: { Authorization: \`Bearer \${userStore.accessToken}\`, 'Content-Type': 'application/json' },
+    const res = await fetch(`${base}/api/discussions/${showAdoptDialog.value.discussion_id}/outputs/${showAdoptDialog.value.id}/adopt`, {
+      method: 'POST', headers: { Authorization: `Bearer ${userStore.accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     })
     if (!res.ok) { const e = await res.json(); alert(e.detail || '采纳失败'); return }
