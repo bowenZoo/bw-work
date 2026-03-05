@@ -273,7 +273,7 @@ async def create_document(project_id: str, stage_id: str, request: CreateDocumen
     return DocumentResponse(**full)
 
 
-@router.get("/documents/{doc_id}", response_model=DocumentResponse)
+@router.get("/docs/{doc_id}", response_model=DocumentResponse)
 async def get_document(doc_id: str, user: dict = Depends(get_current_user)):
     db = AdminDatabase()
     doc = db.get_document(doc_id)
@@ -282,7 +282,7 @@ async def get_document(doc_id: str, user: dict = Depends(get_current_user)):
     return DocumentResponse(**doc)
 
 
-@router.put("/documents/{doc_id}", response_model=DocumentResponse)
+@router.put("/docs/{doc_id}", response_model=DocumentResponse)
 async def update_document(doc_id: str, request: UpdateDocumentRequest,
                           user: dict = Depends(get_current_user)):
     db = AdminDatabase()
@@ -298,14 +298,14 @@ async def update_document(doc_id: str, request: UpdateDocumentRequest,
     return DocumentResponse(**doc)
 
 
-@router.get("/documents/{doc_id}/versions", response_model=list[DocumentVersionResponse])
+@router.get("/docs/{doc_id}/versions", response_model=list[DocumentVersionResponse])
 async def list_versions(doc_id: str, user: dict = Depends(get_current_user)):
     db = AdminDatabase()
     versions = db.get_document_versions(doc_id)
     return [DocumentVersionResponse(**v) for v in versions]
 
 
-@router.get("/documents/{doc_id}/versions/{version}", response_model=DocumentVersionResponse)
+@router.get("/docs/{doc_id}/versions/{version}", response_model=DocumentVersionResponse)
 async def get_version(doc_id: str, version: int, user: dict = Depends(get_current_user)):
     db = AdminDatabase()
     v = db.get_document_version(doc_id, version)
@@ -314,7 +314,7 @@ async def get_version(doc_id: str, version: int, user: dict = Depends(get_curren
     return DocumentVersionResponse(**v)
 
 
-@router.post("/documents/{doc_id}/revert/{version}", response_model=DocumentResponse)
+@router.post("/docs/{doc_id}/revert/{version}", response_model=DocumentResponse)
 async def revert_document(doc_id: str, version: int, user: dict = Depends(get_current_user)):
     db = AdminDatabase()
     doc = db.revert_document(doc_id, version, user.get("id"))

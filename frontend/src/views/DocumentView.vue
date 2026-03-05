@@ -1,47 +1,175 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
-const doc = ref<any>(null)
-const loading = ref(true)
 
-onMounted(async () => {
+const doc = ref<any>(null)
+const versions = ref<any[]>([])
+const loading = ref(true)
+const editing = ref(false)
+const saving = ref(false)
+const editContent = ref('')
+const editTitle = ref('')
+const showVersions = ref(false)
+const previewVersion = ref<any>(null)
+
+const apiBase = import.meta.env.VITE_API_BASE || ''
+function authHeaders(json = false): Record<string, string> {
+  const h: Record<string, string> = { Authorization: `Bearer ${userStore.accessToken}` }
+  if (json) h['Content-Type'] = 'application/json'
+  return h
+}
+
+async function fetchDoc() {
+  loading.value = true
   try {
-    const base = import.meta.env.VITE_API_BASE || ''
-    const res = await fetch(`${base}/api/documents/${route.params.docId}`, {
-      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    const res = await fetch(`${apiBase}/api/docs/${route.params.docId}`, { headers: authHeaders() })
+    if (res.ok) {
+      doc.value = await res.json()
+      editContent.value = doc.value.content || ''
+      editTitle.value = doc.value.title || ''
+    }
+  } finally { loading.value = false }
+}
+
+async function fetchVersions() {
+  const res = await fetch(`${apiBase}/api/docs/${route.params.docId}/versions`, { headers: authHeaders() })
+  if (res.ok) versions.value = await res.json()
+}
+
+async function save() {
+  if (saving.value) return
+  saving.value = true
+  try {
+    const body: any = { content: editContent.value }
+    if (editTitle.value !== doc.value.title) body.title = editTitle.value
+    const res = await fetch(`${apiBase}/api/docs/${route.params.docId}`, {
+      method: 'PUT', headers: authHeaders(true), body: JSON.stringify(body)
     })
-    if (res.ok) doc.value = await res.json()
-  } finally {
-    loading.value = false
+    if (res.ok) { doc.value = await res.json(); editing.value = false; await fetchVersions() }
+  } finally { saving.value = false }
+}
+
+async function revertTo(versionId: string) {
+  const res = await fetch(`${apiBase}/api/docs/${route.params.docId}/revert/${versionId}`, {
+    method: 'POST', headers: authHeaders()
+  })
+  if (res.ok) {
+    doc.value = await res.json()
+    editContent.value = doc.value.content || ''
+    editTitle.value = doc.value.title || ''
+    previewVersion.value = null
+    await fetchVersions()
   }
-})
+}
+
+function startEdit() { editContent.value = doc.value.content || ''; editTitle.value = doc.value.title || ''; editing.value = true }
+function cancelEdit() { editing.value = false; editContent.value = doc.value.content || ''; editTitle.value = doc.value.title || '' }
+function toggleVersions() { showVersions.value = !showVersions.value; if (showVersions.value && versions.value.length === 0) fetchVersions() }
+function formatTime(dt: string) { if (!dt) return ''; return new Date(dt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
+const lineCount = computed(() => (editContent.value || '').split('\n').length)
+
+onMounted(async () => { await fetchDoc(); await fetchVersions() })
 </script>
 
 <template>
   <div class="doc-view">
     <header class="doc-header">
       <button class="back-btn" @click="router.back()">← 返回</button>
-      <h1 v-if="doc">{{ doc.title }}</h1>
+      <div class="doc-info" v-if="doc">
+        <input v-if="editing" v-model="editTitle" class="title-input" placeholder="文档标题" />
+        <h1 v-else>{{ doc.title }}</h1>
+        <span class="version-badge">v{{ doc.current_version }}</span>
+      </div>
+      <div class="header-actions" v-if="doc">
+        <button v-if="!editing" class="btn btn-secondary" @click="toggleVersions">📋 历史 ({{ versions.length }})</button>
+        <button v-if="!editing" class="btn btn-primary" @click="startEdit">✏️ 编辑</button>
+        <button v-if="editing" class="btn btn-secondary" @click="cancelEdit">取消</button>
+        <button v-if="editing" class="btn btn-primary" @click="save" :disabled="saving">{{ saving ? '保存中...' : '💾 保存' }}</button>
+      </div>
     </header>
+
     <div v-if="loading" class="doc-loading">加载中...</div>
-    <div v-else-if="doc" class="doc-content">
-      <pre>{{ doc.content }}</pre>
+
+    <div v-else-if="doc" class="doc-body">
+      <aside v-if="showVersions" class="version-panel">
+        <h3>版本历史</h3>
+        <div v-for="v in versions" :key="v.id" class="version-item"
+             :class="{ active: previewVersion?.id === v.id, current: v.version === doc.current_version }"
+             @click="previewVersion = previewVersion?.id === v.id ? null : v">
+          <div class="v-header">
+            <span class="v-num">v{{ v.version }}</span>
+            <span class="v-time">{{ formatTime(v.created_at) }}</span>
+          </div>
+          <div class="v-source">{{ v.source_type === 'manual' ? '手动编辑' : v.source_type === 'adoption' ? '讨论采纳' : v.source_type }}</div>
+          <button v-if="v.version !== doc.current_version" class="v-revert" @click.stop="revertTo(v.id)">回退到此版本</button>
+        </div>
+      </aside>
+
+      <main class="doc-content" :class="{ 'with-panel': showVersions }">
+        <div v-if="previewVersion" class="preview-banner">
+          👁️ 预览 v{{ previewVersion.version }} —
+          <button @click="previewVersion = null">关闭预览</button>
+          <button @click="revertTo(previewVersion.id)">回退到此版本</button>
+        </div>
+        <textarea v-if="editing" v-model="editContent" class="content-editor" placeholder="在这里编写文档内容..." />
+        <div v-else-if="previewVersion" class="content-display"><pre>{{ previewVersion.content }}</pre></div>
+        <div v-else class="content-display">
+          <pre v-if="doc.content">{{ doc.content }}</pre>
+          <div v-else class="empty-doc">文档还没有内容，点击「编辑」开始编写</div>
+        </div>
+        <div v-if="editing" class="editor-footer"><span class="line-count">{{ lineCount }} 行</span></div>
+      </main>
     </div>
+
     <div v-else class="doc-loading">文档未找到</div>
   </div>
 </template>
 
 <style scoped>
-.doc-view { min-height: 100vh; background: #f9fafb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-.doc-header { display: flex; align-items: center; gap: 16px; padding: 16px 24px; background: #fff; border-bottom: 1px solid #e5e7eb; }
-.doc-header h1 { font-size: 20px; font-weight: 700; margin: 0; }
-.back-btn { background: none; border: none; color: #4f46e5; font-size: 14px; cursor: pointer; }
-.doc-loading { text-align: center; padding: 60px; color: #9ca3af; }
-.doc-content { max-width: 800px; margin: 24px auto; background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-.doc-content pre { white-space: pre-wrap; font-size: 14px; line-height: 1.6; }
+.doc-view { min-height: 100vh; background: #f9fafb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; flex-direction: column; }
+.doc-header { display: flex; align-items: center; gap: 16px; padding: 12px 24px; background: #fff; border-bottom: 1px solid #e5e7eb; position: sticky; top: 0; z-index: 10; }
+.back-btn { background: none; border: none; color: #4f46e5; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.back-btn:hover { text-decoration: underline; }
+.doc-info { flex: 1; display: flex; align-items: center; gap: 8px; }
+.doc-info h1 { font-size: 18px; font-weight: 700; margin: 0; color: #111827; }
+.title-input { flex: 1; font-size: 18px; font-weight: 700; border: 1px solid #d1d5db; border-radius: 6px; padding: 4px 8px; color: #111827; }
+.title-input:focus { outline: none; border-color: #4f46e5; }
+.version-badge { background: #ede9fe; color: #4f46e5; font-size: 12px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+.header-actions { display: flex; gap: 8px; white-space: nowrap; }
+.btn { padding: 6px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none; font-weight: 500; transition: all 0.15s; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: #4f46e5; color: #fff; }
+.btn-primary:hover:not(:disabled) { background: #4338ca; }
+.btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+.btn-secondary:hover { background: #e5e7eb; }
+.doc-loading { text-align: center; padding: 60px; color: #9ca3af; font-size: 15px; }
+.doc-body { flex: 1; display: flex; overflow: hidden; }
+.version-panel { width: 260px; background: #fff; border-right: 1px solid #e5e7eb; padding: 16px; overflow-y: auto; flex-shrink: 0; }
+.version-panel h3 { font-size: 14px; font-weight: 600; margin: 0 0 12px; color: #374151; }
+.version-item { padding: 10px; border-radius: 8px; margin-bottom: 6px; cursor: pointer; border: 1px solid #e5e7eb; transition: all 0.15s; }
+.version-item:hover { background: #f9fafb; }
+.version-item.active { border-color: #4f46e5; background: #ede9fe; }
+.version-item.current { border-left: 3px solid #10b981; }
+.v-header { display: flex; justify-content: space-between; align-items: center; }
+.v-num { font-weight: 700; font-size: 13px; color: #111827; }
+.v-time { font-size: 11px; color: #9ca3af; }
+.v-source { font-size: 11px; color: #6b7280; margin-top: 4px; }
+.v-revert { margin-top: 6px; font-size: 11px; color: #4f46e5; background: none; border: none; cursor: pointer; padding: 0; }
+.v-revert:hover { text-decoration: underline; }
+.doc-content { flex: 1; padding: 24px; max-width: 900px; margin: 0 auto; width: 100%; }
+.doc-content.with-panel { margin: 0; }
+.preview-banner { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 8px 16px; margin-bottom: 16px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.preview-banner button { background: none; border: none; color: #4f46e5; cursor: pointer; font-size: 12px; text-decoration: underline; }
+.content-display { background: #fff; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); min-height: 400px; }
+.content-display pre { white-space: pre-wrap; word-wrap: break-word; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 1.8; color: #374151; margin: 0; }
+.content-editor { width: 100%; min-height: 500px; background: #fff; border: 2px solid #4f46e5; border-radius: 12px; padding: 24px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px; line-height: 1.8; color: #374151; resize: vertical; box-sizing: border-box; }
+.content-editor:focus { outline: none; border-color: #4338ca; }
+.editor-footer { display: flex; justify-content: flex-end; padding: 8px 0; }
+.line-count { font-size: 12px; color: #9ca3af; }
+.empty-doc { text-align: center; padding: 60px 20px; color: #9ca3af; font-size: 15px; }
 </style>
