@@ -280,7 +280,7 @@ async def get_project_detail(project_id: str, user: dict = Depends(get_current_u
         db_tmp = AdminDatabase()
         is_pub = db_tmp.get_project_visibility(project_id)
         user_role = db_tmp.get_user_project_role(project_id, user.get("id"))
-        access_denied = not is_pub and not user_role
+        access_denied = not is_pub and (not user_role or str(user_role).startswith("pending_"))
     # Load project from file registry (not admin DB)
     import json, os
     index_path = "/app/data/projects/_index.json"

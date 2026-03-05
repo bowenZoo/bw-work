@@ -140,7 +140,7 @@ function addAgent(id: string) {
   crewSelectedId.value = id
 }
 function removeAgent(id: string) {
-  const currentList = participatingAgents.value
+  const currentList = enabledAgentRoles.value
   const deletedIndex = currentList.findIndex(r => r.id === id)
 
   if (selectedAgents.value.length === 0) {
@@ -150,7 +150,7 @@ function removeAgent(id: string) {
   }
 
   if (crewSelectedId.value === id) {
-    const newList = participatingAgents.value
+    const newList = enabledAgentRoles.value
     if (newList.length > 0) {
       const newIndex = Math.min(deletedIndex, newList.length - 1)
       crewSelectedId.value = newList[Math.max(0, newIndex - 1)]?.id || newList[0]?.id

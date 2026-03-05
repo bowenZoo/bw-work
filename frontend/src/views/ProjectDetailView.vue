@@ -604,10 +604,9 @@ async function createStageDiscussion(stageId: string) {
         </div>
       </div>
     </Transition>
-  </div>
     <!-- Access Denied Modal -->
     <Transition name="fade">
-      <div v-if="showAccessModal" class="modal-overlay" @click.self="goBackToHall">
+      <div v-if="showAccessModal" class="dialog-overlay access-overlay" @click.self="goBackToHall">
         <div class="modal access-modal">
           <div class="access-icon">🔒</div>
           <h3>{{ project?.name }}</h3>
@@ -621,6 +620,7 @@ async function createStageDiscussion(stageId: string) {
         </div>
       </div>
     </Transition>
+  </div>
 
 </template>
 
@@ -1054,6 +1054,7 @@ async function createStageDiscussion(stageId: string) {
 }
 
 
+.access-overlay { z-index: 300; }
 .access-modal {
   text-align: center; padding: 32px 40px; max-width: 420px; width: 90%;
   border-radius: 16px; background: #fff;
