@@ -30,6 +30,26 @@ const newDiscTopic = ref('')
 const creatingDisc = ref(false)
 
 // Member management
+
+async function requestAccess(role: string) {
+  const base = import.meta.env.VITE_API_BASE || ''
+  try {
+    const res = await fetch(\`\${base}/api/projects/\${route.params.id}/access-request\`, {
+      method: 'POST',
+      headers: { Authorization: \`Bearer \${userStore.accessToken}\`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role }),
+    })
+    if (res.ok) {
+      alert('申请已发送，等待项目管理员审批')
+    } else {
+      const d = await res.json()
+      alert(d.detail || '申请失败')
+    }
+  } catch (e) {
+    alert('网络错误')
+  }
+}
+
 const canEdit = computed(() => {
   const role = project.value?.user_role
   return role === 'admin' || role === 'editor' || userStore.role === 'superadmin'
@@ -281,6 +301,22 @@ async function createStageDiscussion(stageId: string) {
 
 <template>
   <div class="project-detail">
+    <!-- Access Denied -->
+    <div v-if="project?.access_denied" class="access-denied-page">
+      <div class="access-denied-card">
+        <div class="access-icon">🔒</div>
+        <h2>{{ project.name }}</h2>
+        <p class="access-desc">{{ project.description || '这是一个私密项目' }}</p>
+        <p class="access-hint">你需要获得权限才能查看此项目内容</p>
+        <div class="access-actions">
+          <button class="btn btn-primary" @click="requestAccess('viewer')">📖 申请查看权限</button>
+          <button class="btn btn-secondary" @click="requestAccess('editor')">✏️ 申请编辑权限</button>
+        </div>
+        <button class="btn-ghost" @click="router.push('/')">← 返回大厅</button>
+      </div>
+    </div>
+    <!-- Normal Content -->
+    <template v-else>
     <header class="pd-header">
       <button class="back-btn" @click="router.push('/')">← 返回大厅</button>
       <h1 v-if="project">{{ project.name }}</h1>
@@ -390,6 +426,7 @@ async function createStageDiscussion(stageId: string) {
         </div>
       </div>
     </Transition>
+    </template>
     <!-- Adopt Dialog -->
     <Transition name="fade">
       <div v-if="showAdoptDialog" class="dialog-overlay" @click.self="showAdoptDialog = null">
@@ -950,4 +987,21 @@ async function createStageDiscussion(stageId: string) {
     flex-wrap: wrap;
   }
 }
+
+.access-denied-page {
+  display: flex; justify-content: center; align-items: center;
+  min-height: 60vh; padding: 40px 20px;
+}
+.access-denied-card {
+  text-align: center; background: #fff; border-radius: 16px;
+  padding: 48px 40px; box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+  max-width: 480px; width: 100%;
+}
+.access-icon { font-size: 48px; margin-bottom: 16px; }
+.access-denied-card h2 { font-size: 22px; margin-bottom: 8px; color: #1f2937; }
+.access-desc { color: #6b7280; margin-bottom: 4px; font-size: 14px; }
+.access-hint { color: #9ca3af; font-size: 13px; margin-bottom: 24px; }
+.access-actions { display: flex; gap: 12px; justify-content: center; margin-bottom: 16px; }
+.btn-ghost { background: none; border: none; color: #6b7280; cursor: pointer; font-size: 13px; padding: 8px 12px; }
+.btn-ghost:hover { color: #374151; }
 </style>

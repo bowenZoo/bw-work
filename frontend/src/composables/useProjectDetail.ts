@@ -35,6 +35,7 @@ export interface Project {
   description: string
   is_public: boolean
   user_role: string | null
+  access_denied: boolean
   created_at: string
   updated_at: string
 }

@@ -104,7 +104,8 @@ class ProjectDetailResponse(BaseModel):
     name: str
     description: str = ""
     is_public: bool = False
-    user_role: str = None
+    user_role: Optional[str] = None
+    access_denied: bool = False
     stages: list[StageResponse] = []
     # documents grouped by stage returned separately
 
@@ -153,9 +154,7 @@ async def get_hall(user: dict = Depends(get_current_user)):
         total = len(stages)
         _is_public = db.get_project_visibility(slug)
         _user_role = db.get_user_project_role(slug, user.get("id")) if user.get("role") != "superadmin" else "admin"
-        # Filter: private projects only visible to members/superadmin
-        if not _is_public and not _user_role and user.get("role") != "superadmin":
-            continue
+        # All projects visible in hall (private ones show 🔒, access checked on detail)
         items.append(HallItemResponse(
             type="project",
             id=slug,
@@ -194,12 +193,44 @@ async def get_hall(user: dict = Depends(get_current_user)):
     return HallResponse(items=items)
 
 
+
+
+# === Access Request ===
+class AccessRequestBody(BaseModel):
+    role: str = "viewer"  # viewer or editor
+
+@router.post("/projects/{project_id}/access-request")
+async def request_project_access(project_id: str, request: AccessRequestBody, user: dict = Depends(get_current_user)):
+    """Request access to a private project. Creates a pending membership."""
+    db = AdminDatabase()
+    # Check if already a member
+    existing_role = db.get_user_project_role(project_id, user.get("id"))
+    if existing_role:
+        raise HTTPException(status_code=400, detail="你已经是该项目成员")
+    # Create pending access request in project_members with role="pending_viewer" or "pending_editor"
+    pending_role = f"pending_{request.role}"
+    with db.get_cursor() as cursor:
+        cursor.execute(
+            "INSERT OR REPLACE INTO project_members (project_id, user_id, role) VALUES (?, ?, ?)",
+            (project_id, user.get("id"), pending_role)
+        )
+    return {"ok": True, "message": "申请已发送"}
+
+
 # === Project Detail (with stages) ===
 
 @router.get("/projects/{project_id}/detail")
 async def get_project_detail(project_id: str, user: dict = Depends(get_current_user)):
-    user_role = _check_access(project_id, user, "viewer")
     """Get full project detail: info + stages + documents + discussions per stage."""
+    # Check access but don't raise 403 for detail view — return limited info instead
+    if user.get("role") == "superadmin":
+        user_role = "admin"
+        access_denied = False
+    else:
+        db_tmp = AdminDatabase()
+        is_pub = db_tmp.get_project_visibility(project_id)
+        user_role = db_tmp.get_user_project_role(project_id, user.get("id"))
+        access_denied = not is_pub and not user_role
     # Load project from file registry (not admin DB)
     import json, os
     index_path = "/app/data/projects/_index.json"
@@ -212,7 +243,9 @@ async def get_project_detail(project_id: str, user: dict = Depends(get_current_u
         raise HTTPException(status_code=404, detail="Project not found")
     db = AdminDatabase()
     _is_pub = db.get_project_visibility(project_id)
-    project = {"id": project_id, "name": index[project_id].get("name", project_id), "description": index[project_id].get("description", ""), "is_public": _is_pub, "user_role": user_role, "created_at": "", "updated_at": ""}
+    project = {"id": project_id, "name": index[project_id].get("name", project_id), "description": index[project_id].get("description", ""), "is_public": _is_pub, "user_role": user_role, "access_denied": access_denied, "created_at": "", "updated_at": ""}
+    if access_denied:
+        return {"project": project, "stages": [], "discussions_by_stage": {}}
 
     stages = db.get_project_stages(project_id)
 
