@@ -32,15 +32,17 @@ export function useHall() {
     }
   }
 
-  async function createProject(name: string): Promise<any> {
+  async function createProject(name: string, description?: string): Promise<any> {
     const base = import.meta.env.VITE_API_BASE || ''
+    const body: Record<string, string> = { name }
+    if (description) body.description = description
     const res = await fetch(`${base}/api/projects`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${userStore.accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(body),
     })
     if (!res.ok) throw new Error(`Create project failed: ${res.status}`)
     return res.json()

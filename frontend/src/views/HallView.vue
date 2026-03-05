@@ -59,8 +59,14 @@ const statusMap: Record<string, { label: string; cls: string }> = {
   archived:  { label: '已归档', cls: 'status-archived' },
 }
 const newDiscussionTopic = ref('')
+const newDiscussionProjectId = ref('')
 const newProjectName = ref('')
+const newProjectDescription = ref('')
 const creating = ref(false)
+
+const projectItems = computed(() =>
+  items.value.filter(item => item.type === 'project')
+)
 
 const emit = defineEmits<{
   (e: 'open-panel', section: string): void
@@ -116,12 +122,16 @@ async function doCreateDiscussion() {
         Authorization: `Bearer ${userStore.accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ topic: newDiscussionTopic.value.trim() }),
+      body: JSON.stringify({
+        topic: newDiscussionTopic.value.trim(),
+        ...(newDiscussionProjectId.value ? { project_id: newDiscussionProjectId.value } : {}),
+      }),
     })
     if (!res.ok) throw new Error('Failed')
     const data = await res.json()
     showNewDiscussion.value = false
     newDiscussionTopic.value = ''
+    newDiscussionProjectId.value = ''
     router.push(`/discussion/${data.id}`)
   } catch (e) {
     alert('创建讨论失败')
@@ -134,9 +144,10 @@ async function doCreateProject() {
   if (!newProjectName.value.trim() || creating.value) return
   creating.value = true
   try {
-    const data = await createProject(newProjectName.value.trim())
+    const data = await createProject(newProjectName.value.trim(), newProjectDescription.value.trim() || undefined)
     showNewProject.value = false
     newProjectName.value = ''
+    newProjectDescription.value = ''
     router.push(`/project/${data.id}`)
   } catch (e) {
     alert('创建项目失败')
@@ -226,15 +237,27 @@ function onLoginSuccess() {
     <!-- New Discussion Dialog -->
     <Transition name="fade">
       <div v-if="showNewDiscussion" class="dialog-overlay" @click.self="showNewDiscussion = false">
-        <div class="dialog">
-          <h3>新建讨论</h3>
-          <input
-            v-model="newDiscussionTopic"
-            placeholder="讨论主题..."
-            class="dialog-input"
-            @keyup.enter="doCreateDiscussion"
-            autofocus
-          />
+        <div class="dialog dialog-enhanced">
+          <h3 class="dialog-title">发起新讨论</h3>
+          <div class="dialog-field">
+            <label class="dialog-label">讨论话题</label>
+            <textarea
+              v-model="newDiscussionTopic"
+              placeholder="输入讨论话题..."
+              class="dialog-textarea"
+              rows="3"
+              @keydown.meta.enter="doCreateDiscussion"
+              @keydown.ctrl.enter="doCreateDiscussion"
+              autofocus
+            />
+          </div>
+          <div class="dialog-field">
+            <label class="dialog-label">关联项目（可选）</label>
+            <select v-model="newDiscussionProjectId" class="dialog-input">
+              <option value="">不关联项目</option>
+              <option v-for="p in projectItems" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+          </div>
           <div class="dialog-actions">
             <button class="btn btn-secondary" @click="showNewDiscussion = false">取消</button>
             <button class="btn btn-primary" @click="doCreateDiscussion" :disabled="creating">创建</button>
@@ -246,15 +269,27 @@ function onLoginSuccess() {
     <!-- New Project Dialog -->
     <Transition name="fade">
       <div v-if="showNewProject" class="dialog-overlay" @click.self="showNewProject = false">
-        <div class="dialog">
-          <h3>新建项目</h3>
-          <input
-            v-model="newProjectName"
-            placeholder="项目名称..."
-            class="dialog-input"
-            @keyup.enter="doCreateProject"
-            autofocus
-          />
+        <div class="dialog dialog-enhanced">
+          <h3 class="dialog-title">新建项目</h3>
+          <div class="dialog-field">
+            <label class="dialog-label">项目名称</label>
+            <input
+              v-model="newProjectName"
+              placeholder="项目名称..."
+              class="dialog-input"
+              @keyup.enter="doCreateProject"
+              autofocus
+            />
+          </div>
+          <div class="dialog-field">
+            <label class="dialog-label">项目描述（可选）</label>
+            <textarea
+              v-model="newProjectDescription"
+              placeholder="简要描述项目内容..."
+              class="dialog-textarea"
+              rows="3"
+            />
+          </div>
           <div class="dialog-actions">
             <button class="btn btn-secondary" @click="showNewProject = false">取消</button>
             <button class="btn btn-primary" @click="doCreateProject" :disabled="creating">创建</button>
@@ -491,6 +526,41 @@ function onLoginSuccess() {
   box-sizing: border-box;
 }
 .dialog-input:focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
+.dialog-enhanced {
+  border-radius: 16px;
+  padding: 28px;
+  width: min(440px, 90vw);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+}
+.dialog-title {
+  margin: 0 0 20px;
+  font-size: 19px;
+  font-weight: 700;
+  color: #111827;
+}
+.dialog-field {
+  margin-bottom: 14px;
+}
+.dialog-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 6px;
+}
+.dialog-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+}
+.dialog-textarea:focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

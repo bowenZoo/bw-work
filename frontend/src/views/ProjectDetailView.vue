@@ -20,6 +20,7 @@ const showAdoptDialog = ref<any>(null) // output object
 const adoptAction = ref<'new_doc' | 'merge'>('new_doc')
 const adoptTitle = ref('')
 const adoptTargetDoc = ref('')
+const collapsedStages = ref<Set<string>>(new Set())
 
 async function doAdopt() {
   if (!showAdoptDialog.value || adoptingId.value) return
@@ -46,9 +47,25 @@ function openAdopt(output: any, stageDocs: any[]) {
   adoptTargetDoc.value = stageDocs.length ? stageDocs[0].id : ''
 }
 
-onMounted(() => {
-  refresh()
+onMounted(async () => {
+  await refresh()
+  // Default: locked stages are collapsed
+  stages.value.forEach((s: any) => {
+    if (s.status === 'locked') collapsedStages.value.add(s.id)
+  })
 })
+
+function toggleStage(stageId: string) {
+  if (collapsedStages.value.has(stageId)) {
+    collapsedStages.value.delete(stageId)
+  } else {
+    collapsedStages.value.add(stageId)
+  }
+}
+
+function isStageCollapsed(stageId: string) {
+  return collapsedStages.value.has(stageId)
+}
 
 function statusBadge(status: string) {
   if (status === 'completed') return { text: '✅ 已完成', cls: 'completed' }
@@ -127,7 +144,8 @@ async function createStageDiscussion(stageId: string) {
 
     <div v-else class="stages">
       <div v-for="stage in stages" :key="stage.id" class="stage-section" :class="stage.status">
-        <div class="stage-header">
+        <div class="stage-header" @click="toggleStage(stage.id)" style="cursor: pointer;">
+          <span class="stage-toggle" :class="{ collapsed: isStageCollapsed(stage.id) }">▶</span>
           <h2 class="stage-name">{{ stage.name }}</h2>
           <span class="status-badge" :class="statusBadge(stage.status).cls">
             {{ statusBadge(stage.status).text }}
@@ -135,15 +153,18 @@ async function createStageDiscussion(stageId: string) {
           <button
             v-if="stage.status === 'active'"
             class="btn btn-sm btn-complete"
-            @click="doCompleteStage(stage.id)"
+            @click.stop="doCompleteStage(stage.id)"
           >标记完成</button>
         </div>
 
-        <div v-if="stage.status === 'locked'" class="stage-locked-msg">
-          完成前置阶段后解锁
-        </div>
+        <div class="stage-body" :class="{ 'stage-body-collapsed': isStageCollapsed(stage.id) }">
+          <template v-if="stage.status === 'locked'">
+            <div class="stage-locked-msg">
+              完成前置阶段后解锁
+            </div>
+          </template>
 
-        <template v-else>
+          <template v-else>
           <div class="stage-content-grid" v-if="stage.documents.length || stage.discussions.length">
             <div
               v-for="doc in stage.documents"
@@ -193,7 +214,8 @@ async function createStageDiscussion(stageId: string) {
             <button class="btn btn-sm btn-secondary" @click="createStageDiscussion(stage.id)">+ 新讨论</button>
             <button class="btn btn-sm btn-secondary" @click="showNewDoc = stage.id">+ 新文档</button>
           </div>
-        </template>
+          </template>
+        </div>
       </div>
     </div>
 
@@ -302,6 +324,26 @@ async function createStageDiscussion(stageId: string) {
   align-items: center;
   gap: 12px;
   margin-bottom: 14px;
+}
+.stage-toggle {
+  font-size: 12px;
+  color: #9ca3af;
+  transition: transform 0.25s ease;
+  transform: rotate(90deg);
+  flex-shrink: 0;
+}
+.stage-toggle.collapsed {
+  transform: rotate(0deg);
+}
+.stage-body {
+  max-height: 1000px;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.25s ease;
+  opacity: 1;
+}
+.stage-body-collapsed {
+  max-height: 0;
+  opacity: 0;
 }
 .stage-name {
   font-size: 17px;
