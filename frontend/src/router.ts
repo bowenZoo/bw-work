@@ -1,166 +1,74 @@
-import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router';
-import ProjectListView from '@/views/ProjectListView.vue';
-import HomeView from '@/views/HomeView.vue';
-import DiscussionView from '@/views/DiscussionView.vue';
-import { useAdminStore } from '@/stores/admin';
-
-// Lazy load project view
-const ProjectView = () => import('@/views/ProjectView.vue');
-
-// Lazy load admin views
-const AdminLayout = () => import('@/views/admin/AdminLayout.vue');
-const AdminLoginView = () => import('@/views/admin/LoginView.vue');
-const AdminDashboardView = () => import('@/views/admin/DashboardView.vue');
-const AdminLlmConfigView = () => import('@/views/admin/LlmConfigView.vue');
-const AdminLangfuseConfigView = () => import('@/views/admin/LangfuseConfigView.vue');
-const AdminImageConfigView = () => import('@/views/admin/ImageConfigView.vue');
-const AdminAuditLogView = () => import('@/views/admin/AuditLogView.vue');
-const AdminDiscussionConfigView = () => import('@/views/admin/DiscussionConfigView.vue');
-
-// Route guard for admin routes
-function requireAdminAuth(to: RouteLocationNormalized) {
-  const adminStore = useAdminStore();
-  if (!adminStore.isAuthenticated) {
-    return {
-      path: '/admin/login',
-      query: { redirect: to.fullPath },
-    };
-  }
-  return true;
-}
+import { createRouter, createWebHistory } from 'vue-router'
+import HallView from '@/views/HallView.vue'
+import DiscussionView from '@/views/DiscussionView.vue'
+import ProjectDetailView from '@/views/ProjectDetailView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
-      name: 'projects',
-      component: ProjectListView,
-    },
-    {
-      path: '/discussion',
-      redirect: '/',
+      name: 'hall',
+      component: HallView,
     },
     {
       path: '/project/:projectId',
-      name: 'project-workspace',
-      component: HomeView,
-      props: true,
+      name: 'project-detail',
+      component: ProjectDetailView,
     },
     {
-      path: '/project/:projectId/discussion/:id',
-      name: 'discussion-by-id',
-      component: DiscussionView,
-      props: true,
+      path: '/project/:projectId/doc/:docId',
+      name: 'document',
+      component: () => import('@/views/DocumentView.vue'),
     },
     {
       path: '/discussion/:id',
-      name: 'discussion-legacy',
+      name: 'discussion',
       component: DiscussionView,
     },
-    {
-      path: '/history',
-      redirect: '/',
-    },
-    {
-      path: '/project/:id',
-      name: 'project',
-      component: ProjectView,
-    },
-    {
-      path: '/discussion/:id/playback',
-      redirect: (to) => ({ name: 'discussion-by-id', params: { id: to.params.id } }),
-    },
-    // Shared route placeholder (Phase 3)
-    {
-      path: '/shared/:token',
-      name: 'shared',
-      component: HomeView,
-    },
-    // Admin routes (kept for backward compatibility)
+    // Admin routes kept for backward compat
     {
       path: '/admin/login',
       name: 'admin-login',
-      component: AdminLoginView,
+      component: () => import('@/views/admin/LoginView.vue'),
       meta: { isAdminRoute: true },
     },
     {
       path: '/admin',
-      component: AdminLayout,
+      component: () => import('@/views/admin/AdminLayout.vue'),
       meta: { isAdminRoute: true, requiresAuth: true },
-      beforeEnter: requireAdminAuth,
+      beforeEnter: async (to) => {
+        const { useAdminStore } = await import('@/stores/admin')
+        const adminStore = useAdminStore()
+        if (!adminStore.isAuthenticated) {
+          return { path: '/admin/login', query: { redirect: to.fullPath } }
+        }
+        return true
+      },
       children: [
-        {
-          path: '',
-          name: 'admin-dashboard',
-          component: AdminDashboardView,
-        },
-        {
-          path: 'llm',
-          name: 'admin-llm',
-          component: AdminLlmConfigView,
-        },
-        {
-          path: 'langfuse',
-          name: 'admin-langfuse',
-          component: AdminLangfuseConfigView,
-        },
-        {
-          path: 'image',
-          name: 'admin-image',
-          component: AdminImageConfigView,
-        },
-        {
-          path: 'discussion',
-          name: 'admin-discussion',
-          component: AdminDiscussionConfigView,
-        },
-        {
-          path: 'logs',
-          name: 'admin-logs',
-          component: AdminAuditLogView,
-        },
+        { path: '', name: 'admin-dashboard', component: () => import('@/views/admin/DashboardView.vue') },
+        { path: 'llm', name: 'admin-llm', component: () => import('@/views/admin/LlmConfigView.vue') },
+        { path: 'langfuse', name: 'admin-langfuse', component: () => import('@/views/admin/LangfuseConfigView.vue') },
+        { path: 'image', name: 'admin-image', component: () => import('@/views/admin/ImageConfigView.vue') },
+        { path: 'discussion', name: 'admin-discussion', component: () => import('@/views/admin/DiscussionConfigView.vue') },
+        { path: 'logs', name: 'admin-logs', component: () => import('@/views/admin/AuditLogView.vue') },
       ],
     },
+    // Catch-all redirect
+    { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
-});
+})
 
-// Global auth guard: force login for all non-admin routes
+// Auth guard
 router.beforeEach(async (to) => {
-  // Skip admin routes (have their own guard)
-  if (to.meta.isAdminRoute) {
-    // existing admin guard logic below
-  } else {
-    // Check user auth for all app routes
-    const { useUserStore } = await import('@/stores/user')
-    const userStore = useUserStore()
-    if (!userStore.isAuthenticated && to.name !== 'projects') {
-      // Redirect to projects page (which shows login modal)
-      return { name: 'projects' }
-    }
+  if (to.meta.isAdminRoute) return true
+
+  const { useUserStore } = await import('@/stores/user')
+  const userStore = useUserStore()
+  if (!userStore.isAuthenticated && to.name !== 'hall') {
+    return { name: 'hall' }
   }
+  return true
+})
 
-  // Original admin guard below:
-  // Skip for non-admin routes
-  if (!to.meta.isAdminRoute) {
-    return true;
-  }
-
-  // Skip for login page
-  if (to.name === 'admin-login') {
-    return true;
-  }
-
-  // Check authentication
-  const adminStore = useAdminStore();
-  if (to.meta.requiresAuth && !adminStore.isAuthenticated) {
-    return {
-      path: '/admin/login',
-      query: { redirect: to.fullPath },
-    };
-  }
-
-  return true;
-});
-
-export default router;
+export default router

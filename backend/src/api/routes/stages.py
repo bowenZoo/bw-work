@@ -113,32 +113,27 @@ async def get_hall(user: dict = Depends(get_current_user)):
     db = AdminDatabase()
     items = []
 
-    # Get projects user can access
-    with db.get_cursor() as cursor:
-        if user.get("role") == "superadmin":
-            cursor.execute("SELECT * FROM projects ORDER BY updated_at DESC")
-        else:
-            cursor.execute("""
-                SELECT p.* FROM projects p
-                LEFT JOIN project_members pm ON p.id = pm.project_id AND pm.user_id = ?
-                WHERE p.is_public = 1 OR pm.user_id IS NOT NULL OR p.created_by = ?
-                ORDER BY p.updated_at DESC
-            """, (user["id"], user["id"]))
-        projects = cursor.fetchall()
+    # Get projects from file registry
+    import json as _json
+    try:
+        with open("/app/data/projects/_index.json") as _f:
+            _index = _json.load(_f)
+    except:
+        _index = {}
 
-    for p in projects:
-        p = dict(p)
-        # Count stages progress
-        stages = db.get_project_stages(p["id"])
+    for slug, info in _index.items():
+        if not isinstance(info, dict) or slug == "lobby":
+            continue
+        stages = db.get_project_stages(slug)
         completed = sum(1 for s in stages if s["status"] == "completed")
         total = len(stages)
         items.append(HallItemResponse(
             type="project",
-            id=str(p["id"]),
-            name=p["name"],
-            description=p.get("description", ""),
-            updated_at=str(p.get("updated_at", "")),
-            extra={"stage_progress": f"{completed}/{total}", "slug": p.get("slug", "")},
+            id=slug,
+            name=info.get("name", slug),
+            description=info.get("description", ""),
+            updated_at="",
+            extra={"stage_progress": f"{completed}/{total}"},
         ))
 
     # Get free discussions (project_id is null) from .index.db
@@ -173,13 +168,18 @@ async def get_hall(user: dict = Depends(get_current_user)):
 @router.get("/projects/{project_id}/detail")
 async def get_project_detail(project_id: str, user: dict = Depends(get_current_user)):
     """Get full project detail: info + stages + documents + discussions per stage."""
+    # Load project from file registry (not admin DB)
+    import json, os
+    index_path = "/app/data/projects/_index.json"
+    try:
+        with open(index_path) as f:
+            index = json.load(f)
+    except:
+        raise HTTPException(status_code=500, detail="Project index not found")
+    if project_id not in index:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project = {"id": project_id, "name": index[project_id].get("name", project_id), "description": index[project_id].get("description", ""), "created_at": "", "updated_at": ""}
     db = AdminDatabase()
-    with db.get_cursor() as cursor:
-        cursor.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
-        project = cursor.fetchone()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        project = dict(project)
 
     stages = db.get_project_stages(project_id)
 

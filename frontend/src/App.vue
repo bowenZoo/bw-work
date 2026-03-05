@@ -1,60 +1,50 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue';
-import { useUserStore } from '@/stores/user';
-import SidePanel from '@/components/layout/SidePanel.vue';
-import UserManagePanel from '@/components/admin/UserManagePanel.vue';
-import ProfilePanel from '@/components/settings/ProfilePanel.vue';
-import SystemSettingsPanel from '@/components/settings/SystemSettingsPanel.vue';
-import AuditLogPanel from '@/components/settings/AuditLogPanel.vue';
-import LlmConfigPanel from '@/components/settings/LlmConfigPanel.vue';
-import LangfuseConfigPanel from '@/components/settings/LangfuseConfigPanel.vue';
-import ImageConfigPanel from '@/components/settings/ImageConfigPanel.vue';
+import { ref, onMounted, computed } from 'vue'
+import { useUserStore } from '@/stores/user'
+import UserManagePanel from '@/components/admin/UserManagePanel.vue'
+import ProfilePanel from '@/components/settings/ProfilePanel.vue'
+import SystemSettingsPanel from '@/components/settings/SystemSettingsPanel.vue'
+import AuditLogPanel from '@/components/settings/AuditLogPanel.vue'
+import LlmConfigPanel from '@/components/settings/LlmConfigPanel.vue'
+import LangfuseConfigPanel from '@/components/settings/LangfuseConfigPanel.vue'
+import ImageConfigPanel from '@/components/settings/ImageConfigPanel.vue'
 
-const userStore = useUserStore();
-const activeSection = ref('my-discussions');
+const userStore = useUserStore()
+const activeSection = ref('')
 
-// Settings sections that open a drawer overlay
-const settingSections = ['profile', 'system-settings', 'llm-config', 'langfuse-config', 'image-config', 'audit-logs', 'user-manage'];
-
-const drawerOpen = computed(() => settingSections.includes(activeSection.value));
+const settingSections = ['profile', 'my-discussions', 'system-settings', 'llm-config', 'langfuse-config', 'image-config', 'audit-logs', 'user-manage']
+const drawerOpen = computed(() => settingSections.includes(activeSection.value))
 
 const drawerTitle = computed(() => {
   const map: Record<string, string> = {
-    'profile': '个人中心',
+    'profile': '个人资料',
+    'my-discussions': '我的讨论',
     'system-settings': '系统设置',
     'llm-config': 'LLM 配置',
     'langfuse-config': 'Langfuse',
     'image-config': '图片模型',
     'audit-logs': '审计日志',
     'user-manage': '用户管理',
-  };
-  return map[activeSection.value] || '';
-});
-
-function onSectionSelect(section: string) {
-  if (activeSection.value === section && settingSections.includes(section)) {
-    // Toggle: click same settings section closes it
-    activeSection.value = 'my-discussions';
-  } else {
-    activeSection.value = section;
   }
+  return map[activeSection.value] || ''
+})
+
+function onOpenPanel(section: string) {
+  activeSection.value = activeSection.value === section ? '' : section
 }
 
 function closeDrawer() {
-  activeSection.value = 'my-discussions';
+  activeSection.value = ''
 }
 
 onMounted(() => {
-  userStore.init();
-});
+  userStore.init()
+})
 </script>
 
 <template>
-  <div class="app-layout">
-    <SidePanel :active-section="activeSection" @select="onSectionSelect" />
-    <div class="app-content">
-      <router-view />
-    </div>
+  <div class="app-root">
+    <router-view @open-panel="onOpenPanel" />
     <!-- Settings Drawer Overlay -->
     <Transition name="drawer">
       <div v-if="drawerOpen" class="drawer-overlay" @click.self="closeDrawer">
@@ -79,16 +69,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.app-layout {
-  display: flex;
-  height: 100vh;
-  width: 100vw;
-  overflow: hidden;
-}
-.app-content {
-  flex: 1;
-  overflow-y: auto;
-  min-width: 0;
+.app-root {
+  min-height: 100vh;
 }
 
 /* Drawer overlay */
