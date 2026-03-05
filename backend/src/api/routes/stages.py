@@ -219,6 +219,54 @@ async def request_project_access(project_id: str, request: AccessRequestBody, us
     return {"ok": True, "message": "申请已发送"}
 
 
+# === Access Request Management (Admin) ===
+
+@router.get("/projects/{project_id}/access-requests")
+async def list_access_requests(project_id: str, user: dict = Depends(get_current_user)):
+    """List pending access requests. Only project admin or superadmin can view."""
+    _check_access(project_id, user, "admin")
+    db = AdminDatabase()
+    with db.get_cursor() as cursor:
+        cursor.execute(
+            "SELECT pm.user_id, pm.role, pm.joined_at, u.username, u.display_name "
+            "FROM project_members pm LEFT JOIN users u ON pm.user_id = u.id "
+            "WHERE pm.project_id = ? AND pm.role LIKE 'pending_%'",
+            (project_id,)
+        )
+        rows = cursor.fetchall()
+        return [{"user_id": r[0], "requested_role": r[1].replace("pending_", ""), "requested_at": r[2], "username": r[3], "display_name": r[4]} for r in rows]
+
+
+@router.post("/projects/{project_id}/access-requests/{user_id}/approve")
+async def approve_access_request(project_id: str, user_id: int, user: dict = Depends(get_current_user)):
+    """Approve a pending access request."""
+    _check_access(project_id, user, "admin")
+    db = AdminDatabase()
+    with db.get_cursor() as cursor:
+        cursor.execute("SELECT role FROM project_members WHERE project_id = ? AND user_id = ?", (project_id, user_id))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="未找到申请记录")
+        role_str = row[0] if isinstance(row, tuple) else row["role"]
+        if not role_str.startswith("pending_"):
+            raise HTTPException(status_code=400, detail="该用户已是正式成员")
+        new_role = role_str.replace("pending_", "")
+        cursor.execute("UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?", (new_role, project_id, user_id))
+    return {"ok": True, "message": "已批准", "new_role": new_role}
+
+
+@router.post("/projects/{project_id}/access-requests/{user_id}/reject")
+async def reject_access_request(project_id: str, user_id: int, user: dict = Depends(get_current_user)):
+    """Reject and delete a pending access request."""
+    _check_access(project_id, user, "admin")
+    db = AdminDatabase()
+    with db.get_cursor() as cursor:
+        cursor.execute("DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND role LIKE 'pending_%'", (project_id, user_id))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="未找到待审批的申请")
+    return {"ok": True, "message": "已拒绝"}
+
+
 # === Project Detail (with stages) ===
 
 @router.get("/projects/{project_id}/detail")

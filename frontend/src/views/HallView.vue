@@ -140,13 +140,24 @@ function addAgent(id: string) {
   crewSelectedId.value = id
 }
 function removeAgent(id: string) {
+  const currentList = participatingAgents.value
+  const deletedIndex = currentList.findIndex(r => r.id === id)
+
   if (selectedAgents.value.length === 0) {
-    // Empty means all — materialize, then remove
     selectedAgents.value = AGENT_ROLES.map(r => r.id).filter(a => a !== id)
   } else {
     selectedAgents.value = selectedAgents.value.filter(a => a !== id)
   }
-  if (crewSelectedId.value === id) crewSelectedId.value = null
+
+  if (crewSelectedId.value === id) {
+    const newList = participatingAgents.value
+    if (newList.length > 0) {
+      const newIndex = Math.min(deletedIndex, newList.length - 1)
+      crewSelectedId.value = newList[Math.max(0, newIndex - 1)]?.id || newList[0]?.id
+    } else {
+      crewSelectedId.value = null
+    }
+  }
 }
 function hasAgentOverrides(id: string) {
   const o = agentConfigs.value[id]

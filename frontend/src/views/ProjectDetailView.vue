@@ -67,6 +67,44 @@ const canEdit = computed(() => {
   return role === 'admin' || role === 'editor' || userStore.role === 'superadmin'
 })
 
+const isAdmin = computed(() => {
+  const role = project.value?.user_role
+  return role === 'admin' || userStore.user?.role === 'superadmin'
+})
+
+const pendingRequests = ref<any[]>([])
+
+async function loadPendingRequests() {
+  if (!isAdmin.value) return
+  const base = import.meta.env.VITE_API_BASE || ''
+  try {
+    const res = await fetch(`${base}/api/projects/${project.value?.id}/access-requests`, {
+      headers: { Authorization: `Bearer ${userStore.accessToken}` }
+    })
+    if (res.ok) pendingRequests.value = await res.json()
+  } catch {}
+}
+
+async function approveRequest(userId: number) {
+  const base = import.meta.env.VITE_API_BASE || ''
+  const res = await fetch(`${base}/api/projects/${project.value?.id}/access-requests/${userId}/approve`, {
+    method: 'POST', headers: { Authorization: `Bearer ${userStore.accessToken}` }
+  })
+  if (res.ok) {
+    pendingRequests.value = pendingRequests.value.filter((r: any) => r.user_id !== userId)
+  }
+}
+
+async function rejectRequest(userId: number) {
+  const base = import.meta.env.VITE_API_BASE || ''
+  const res = await fetch(`${base}/api/projects/${project.value?.id}/access-requests/${userId}/reject`, {
+    method: 'POST', headers: { Authorization: `Bearer ${userStore.accessToken}` }
+  })
+  if (res.ok) {
+    pendingRequests.value = pendingRequests.value.filter((r: any) => r.user_id !== userId)
+  }
+}
+
 const showMemberDialog = ref(false)
 const members = ref<any[]>([])
 const loadingMembers = ref(false)
@@ -218,6 +256,11 @@ function openAdopt(output: any, stageDocs: any[]) {
 
 onMounted(async () => {
   await refresh()
+  // Check access denied after load
+  if (project.value?.access_denied) {
+    showAccessModal.value = true
+  }
+  await loadPendingRequests()
   // Default: locked stages are collapsed
   stages.value.forEach((s: any) => {
     if (s.status === 'locked') collapsedStages.value.add(s.id)
@@ -321,6 +364,15 @@ async function createStageDiscussion(stageId: string) {
         <button v-if="canEdit" class="btn btn-sm btn-secondary" @click="openMemberDialog">👥 成员</button>
       </div>
     </header>
+
+    <div v-if="isAdmin && pendingRequests.length > 0" class="pending-bar">
+      <span>📬 {{ pendingRequests.length }} 个权限申请待审批</span>
+      <div v-for="req in pendingRequests" :key="req.user_id" class="pending-item">
+        <span>{{ req.display_name || req.username }} 申请 <strong>{{ req.requested_role === 'editor' ? '编辑' : '查看' }}</strong> 权限</span>
+        <button class="btn btn-sm btn-primary" @click="approveRequest(req.user_id)">✓ 批准</button>
+        <button class="btn btn-sm btn-danger" @click="rejectRequest(req.user_id)">✗ 拒绝</button>
+      </div>
+    </div>
 
     <div v-if="loading" class="pd-loading">加载中...</div>
 
@@ -1013,4 +1065,10 @@ async function createStageDiscussion(stageId: string) {
 .access-actions { display: flex; gap: 10px; justify-content: center; margin-bottom: 12px; }
 .btn-ghost { background: none; border: none; color: #6b7280; cursor: pointer; font-size: 13px; padding: 6px 10px; }
 .btn-ghost:hover { color: #374151; }
+
+.pending-bar { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
+.pending-item { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; }
+.pending-item .btn-sm { padding: 2px 8px; font-size: 12px; }
+.btn-danger { background: #ef4444; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+.btn-danger:hover { background: #dc2626; }
 </style>
