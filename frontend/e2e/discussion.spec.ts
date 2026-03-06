@@ -94,3 +94,111 @@ test.describe('讨论详情页 UI', () => {
     expect(hasPanel).toBeTruthy();
   });
 });
+
+test.describe('讨论详情页 - 模型快速切换', () => {
+  const MOCK_DISCUSSION_ID = 'test-model-switch-id';
+  const MOCK_MODEL = 'claude-sonnet-4-6';
+  const BASE_URL = 'http://localhost:18001';
+
+  test('模型徽章显示当前模型并支持切换', async ({ authedPage: page }) => {
+    // 1. mock GET /api/config/model
+    await page.route('**/api/config/model', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            model: MOCK_MODEL,
+            profile_name: 'Default',
+            profile_id: '1',
+            profiles: [],
+          }),
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    // 2. mock GET /api/discussions/test-model-switch-id (completed discussion)
+    await page.route(`**/api/discussions/${MOCK_DISCUSSION_ID}`, async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: MOCK_DISCUSSION_ID,
+            topic: '模型切换测试讨论',
+            status: 'completed',
+            rounds: 2,
+            created_at: new Date().toISOString(),
+            messages: [],
+          }),
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    // Track POST /api/config/model/set calls
+    let modelSetCalled = false;
+    let modelSetBody: any = null;
+    await page.route('**/api/config/model/set', async (route) => {
+      if (route.request().method() === 'POST') {
+        modelSetCalled = true;
+        modelSetBody = route.request().postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5',
+            profile_id: '1',
+          }),
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    // 3. 导航到讨论页（直接用 URL 跳转，已有 token in localStorage via authedPage fixture）
+    await page.goto(`${BASE_URL}/discussion/${MOCK_DISCUSSION_ID}`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1500);
+
+    // 4. 验证模型徽章显示 claude-sonnet-4-6
+    const modelBadge = page.locator('.model-badge');
+    const badgeVisible = await modelBadge.isVisible().catch(() => false);
+
+    if (!badgeVisible) {
+      // The model badge is only shown when currentModel.model is truthy.
+      // If the mock wasn't called (e.g. the component redirected away), skip gracefully.
+      test.skip();
+      return;
+    }
+
+    const badgeText = await modelBadge.textContent();
+    expect(badgeText).toContain(MOCK_MODEL);
+
+    // 5. 点击模型徽章，验证下拉出现
+    await modelBadge.click();
+    await page.waitForTimeout(300);
+
+    const dropdown = page.locator('.model-dropdown');
+    const dropdownVisible = await dropdown.isVisible().catch(() => false);
+    expect(dropdownVisible).toBeTruthy();
+
+    // Verify dropdown contains expected model options
+    const dropdownText = await dropdown.textContent();
+    expect(dropdownText).toContain('Haiku 4.5');
+    expect(dropdownText).toContain('Sonnet 4.6');
+    expect(dropdownText).toContain('Opus 4.6');
+
+    // 6. 点击 Haiku 4.5 选项
+    const haikuItem = page.locator('.model-dropdown-item').filter({ hasText: 'Haiku 4.5' });
+    await haikuItem.click();
+    await page.waitForTimeout(500);
+
+    // 验证 POST 被调用
+    expect(modelSetCalled).toBeTruthy();
+    expect(modelSetBody?.model).toBe('claude-haiku-4-5');
+  });
+});

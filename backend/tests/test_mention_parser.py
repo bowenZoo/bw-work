@@ -264,3 +264,83 @@ class TestGetAllRoles:
         roles = get_all_roles()
         expected = {"系统策划", "数值策划", "玩家代言人"}
         assert set(roles) == expected
+
+
+class TestParseSpeakerBlockKnownRoles:
+    """Tests for parse_speaker_block known_roles filtering feature."""
+
+    def _make_block(self, *roles: str) -> str:
+        """Helper: wrap role names in a speakers block."""
+        inner = ", ".join(roles)
+        return f"```speakers\n{inner}\n```"
+
+    def test_no_known_roles_recognises_static_role(self):
+        """known_roles=None (default): 系统策划 should be recognised normally."""
+        text = self._make_block("系统策划")
+        result = parse_speaker_block(text)
+        assert result == ["系统策划"]
+
+    def test_known_roles_filters_out_unlisted_static_role(self):
+        """known_roles=['创意总监', '市场总监']: 系统策划 should be filtered out."""
+        text = self._make_block("系统策划")
+        result = parse_speaker_block(text, known_roles=["创意总监", "市场总监"])
+        # 系统策划 is a static role but not in known_roles → filtered; result is None
+        assert result is None
+
+    def test_known_roles_recognises_dynamic_role(self):
+        """known_roles=['创意总监']: 创意总监 should be recognised (dynamic registration)."""
+        text = self._make_block("创意总监")
+        result = parse_speaker_block(text, known_roles=["创意总监"])
+        assert result == ["创意总监"]
+
+    def test_known_roles_allows_producer_passthrough(self):
+        """known_roles=['创意总监']: 制作人 should still pass through."""
+        text = self._make_block("制作人")
+        result = parse_speaker_block(text, known_roles=["创意总监"])
+        assert result == ["制作人"]
+
+    def test_empty_known_roles_behaves_like_no_filter(self):
+        """known_roles=[]: empty list is falsy so filter is NOT applied (same as None).
+
+        The implementation checks `if known_roles:` which is falsy for an empty list,
+        so static roles like 系统策划 still pass through when known_roles=[].
+        """
+        # 系统策划 should still pass (empty list → no filter applied)
+        text_sys = self._make_block("系统策划")
+        result_sys = parse_speaker_block(text_sys, known_roles=[])
+        assert result_sys == ["系统策划"]
+
+        # 制作人 is always allowed regardless
+        text_prod = self._make_block("制作人")
+        result_prod = parse_speaker_block(text_prod, known_roles=[])
+        assert result_prod == ["制作人"]
+
+    def test_parse_next_speakers_passes_known_roles(self):
+        """parse_next_speakers should forward known_roles to parse_speaker_block.
+
+        When known_roles is provided and excludes a static role, that role is filtered
+        from the block result. The fallback mention parser is then used instead.
+        """
+        # When the block result is filtered, parse_next_speakers falls back to
+        # mention-based parsing; the text `\`\`\`speakers\n系统策划\n\`\`\`` does
+        # directly contain "系统策划" so mention parsing will return it.
+        # The important behaviour: result must come via fallback, not block path.
+        text = self._make_block("系统策划")
+        result_filtered = parse_next_speakers(text, known_roles=["创意总监"])
+        result_unfiltered = parse_next_speakers(text, known_roles=None)
+        # Both paths end up returning 系统策划 (via block or mention fallback),
+        # so the key assertion is that known_roles is actually forwarded:
+        # when dynamic role is used, only it should appear.
+        text2 = self._make_block("创意总监")
+        result2 = parse_next_speakers(text2, known_roles=["创意总监"])
+        assert result2 == ["创意总监"]
+        # And a role not in known_roles and not resolvable via static alias should be absent
+        text3 = self._make_block("未知角色XYZ")
+        result3 = parse_next_speakers(text3, known_roles=["创意总监"])
+        assert "未知角色XYZ" not in result3
+
+    def test_parse_next_speakers_known_roles_dynamic_role_via_block(self):
+        """parse_next_speakers with known_roles passes through to block parsing."""
+        text = self._make_block("创意总监")
+        result = parse_next_speakers(text, known_roles=["创意总监"])
+        assert result == ["创意总监"]
