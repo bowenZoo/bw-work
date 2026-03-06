@@ -397,7 +397,11 @@ async function doCreateProject() {
     showNewProject.value = false
     newProjectName.value = ''
     newProjectDescription.value = ''
-    router.push(`/project/${data.id}`)
+    if (data.concept_discussion_id) {
+      router.push(`/discussion/${data.concept_discussion_id}`)
+    } else {
+      router.push(`/project/${data.id}`)
+    }
   } catch (e) {
     alert('创建项目失败')
   } finally {

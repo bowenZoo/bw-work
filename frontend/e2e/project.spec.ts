@@ -12,8 +12,11 @@ test.describe('项目详情页', () => {
   test.beforeEach(async ({ authedPage: page, request }) => {
     const token = await getToken(page);
     projectId = await createTestProject(request, token, `E2E详情_${Date.now()}`);
-    await page.goto(`/project/${projectId}`);
-    await page.waitForSelector('.project-detail', { timeout: 10000 });
+    // 使用 SPA 内部路由跳转，避免全页刷新导致 user store 重新初始化的竞态问题
+    await page.evaluate((id) => {
+      (window as any).__vue_router.push(`/project/${id}`)
+    }, projectId);
+    await page.waitForSelector('.project-detail', { timeout: 15000 });
   });
 
   test.afterEach(async ({ authedPage: page, request }) => {
@@ -75,7 +78,7 @@ test.describe('项目详情页', () => {
 
   test('返回大厅按钮', async ({ authedPage: page }) => {
     await page.locator('.back-btn').first().click();
-    await page.waitForURL('/', { timeout: 5000 });
-    await expect(page.locator('.hall')).toBeVisible();
+    // SPA 路由 pushState 不触发 load 事件，直接等待大厅容器出现
+    await expect(page.locator('.hall')).toBeVisible({ timeout: 5000 });
   });
 });

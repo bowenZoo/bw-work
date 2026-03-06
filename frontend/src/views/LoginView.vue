@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
-const route = useRoute()
 const userStore = useUserStore()
 
 const activeTab = ref<'login' | 'register'>('login')
@@ -30,8 +29,7 @@ async function handleSubmit() {
       }
       await userStore.register(username.value, password.value, displayName.value || undefined)
     }
-    const redirect = route.query.redirect as string | undefined
-    router.push(redirect || '/')
+    router.push('/')
   } catch (e: any) {
     error.value = e.message || (activeTab.value === 'login' ? '登录失败' : '注册失败')
   } finally {

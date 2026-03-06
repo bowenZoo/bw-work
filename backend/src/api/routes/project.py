@@ -196,12 +196,14 @@ async def create_project(request: CreateProjectRequest, user: dict = Depends(get
         briefing = f"项目名称：{request.name}"
         if request.description:
             briefing += f"\n项目描述：{request.description}"
+        from src.api.routes.discussion import _run_discussion_async, _background_tasks
         disc = DiscussionState(
             id=concept_id,
             topic=f"{request.name} — 概念孵化",
             rounds=50,
             auto_pause_interval=1,
-            status=DiscussionStatus.PENDING,
+            status=DiscussionStatus.RUNNING,
+            started_at=now_iso,
             created_at=now_iso,
             project_id=project.id,
             target_type="stage",
@@ -212,6 +214,11 @@ async def create_project(request: CreateProjectRequest, user: dict = Depends(get
         )
         save_discussion_state(disc)
         concept_discussion_id = concept_id
+        # Auto-start the discussion
+        import asyncio as _asyncio
+        task = _asyncio.create_task(_run_discussion_async(concept_id))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
     except Exception as _exc:
         logger.warning("Failed to auto-create concept discussion: %s", _exc)
 

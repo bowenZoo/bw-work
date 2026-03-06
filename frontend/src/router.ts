@@ -28,6 +28,11 @@ const router = createRouter({
       component: () => import('@/views/DocumentView.vue'),
     },
     {
+      path: '/project/:projectId/session/:sessionId',
+      name: 'session',
+      component: () => import('@/views/StageSessionView.vue'),
+    },
+    {
       path: '/discussion/:id',
       name: 'discussion',
       component: DiscussionView,
@@ -66,7 +71,9 @@ const router = createRouter({
 })
 
 // Auth guard
-router.beforeEach(async (to) => {
+const deepRoutes = ['project-detail', 'document', 'discussion', 'session']
+
+router.beforeEach(async (to, from) => {
   if (to.meta.isAdminRoute) return true
 
   const { useUserStore } = await import('@/stores/user')
@@ -74,6 +81,11 @@ router.beforeEach(async (to) => {
 
   // 已登录用户不能访问 /login，直接回大厅
   if (to.meta.guestOnly && userStore.isAuthenticated) {
+    return { name: 'hall' }
+  }
+
+  // 已登录用户从外部直接打开深度页面（书签/浏览器恢复），统一进大厅
+  if (userStore.isAuthenticated && from.name === undefined && deepRoutes.includes(to.name as string)) {
     return { name: 'hall' }
   }
 

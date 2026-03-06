@@ -2,7 +2,11 @@
 
 import json
 import logging
+from pathlib import Path
 from typing import Optional
+
+# Data directory relative to this file: backend/src/api/routes/ → ×4 parents → backend/
+_DATA_DIR = Path(__file__).parent.parent.parent.parent / "data" / "projects"
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -139,11 +143,11 @@ async def get_hall(user: dict = Depends(get_current_user)):
     items = []
 
     # Get projects from file registry
-    import json as _json
     try:
-        with open("/app/data/projects/_index.json") as _f:
-            _index = _json.load(_f)
-    except:
+        with open(_DATA_DIR / "_index.json") as _f:
+            _index = json.load(_f)
+    except Exception as _e:
+        logger.warning(f"Failed to load project index: {_e}")
         _index = {}
 
     for slug, info in _index.items():
@@ -169,7 +173,7 @@ async def get_hall(user: dict = Depends(get_current_user)):
     # Get free discussions (project_id is null) from .index.db
     try:
         import sqlite3
-        idx_db = sqlite3.connect("/app/data/projects/.index.db")
+        idx_db = sqlite3.connect(str(_DATA_DIR / ".index.db"))
         idx_db.row_factory = sqlite3.Row
         rows = idx_db.execute(
             "SELECT * FROM discussions WHERE project_id IS NULL OR project_id = '' OR project_id = 'lobby' ORDER BY updated_at DESC LIMIT 50"
@@ -283,7 +287,7 @@ async def get_project_detail(project_id: str, user: dict = Depends(get_current_u
         access_denied = not is_pub and (not user_role or str(user_role).startswith("pending_"))
     # Load project from file registry (not admin DB)
     import json, os
-    index_path = "/app/data/projects/_index.json"
+    index_path = str(_DATA_DIR / "_index.json")
     try:
         with open(index_path) as f:
             index = json.load(f)
@@ -308,24 +312,24 @@ async def get_project_detail(project_id: str, user: dict = Depends(get_current_u
             docs_by_stage[sid] = []
         docs_by_stage[sid].append(d)
 
-    # Get discussions per stage from .index.db
-    discussions_by_stage = {}
+    # Get discussions per stage from state files (covers pending + running + completed)
+    discussions_by_stage: dict = {}
     try:
-        import sqlite3
-        idx_db = sqlite3.connect("/app/data/projects/.index.db")
-        idx_db.row_factory = sqlite3.Row
-        slug = project.get("slug", "")
-        rows = idx_db.execute(
-            "SELECT * FROM discussions WHERE project_id = ? ORDER BY updated_at DESC",
-            (slug,)
-        ).fetchall()
-        for r in rows:
-            r = dict(r)
-            sid = r.get("target_id") or "unassigned"
-            if sid not in discussions_by_stage:
-                discussions_by_stage[sid] = []
-            discussions_by_stage[sid].append(r)
-        idx_db.close()
+        _state_dir = _DATA_DIR / ".discussion_state"
+        _state_dir_env = os.environ.get("DISCUSSION_STATUS_DIR")
+        if _state_dir_env:
+            _state_dir = Path(_state_dir_env)
+        if _state_dir.exists():
+            for state_file in _state_dir.glob("*.json"):
+                try:
+                    data = json.loads(state_file.read_text(encoding="utf-8"))
+                    if data.get("project_id") == project_id:
+                        sid = data.get("target_id") or "unassigned"
+                        if sid not in discussions_by_stage:
+                            discussions_by_stage[sid] = []
+                        discussions_by_stage[sid].append(data)
+                except Exception:
+                    pass
     except Exception as e:
         logger.warning(f"Failed to load project discussions: {e}")
 

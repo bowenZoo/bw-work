@@ -37,6 +37,10 @@ const isHallDiscussion = computed(() => {
   return !pid || pid === '' || pid === 'lobby'
 })
 
+const isConceptDiscussion = computed(() => {
+  return discussion.value?.moderator_role === 'creative_director'
+})
+
 async function openArchiveDialog() {
   showArchiveDialog.value = true
   try {
@@ -826,6 +830,22 @@ onUnmounted(() => {
           :is-waiting-decision="isWaitingDecision"
           @send="handleProducerSend"
         />
+        <!-- Concept incubation completion banner -->
+        <div v-if="isConceptDiscussion && isFinished && discussion?.project_id" class="concept-done-banner">
+          <div class="concept-done-icon">✨</div>
+          <div class="concept-done-content">
+            <div class="concept-done-title">概念孵化完成！</div>
+            <div class="concept-done-desc">创意点文档已生成，准备好进入下一阶段了吗？</div>
+          </div>
+          <div class="concept-done-actions">
+            <button class="concept-btn concept-btn-secondary" @click="router.push(`/project/${discussion.project_id}`)">
+              回到项目
+            </button>
+            <button class="concept-btn concept-btn-primary" @click="router.push(`/project/${discussion.project_id}?next=core-gdd`)">
+              开始核心 GDD →
+            </button>
+          </div>
+        </div>
         <!-- Continue trigger for completed/failed discussions -->
         <div v-if="isFinished && (discussionId || discussion?.id)" class="continue-area">
           <button
@@ -1330,6 +1350,59 @@ onUnmounted(() => {
   padding: 12px 16px;
   background: #FFFFFF;
   border-top: 1px solid #F0EBE4;
+}
+
+/* Concept incubation completion banner */
+.concept-done-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  background: linear-gradient(135deg, #F5F3FF 0%, #EDE9FE 100%);
+  border-top: 2px solid #7C3AED;
+  flex-shrink: 0;
+}
+.concept-done-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+.concept-done-content {
+  flex: 1;
+  min-width: 0;
+}
+.concept-done-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #5B21B6;
+  margin-bottom: 2px;
+}
+.concept-done-desc {
+  font-size: 12px;
+  color: #6D28D9;
+}
+.concept-done-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.concept-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+.concept-btn:hover { opacity: 0.85; }
+.concept-btn-secondary {
+  background: #EDE9FE;
+  color: #5B21B6;
+}
+.concept-btn-primary {
+  background: #7C3AED;
+  color: #FFFFFF;
 }
 
 /* Continue discussion area */

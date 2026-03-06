@@ -13,6 +13,7 @@ from src.api.routes.auth import router as auth_router
 from src.api.routes.users import router as users_router
 from src.api.routes.stages import router as stages_router
 from src.api.routes.notifications import router as notifications_router
+from src.api.routes.session import router as session_router
 
 __all__ = [
     "checkpoint_router",
@@ -30,4 +31,6 @@ __all__ = [
     "users_router",
     "stages_router",
     "notifications_router",
+    "session_router",
 ]
+

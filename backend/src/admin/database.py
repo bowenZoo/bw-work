@@ -288,6 +288,44 @@ class AdminDatabase:
                 )
             """)
 
+            # Stage interview sessions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS stage_sessions (
+                    id TEXT PRIMARY KEY,
+                    project_id INTEGER NOT NULL,
+                    stage_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    status TEXT DEFAULT 'active',
+                    created_by INTEGER NOT NULL,
+                    generated_doc_id TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (stage_id) REFERENCES project_stages(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Session messages table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS session_messages (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    user_id INTEGER,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES stage_sessions(id) ON DELETE CASCADE
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_stage_sessions_stage
+                ON stage_sessions(stage_id)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_session_messages_session
+                ON session_messages(session_id, created_at)
+            """)
+
     # =========================================================================
     # Admin User Operations
     # =========================================================================
@@ -658,6 +696,13 @@ class AdminDatabase:
                         cursor.execute("UPDATE project_stages SET status = 'active' WHERE id = ?", (s["id"],))
             return stages
 
+    def get_stage(self, stage_id: str) -> Optional[dict]:
+        """Get a single stage by id."""
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM project_stages WHERE id = ?", (stage_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def update_stage(self, stage_id: str, **kwargs) -> bool:
         if not kwargs:
             return False
@@ -812,6 +857,66 @@ class AdminDatabase:
         with self.get_cursor() as cursor:
             cursor.execute("UPDATE discussion_outputs SET status = 'dismissed' WHERE id = ?", (output_id,))
             return cursor.rowcount > 0
+
+    # =========================================================================
+    # Stage Session Operations
+    # =========================================================================
+
+    def create_stage_session(self, project_id: int, stage_id: str, title: str, created_by: int) -> dict:
+        import uuid
+        sid = str(uuid.uuid4())
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """INSERT INTO stage_sessions (id, project_id, stage_id, title, created_by)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (sid, project_id, stage_id, title, created_by)
+            )
+        return self.get_stage_session(sid)
+
+    def get_stage_session(self, session_id: str) -> Optional[dict]:
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM stage_sessions WHERE id = ?", (session_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_stage_sessions(self, stage_id: str) -> list[dict]:
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM stage_sessions WHERE stage_id = ? ORDER BY created_at DESC", (stage_id,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def update_stage_session(self, session_id: str, **kwargs) -> bool:
+        allowed = {"status", "generated_doc_id", "title"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return False
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [session_id]
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                f"UPDATE stage_sessions SET {sets}, updated_at = CURRENT_TIMESTAMP WHERE id = ?", vals
+            )
+            return cursor.rowcount > 0
+
+    def add_session_message(self, session_id: str, role: str, content: str, user_id: Optional[int] = None) -> dict:
+        import uuid
+        mid = str(uuid.uuid4())
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """INSERT INTO session_messages (id, session_id, user_id, role, content)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (mid, session_id, user_id, role, content)
+            )
+        return {"id": mid, "session_id": session_id, "user_id": user_id, "role": role, "content": content}
+
+    def get_session_messages(self, session_id: str, limit: int = 200) -> list[dict]:
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM session_messages WHERE session_id = ? ORDER BY created_at LIMIT ?",
+                (session_id, limit)
+            )
+            return [dict(r) for r in cursor.fetchall()]
 
         # =========================================================================
     # Refresh Token Operations

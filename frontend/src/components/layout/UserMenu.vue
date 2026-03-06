@@ -94,7 +94,7 @@ function onNotifClick(n: any) {
 async function doLogout() {
   await userStore.logout()
   close()
-  router.push('/')
+  router.push('/login')
 }
 
 function formatTime(dt: string) {

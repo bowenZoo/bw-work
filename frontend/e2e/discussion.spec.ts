@@ -19,9 +19,10 @@ test.describe('讨论列表 API', () => {
     });
     expect(res.ok()).toBeTruthy();
     const body = await res.json();
-    expect(body).toHaveProperty('discussions');
-    expect(body).toHaveProperty('total');
-    expect(Array.isArray(body.discussions)).toBeTruthy();
+    // API 返回 {items: [...], hasMore: bool} 格式
+    expect(body).toHaveProperty('items');
+    expect(body).toHaveProperty('hasMore');
+    expect(Array.isArray(body.items)).toBeTruthy();
   });
 
   test('获取活跃讨论列表', async ({ request }) => {
@@ -36,8 +37,9 @@ test.describe('讨论列表 API', () => {
     expect(res.ok()).toBeTruthy();
     const body = await res.json();
     expect(body).toHaveProperty('agents');
-    expect(Array.isArray(body.agents)).toBeTruthy();
-    expect(body.agents.length).toBeGreaterThan(0);
+    // agents 是 dict 格式（{role_id: config}），不是数组
+    expect(typeof body.agents).toBe('object');
+    expect(Object.keys(body.agents).length).toBeGreaterThan(0);
   });
 
   test('获取讨论风格列表', async ({ request }) => {
@@ -51,13 +53,17 @@ test.describe('讨论列表 API', () => {
 
 test.describe('讨论详情页 UI', () => {
   test('直接访问不存在的讨论 ID - 重定向回大厅', async ({ authedPage: page }) => {
-    await page.goto('/discussion/nonexistent-id-12345');
-    // 要么显示错误状态，要么被路由守卫重定向
+    // 用 SPA 路由跳转避免全页刷新的 auth race condition
+    await page.evaluate(() => {
+      (window as any).__vue_router.push('/discussion/nonexistent-id-12345');
+    });
     await page.waitForTimeout(3000);
     const url = page.url();
-    const isRedirected = url.endsWith('/') || url.includes('/hall') || !url.includes('nonexistent-id-12345');
-    const hasError = await page.locator('[class*="error"], [class*="not-found"]').count() > 0;
-    expect(isRedirected || hasError).toBeTruthy();
+    // 要么被重定向（URL 不含 nonexistent-id），要么显示错误组件
+    const isRedirected = !url.includes('nonexistent-id-12345');
+    const hasError = await page.locator('[class*="error"], [class*="not-found"], .not-found').count() > 0;
+    const isOnHall = await page.locator('.hall').count() > 0;
+    expect(isRedirected || hasError || isOnHall).toBeTruthy();
   });
 
   test('已完成讨论页 - 展示基本 UI 结构', async ({ authedPage: page, request }) => {
@@ -68,19 +74,22 @@ test.describe('讨论详情页 UI', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     const list = await listRes.json();
-    const completed = list.discussions?.find((d: any) => d.status === 'completed');
+    const completed = list.items?.find((d: any) => d.status === 'completed');
 
     if (!completed) {
       test.skip();
       return;
     }
 
-    await page.goto(`/discussion/${completed.id}`);
+    // SPA 路由跳转，避免全页刷新的 auth 竞态
+    await page.evaluate((id) => {
+      (window as any).__vue_router.push(`/discussion/${id}`);
+    }, completed.id);
     await page.waitForLoadState('networkidle');
 
-    // 讨论页面应有议程面板或历史消息面板
+    // 讨论页面应有主要容器
     const hasPanel = await page.locator(
-      '[class*="agenda"], [class*="history"], [class*="discussion-view"]'
+      '.discussion-main, .discussion-main-fallback, [class*="discussion-main"]'
     ).count() > 0;
     expect(hasPanel).toBeTruthy();
   });

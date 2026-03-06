@@ -18,24 +18,27 @@ const NEW_USER = {
 
 test.describe('认证流程', () => {
   test('注册新账号 - 成功后跳转大厅', async ({ page }) => {
-    await page.goto(BASE_URL);
+    // 直接导航到 /login 页（LoginView）
+    await page.goto(`${BASE_URL}/login`);
 
-    // 大厅页面应展示登录/注册入口
-    const loginBtn = page.locator('button, a').filter({ hasText: /登录|注册|Login|Register/i }).first();
-    await expect(loginBtn).toBeVisible({ timeout: 8000 });
-    await loginBtn.click();
+    // 切换到注册 Tab（LoginView 里 tab 是 div.tab，不是 button）
+    const registerTab = page.locator('.tab').filter({ hasText: '注册' }).first();
+    await expect(registerTab).toBeVisible({ timeout: 8000 });
+    await registerTab.click();
 
     // 填写注册表单
-    const usernameInput = page.locator('input[placeholder*="用户名"], input[name="username"], input[type="text"]').first();
+    const usernameInput = page.locator('input[placeholder*="用户名"]').first();
     const passwordInput = page.locator('input[type="password"]').first();
+    const confirmPasswordInput = page.locator('input[placeholder*="再次"]').first();
     await usernameInput.fill(NEW_USER.username);
     await passwordInput.fill(NEW_USER.password);
+    await confirmPasswordInput.fill(NEW_USER.password);
 
     // 提交
-    const submitBtn = page.locator('button[type="submit"], button').filter({ hasText: /注册|Register/i }).first();
+    const submitBtn = page.locator('button').filter({ hasText: /^注册$/ }).first();
     await submitBtn.click();
 
-    // 注册成功后应回到大厅或显示已登录状态
+    // 注册成功后应跳回大厅
     await page.waitForURL(`${BASE_URL}/`, { timeout: 10000 });
     await expect(page.locator('.hall')).toBeVisible();
   });

@@ -217,6 +217,10 @@ export function useDiscussion() {
         messages,
         status: statusResponse.status,
         attachment: statusResponse.attachment ?? undefined,
+        project_id: statusResponse.project_id,
+        moderator_role: statusResponse.moderator_role,
+        target_type: statusResponse.target_type,
+        target_id: statusResponse.target_id,
       };
 
       discussionStore.setDiscussion(discussion);

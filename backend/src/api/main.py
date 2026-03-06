@@ -38,6 +38,7 @@ from src.api.routes import (
     restore_latest_discussion,
     auth_router,
     users_router,
+    session_router,
 )
 from src.api.websocket import connection_manager, websocket_router
 from src.api.websocket.manager import global_connection_manager, set_event_loop
@@ -157,3 +158,4 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(stages_router)
 app.include_router(notifications_router)
+app.include_router(session_router)

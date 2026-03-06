@@ -32,6 +32,10 @@ export interface Discussion {
   messages: Message[];
   status: DiscussionStatus;
   attachment?: AttachmentInfo;
+  project_id?: string;
+  moderator_role?: string;
+  target_type?: string;
+  target_id?: string;
 }
 
 // WebSocket message types (matching backend protocol from plan-websocket.md)
@@ -96,6 +100,10 @@ export interface DiscussionStatusResponse {
   is_continuation?: boolean;  // 是否是续前讨论
   discussion_style?: string;  // 讨论风格
   briefing?: string | null;  // 讨论简报
+  project_id?: string;
+  moderator_role?: string;
+  target_type?: string;
+  target_id?: string;
 }
 
 // History API types

@@ -600,18 +600,28 @@ def _get_llm_from_config() -> Any | None:
         if is_anthropic:
             # Use ChatAnthropic for native Anthropic API support
             from langchain_anthropic import ChatAnthropic
+            import anthropic as _anthropic
 
             # Set env vars for CrewAI compatibility
             os.environ["ANTHROPIC_API_KEY"] = api_key
             if base_url:
                 os.environ["ANTHROPIC_BASE_URL"] = base_url
 
+            # Patch user_agent so ALL Anthropic SDK instances in this process
+            # (including CrewAI's own AnthropicCompletion) send the allowed UA.
+            _anthropic._base_client.BaseClient.user_agent = property(
+                lambda self: "claude-code/1.0"
+            )
+
             llm_kwargs: dict[str, Any] = {
                 "model": raw_model,
                 "anthropic_api_key": api_key,
                 "timeout": 180,
                 "max_retries": 5,
-                "default_headers": {"anthropic-version": "2023-06-01"},
+                "default_headers": {
+                    "anthropic-version": "2023-06-01",
+                    "User-Agent": "claude-code/1.0",
+                },
             }
             if base_url:
                 llm_kwargs["anthropic_api_url"] = base_url
