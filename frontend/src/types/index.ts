@@ -1,7 +1,7 @@
 // Agent status types
 export type AgentStatus = 'thinking' | 'speaking' | 'idle' | 'writing';
 
-export type AgentRole = 'lead_planner' | 'system_designer' | 'number_designer' | 'player_advocate' | 'operations_analyst' | 'visual_concept';
+export type AgentRole = 'lead_planner' | 'system_designer' | 'number_designer' | 'player_advocate' | 'operations_analyst' | 'visual_concept' | 'creative_director' | 'market_director';
 
 // Agent interface
 export interface Agent {
@@ -104,6 +104,7 @@ export interface DiscussionStatusResponse {
   moderator_role?: string;
   target_type?: string;
   target_id?: string;
+  agents?: string[];
 }
 
 // History API types

@@ -226,6 +226,14 @@ export function useDiscussion() {
       discussionStore.setDiscussion(discussion);
       isPaused.value = Boolean(interventionStatus?.is_paused);
 
+      // Set active agents for this discussion (filters what's shown in UI)
+      const discussionAgents = (statusResponse as any).agents as string[] | undefined;
+      if (discussionAgents && discussionAgents.length > 0) {
+        agentsStore.setDiscussionAgents(discussionAgents);
+      } else {
+        agentsStore.clearDiscussionAgents();
+      }
+
       // Load round summaries
       if (summariesResponse?.summaries) {
         roundSummaries.value = summariesResponse.summaries;

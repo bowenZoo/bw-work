@@ -65,7 +65,58 @@ class CreativeDirector(LeadPlanner):
 
 **严格控制在 300 字以内。**"""
 
-    def create_final_decisions_prompt(self, topic: str) -> str:
+    def create_doc_plan_prompt(self, topic: str, attachment: str | None = None) -> str:
+        """Create concept-incubation doc plan prompt.
+
+        Unlike the generic doc plan, concept incubation only produces
+        concept-stage documents: a creative brief and a market analysis.
+        """
+        attachment_section = ""
+        if attachment:
+            truncated = attachment[:3000] if len(attachment) > 3000 else attachment
+            attachment_section = f"\n\n参考资料:\n{truncated}"
+
+        return f"""作为创意总监，请为以下概念孵化项目规划文档结构：
+
+话题：{topic}
+{attachment_section}
+
+本次是**概念孵化阶段**，仅需规划概念阶段的文档，不要规划系统设计、数值平衡等后期文档。
+
+概念孵化阶段通常只需要以下两类文档：
+1. **游戏创意简报**（概念定位、制作人愿景、核心亮点、目标玩家）
+2. **市场可行性分析**（市场机会、竞品分析、差异化定位）
+
+请根据话题灵活调整章节内容，保持精简（每个文件 3-5 个章节即可）。
+
+严格按以下 JSON 格式输出（不要输出其他任何内容）：
+```json
+{{{{
+  "files": [
+    {{{{
+      "filename": "游戏创意简报.md",
+      "title": "游戏创意简报",
+      "sections": [
+        {{{{"id": "s1", "title": "核心创意与定位", "description": "一句话概括游戏独特价值，以及在市场中的定位"}}}},
+        {{{{"id": "s2", "title": "制作人愿景与玩家体验", "description": "制作人希望带给玩家的核心情感体验"}}}},
+        {{{{"id": "s3", "title": "创意亮点列表", "description": "经过讨论验证的核心创意亮点"}}}},
+        {{{{"id": "s4", "title": "目标玩家画像", "description": "最核心的目标玩家群体描述"}}}}
+      ]
+    }}}},
+    {{{{
+      "filename": "市场可行性分析.md",
+      "title": "市场可行性分析",
+      "sections": [
+        {{{{"id": "s5", "title": "市场机会与时机", "description": "当前市场中存在的机会窗口"}}}},
+        {{{{"id": "s6", "title": "竞品对比", "description": "主要竞争产品分析及差异化空间"}}}},
+        {{{{"id": "s7", "title": "差异化战略", "description": "与竞品相比的核心差异和竞争优势"}}}}
+      ]
+    }}}}
+  ]
+}}}}
+```"""
+
+
         """Create concept-incubation final document generation prompt."""
         return f"""作为创意总监，请基于整个概念孵化讨论，生成《创意点文档》：
 

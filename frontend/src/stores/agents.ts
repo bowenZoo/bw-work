@@ -22,7 +22,7 @@ const visualAvatarUrl =
   (import.meta.env.VITE_AVATAR_VISUAL_CONCEPT as string | undefined) || visualAvatar;
 
 export const useAgentsStore = defineStore('agents', () => {
-  // State
+  // State — includes all possible agent roles
   const agents = ref<Agent[]>([
     {
       id: 'lead_planner',
@@ -65,6 +65,18 @@ export const useAgentsStore = defineStore('agents', () => {
       role: 'visual_concept',
       status: 'idle',
       avatarUrl: visualAvatarUrl,
+    },
+    {
+      id: 'creative_director',
+      name: '创意总监',
+      role: 'creative_director',
+      status: 'idle',
+    },
+    {
+      id: 'market_director',
+      name: '市场总监',
+      role: 'market_director',
+      status: 'idle',
     },
   ]);
 

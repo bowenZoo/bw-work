@@ -142,6 +142,24 @@ async def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/config/model")
+async def get_current_model() -> dict:
+    """Public endpoint: return the active LLM model name and available profiles."""
+    from src.admin.config_store import ConfigStore
+    store = ConfigStore()
+    active = store.get_active_llm_config()
+    profiles = store.get_llm_profiles()
+    return {
+        "model": active.get("model", "") if active else "",
+        "profile_name": active.get("name", "") if active else "",
+        "profile_id": active.get("id", "") if active else "",
+        "profiles": [
+            {"id": p["id"], "name": p["name"], "model": p["model"], "is_active": p["is_active"]}
+            for p in profiles
+        ],
+    }
+
+
 # Include routers
 app.include_router(checkpoint_router)
 app.include_router(design_docs_router)

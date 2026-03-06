@@ -13,15 +13,19 @@ const ROLE_DISPLAY_NAMES: Record<AgentRole, string> = {
   player_advocate: '玩家代言人',
   operations_analyst: '运营策划',
   visual_concept: '视觉概念',
+  creative_director: '创意总监',
+  market_director: '市场总监',
 };
 
-const ROLE_AVATARS: Record<AgentRole, string> = {
+const ROLE_AVATARS: Record<AgentRole, string | null> = {
   lead_planner: leadAvatar,
   system_designer: systemAvatar,
   number_designer: numberAvatar,
   player_advocate: playerAvatar,
   operations_analyst: operationsAvatar,
   visual_concept: visualAvatar,
+  creative_director: null,
+  market_director: null,
 };
 
 const ROLE_ALIASES: Record<string, AgentRole> = {
@@ -44,6 +48,13 @@ const ROLE_ALIASES: Record<string, AgentRole> = {
   'visual concept': 'visual_concept',
   '视觉概念': 'visual_concept',
   '视觉概念设计师': 'visual_concept',
+  creative_director: 'creative_director',
+  'creative director': 'creative_director',
+  '创意总监': 'creative_director',
+  market_director: 'market_director',
+  'market director': 'market_director',
+  '市场总监': 'market_director',
+  '市场运营': 'market_director',
 };
 
 export function normalizeAgentRole(role?: string | null): AgentRole | null {

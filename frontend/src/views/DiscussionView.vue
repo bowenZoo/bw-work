@@ -85,7 +85,40 @@ async function doArchive() {
 
 const userStore = useUserStore();
 
-const props = defineProps<{
+// Current LLM model info
+const currentModel = ref<{ model: string; profile_name: string; profile_id: string; profiles: { id: string; name: string; model: string; is_active: boolean }[] }>({ model: '', profile_name: '', profile_id: '', profiles: [] })
+const showModelMenu = ref(false)
+const switchingModel = ref(false)
+
+async function fetchCurrentModel() {
+  try {
+    const res = await fetch('/api/config/model', { headers: { Authorization: `Bearer ${userStore.accessToken}` } })
+    if (res.ok) currentModel.value = await res.json()
+  } catch {}
+}
+
+async function switchModel(profileId: string) {
+  if (switchingModel.value || profileId === currentModel.value.profile_id) return
+  switchingModel.value = true
+  try {
+    const res = await fetch(`/api/admin/config/llm/profiles/${profileId}/activate`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    })
+    if (res.ok) {
+      await fetchCurrentModel()
+      showModelMenu.value = false
+    }
+  } finally { switchingModel.value = false }
+}
+
+// Close model menu on outside click
+function onDocClickModelMenu(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (!target.closest('.model-badge-area')) showModelMenu.value = false
+}
+
+
   mode?: 'live' | 'playback';
 }>();
 
@@ -314,6 +347,9 @@ onMounted(async () => {
   }
   // Load discussion styles for continue popup
   loadDiscussionStyles();
+  // Fetch current model info
+  fetchCurrentModel();
+  document.addEventListener('click', onDocClickModelMenu);
 });
 
 function onPasswordVerified() {
@@ -642,6 +678,7 @@ onUnmounted(() => {
   if (!isPlaybackMode.value) {
     resetLiveDiscussion();
   }
+  document.removeEventListener('click', onDocClickModelMenu);
 });
 </script>
 
@@ -688,6 +725,30 @@ onUnmounted(() => {
         </button>
       </template>
       <template #extra>
+        <!-- Model badge -->
+        <div v-if="currentModel.model" class="model-badge-area" @click.stop="showModelMenu = !showModelMenu">
+          <span class="model-badge" :title="currentModel.profile_name">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+            {{ currentModel.model }}
+          </span>
+          <Transition name="dropdown">
+            <div v-if="showModelMenu && currentModel.profiles.length > 1 && userStore.isAdmin" class="model-dropdown">
+              <div class="model-dropdown-title">切换模型</div>
+              <button
+                v-for="p in currentModel.profiles"
+                :key="p.id"
+                class="model-dropdown-item"
+                :class="{ active: p.is_active }"
+                :disabled="switchingModel"
+                @click.stop="switchModel(p.id)"
+              >
+                <span class="model-item-name">{{ p.name }}</span>
+                <span class="model-item-model">{{ p.model }}</span>
+                <svg v-if="p.is_active" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </button>
+            </div>
+          </Transition>
+        </div>
         <button
           v-if="isHallDiscussion && discussionStatus === 'completed'"
           class="archive-btn"
@@ -733,7 +794,7 @@ onUnmounted(() => {
       <div class="left-panel" :style="leftPanelStyle">
         <!-- Compact Agent Bar -->
         <CompactAgentBar
-          :agents="agentsStore.agents"
+          :agents="agentsStore.activeAgents"
           :statuses="agentStatuses"
           :current-speaker="speakingAgentId"
           @select-agent="handleAgentClick"
@@ -1964,4 +2025,67 @@ onUnmounted(() => {
     padding: 8px 12px;
   }
 }
+
+/* Model badge */
+.model-badge-area {
+  position: relative;
+  cursor: pointer;
+}
+.model-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--bg-secondary, #f3f4f6);
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary, #6b7280);
+  transition: background 0.15s;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.model-badge:hover {
+  background: var(--bg-tertiary, #e5e7eb);
+}
+.model-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: white;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+  min-width: 200px;
+  z-index: 200;
+  overflow: hidden;
+}
+.model-dropdown-title {
+  padding: 8px 12px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-weak, #9ca3af);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.model-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-primary, #374151);
+  transition: background 0.15s;
+}
+.model-dropdown-item:hover { background: #f9fafb; }
+.model-dropdown-item.active { background: #eff6ff; color: #2563eb; }
+.model-dropdown-item:disabled { opacity: 0.5; cursor: not-allowed; }
+.model-item-name { font-weight: 500; flex: 1; }
+.model-item-model { font-size: 10px; color: var(--text-weak, #9ca3af); max-width: 80px; overflow: hidden; text-overflow: ellipsis; }
+.dropdown-enter-active, .dropdown-leave-active { transition: opacity 0.15s, transform 0.15s; }
+.dropdown-enter-from, .dropdown-leave-to { opacity: 0; transform: translateY(-4px); }
 </style>
