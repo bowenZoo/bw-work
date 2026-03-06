@@ -7,6 +7,10 @@ addressed or asked to respond.
 import re
 from typing import NamedTuple
 
+# Special role constant: when found in a speakers block, the discussion
+# pauses and waits for the human producer to send a message.
+PRODUCER_ROLE = "制作人"
+
 
 class MentionPattern(NamedTuple):
     """Role mention pattern configuration.
@@ -126,6 +130,8 @@ def parse_speaker_block(text: str) -> list[str] | None:
         alias_map[p.role] = p.role
         for alias in p.aliases:
             alias_map[alias] = p.role
+    # Producer is a special pass-through role (human turn)
+    alias_map[PRODUCER_ROLE] = PRODUCER_ROLE
 
     result: list[str] = []
     for candidate in candidates:

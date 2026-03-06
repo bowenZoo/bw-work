@@ -45,6 +45,7 @@ export function useDiscussion() {
   // Pause/resume state
   const isPaused = ref(false);
   const autoPauseMessage = ref('');
+  const isProducerTurn = ref(false);  // true when discussion is waiting for producer input
 
   // Agenda state
   const agenda = ref<Agenda | null>(null);
@@ -361,13 +362,21 @@ export function useDiscussion() {
             discussionStore.setStatus('failed');
           } else if (content.startsWith('discussion_auto_paused')) {
             isPaused.value = true;
+            isProducerTurn.value = false;
             const colonIdx = content.indexOf(':');
             autoPauseMessage.value = colonIdx >= 0 ? content.substring(colonIdx + 1) : '讨论已自动暂停';
+          } else if (content.startsWith('discussion_waiting_producer')) {
+            isPaused.value = true;
+            isProducerTurn.value = true;
+            const colonIdx = content.indexOf(':');
+            autoPauseMessage.value = colonIdx >= 0 ? content.substring(colonIdx + 1) : '等待制作人发言';
           } else if (content === 'discussion_paused') {
             isPaused.value = true;
+            isProducerTurn.value = false;
             autoPauseMessage.value = '讨论已暂停';
           } else if (content === 'discussion_resumed') {
             isPaused.value = false;
+            isProducerTurn.value = false;
             autoPauseMessage.value = '';
             discussionStore.setStatus('running');
           } else if (content === 'discussion_queued') {
@@ -828,6 +837,7 @@ export function useDiscussion() {
     // Pause/resume
     isPaused: computed(() => isPaused.value),
     autoPauseMessage: computed(() => autoPauseMessage.value),
+    isProducerTurn: computed(() => isProducerTurn.value),
 
     // Agenda
     agenda,

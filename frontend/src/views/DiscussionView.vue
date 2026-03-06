@@ -170,6 +170,7 @@ const {
   isInProgress,
   isPaused,
   autoPauseMessage,
+  isProducerTurn,
   connectionStatus,
   setError,
   startDiscussion,
@@ -768,8 +769,19 @@ onUnmounted(() => {
       </template>
     </Header>
 
+
+    <!-- Producer turn banner (waiting for producer to speak) -->
+    <div v-if="isProducerTurn && isRunning" class="auto-pause-banner producer-turn-banner">
+      <div class="auto-pause-content">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color:#16a34a">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+        </svg>
+        <span class="auto-pause-text" style="color:#15803d">{{ autoPauseMessage || '轮到您发言了，请在下方输入您的想法' }}</span>
+      </div>
+    </div>
+
     <!-- Auto-pause banner -->
-    <div v-if="isPaused && isRunning" class="auto-pause-banner">
+    <div v-else-if="isPaused && isRunning" class="auto-pause-banner">
       <div class="auto-pause-content">
         <svg class="w-5 h-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1276,6 +1288,12 @@ onUnmounted(() => {
 
 .auto-pause-resume-btn:hover {
   background: #6D28D9;
+}
+
+/* Producer turn banner — green highlight */
+.producer-turn-banner {
+  background: #F0FDF4;
+  border-bottom: 1px solid #86EFAC;
 }
 
 /* Main content - Two Column Layout */

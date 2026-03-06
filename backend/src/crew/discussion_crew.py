@@ -32,7 +32,7 @@ from src.agents.lead_planner import (
     parse_visual_requirements,
 )
 from src.models.agenda import Agenda, AgendaItem, AgendaItemStatus, AgendaSummaryDetails
-from src.crew.mention_parser import parse_mentioned_roles
+from src.crew.mention_parser import parse_mentioned_roles, PRODUCER_ROLE
 from src.memory.base import Decision
 from src.api.websocket.events import (
     AgentStatus,
@@ -495,6 +495,52 @@ class DiscussionCrew:
             time.sleep(self._pause_check_interval)
 
         return []
+
+    def _wait_for_producer_turn(self) -> None:
+        """Pause and wait for the producer (human) to send a message.
+
+        Called when ``制作人`` appears in a ``speakers`` block. Blocks until
+        a producer message arrives or the discussion is manually resumed /
+        finished.  Does **not** consume the messages — they remain in
+        ``_pending_producer_messages`` for normal processing by
+        ``_check_producer_messages()``.
+        """
+        from src.crew.mention_parser import PRODUCER_ROLE as _PR  # local import avoids cycle
+
+        set_discussion_state(self._discussion_id, DiscussionState.PAUSED)
+        self._broadcast_discussion_event(
+            "discussion_waiting_producer:等待制作人发言，请在下方输入框中分享您的想法..."
+        )
+        logger.info("Discussion %s: waiting for producer turn", self._discussion_id)
+
+        start_time = time.time()
+        while True:
+            # Auto-resume when the producer sends any message
+            if self._has_pending_producer_messages():
+                set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
+                self._broadcast_discussion_event("discussion_resumed")
+                logger.info(
+                    "Discussion %s: producer message received, resuming", self._discussion_id
+                )
+                return
+
+            state_info = get_discussion_state(self._discussion_id)
+            if state_info is None:
+                return
+
+            current_state = state_info["state"]
+            if current_state in (DiscussionState.RUNNING, DiscussionState.FINISHED):
+                return
+
+            if time.time() - start_time > self._pause_timeout:
+                logger.warning(
+                    "Discussion %s: producer turn timed out", self._discussion_id
+                )
+                self._abort_reason = "Producer turn timed out"
+                set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
+                raise DiscussionTimeoutError(self._abort_reason)
+
+            time.sleep(self._pause_check_interval)
 
     def _inject_user_messages(self, messages: list[dict]) -> None:
         """Inject user messages into the discussion context.
@@ -2250,6 +2296,13 @@ class DiscussionCrew:
                     source_text = opening if round_num == 1 else (last_summary or opening)
                     next_speakers = parse_next_speakers(source_text)
 
+                    # Pause if the speakers block requests producer turn
+                    if PRODUCER_ROLE in (next_speakers or []):
+                        self._wait_for_producer_turn()
+                        if self._abort_reason:
+                            raise DiscussionTimeoutError(self._abort_reason)
+                        next_speakers = [s for s in next_speakers if s != PRODUCER_ROLE] or None
+
                     # Filter agents to those who should speak
                     if next_speakers:
                         agents_to_call = [
@@ -2513,6 +2566,14 @@ class DiscussionCrew:
                         source_text = opening[-2000:] if opening else topic
 
                     next_speakers = parse_next_speakers(source_text)
+
+                    # Pause if the speakers block requests producer turn
+                    if PRODUCER_ROLE in (next_speakers or []):
+                        self._wait_for_producer_turn()
+                        if self._abort_reason:
+                            raise DiscussionTimeoutError(self._abort_reason)
+                        next_speakers = [s for s in next_speakers if s != PRODUCER_ROLE] or None
+
                     agents_to_call = (
                         [a for a in self._discussion_agents if a.role in next_speakers]
                         if next_speakers
@@ -5077,6 +5138,14 @@ class DiscussionCrew:
 
                     # Determine speakers
                     next_speakers = parse_next_speakers(opening)
+
+                    # Pause if the speakers block requests producer turn
+                    if PRODUCER_ROLE in (next_speakers or []):
+                        self._wait_for_producer_turn()
+                        if self._abort_reason:
+                            raise DiscussionTimeoutError(self._abort_reason)
+                        next_speakers = [s for s in next_speakers if s != PRODUCER_ROLE] or None
+
                     agents_to_call = (
                         [a for a in self._discussion_agents if a.role in next_speakers]
                         if next_speakers else list(self._discussion_agents)
@@ -5394,6 +5463,14 @@ class DiscussionCrew:
                                 self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
                                 next_speakers = parse_next_speakers(opening)
+
+                                # Pause if the speakers block requests producer turn
+                                if PRODUCER_ROLE in (next_speakers or []):
+                                    self._wait_for_producer_turn()
+                                    if self._abort_reason:
+                                        raise DiscussionTimeoutError(self._abort_reason)
+                                    next_speakers = [s for s in next_speakers if s != PRODUCER_ROLE] or None
+
                                 agents_to_call = (
                                     [a for a in self._discussion_agents if a.role in next_speakers]
                                     if next_speakers else list(self._discussion_agents)
