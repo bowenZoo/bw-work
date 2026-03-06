@@ -43,6 +43,19 @@ const STAGE_AGENTS: Record<string, string[]> = {
   'default':        ['lead_planner', 'system_designer', 'operations_analyst'],
 }
 
+// Stage → key documents expected per stage (精简，严格按阶段限定)
+const STAGE_REQUIRED_DOCS: Record<string, string[]> = {
+  'concept':        ['游戏创意简报', '市场可行性分析'],
+  'core-gameplay':  ['核心玩法 GDD', '玩家体验流程图'],
+  'art-style':      ['美术风格定义', '视觉参考手册'],
+  'tech-prototype': ['技术选型报告', '原型评估结论'],
+  'system-design':  ['系统设计文档', '功能规格说明'],
+  'numbers':        ['数值框架文档', '经济模型设计'],
+  'ui-ux':          ['UI/UX 设计规范'],
+  'level-content':  ['关卡设计文档', '内容规划表'],
+  'art-assets':     ['美术资源需求清单'],
+}
+
 const AGENT_LABELS: Record<string, string> = {
   'lead_planner':       '主策划',
   'system_designer':    '系统策划',
@@ -569,6 +582,10 @@ async function createStageDiscussion(stageId: string) {
             class="col-empty"
           >
             <span class="col-empty-txt">{{ stage.status === 'locked' ? '未解锁' : '暂无内容' }}</span>
+            <div v-if="stage.status !== 'locked' && STAGE_REQUIRED_DOCS[stage.template_id]" class="required-docs-hint">
+              <span class="required-docs-label">建议产出</span>
+              <span v-for="doc in STAGE_REQUIRED_DOCS[stage.template_id]" :key="doc" class="required-doc-tag">{{ doc }}</span>
+            </div>
           </div>
 
           <!-- New buttons -->
@@ -1043,11 +1060,39 @@ async function createStageDiscussion(stageId: string) {
 .col-empty {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   min-height: 48px;
+  padding: 8px 4px;
 }
 .col-empty-txt { font-size: 12px; color: #D4D4D8; }
+.required-docs-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+.required-docs-label {
+  font-size: 10px;
+  color: #71717A;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.required-doc-tag {
+  font-size: 11px;
+  color: #A1A1AA;
+  background: #27272A;
+  border: 1px dashed #3F3F46;
+  border-radius: 4px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .new-btn {
   display: flex;
   align-items: center;

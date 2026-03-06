@@ -150,6 +150,12 @@ async def get_hall(user: dict = Depends(get_current_user)):
         logger.warning(f"Failed to load project index: {_e}")
         _index = {}
 
+    # Import in-memory discussion states to determine running/completed status
+    try:
+        from src.api.routes.discussion import _discussions as _mem_discussions
+    except Exception:
+        _mem_discussions = {}
+
     for slug, info in _index.items():
         if not isinstance(info, dict) or slug == "lobby":
             continue
@@ -158,7 +164,16 @@ async def get_hall(user: dict = Depends(get_current_user)):
         total = len(stages)
         _is_public = db.get_project_visibility(slug)
         _user_role = db.get_user_project_role(slug, user.get("id")) if user.get("role") != "superadmin" else "admin"
-        # All projects visible in hall (private ones show 🔒, access checked on detail)
+        # Derive project status from stages
+        if total > 0 and completed == total:
+            proj_status = "completed"
+        elif any(s["status"] == "active" for s in stages):
+            proj_status = "active"
+        else:
+            proj_status = ""
+        proj_extra: dict = {"stage_progress": f"{completed}/{total}", "total_stages": total, "completed_stages": completed}
+        if proj_status:
+            proj_extra["status"] = proj_status
         items.append(HallItemResponse(
             type="project",
             id=slug,
@@ -167,7 +182,7 @@ async def get_hall(user: dict = Depends(get_current_user)):
             updated_at="",
             is_public=_is_public,
             user_role=_user_role,
-            extra={"stage_progress": f"{completed}/{total}"},
+            extra=proj_extra,
         ))
 
     # Get free discussions (project_id is null) from .index.db
@@ -180,13 +195,20 @@ async def get_hall(user: dict = Depends(get_current_user)):
         ).fetchall()
         for r in rows:
             r = dict(r)
+            disc_id = r["id"]
+            if r.get("archived"):
+                disc_status = "archived"
+            elif disc_id in _mem_discussions:
+                disc_status = _mem_discussions[disc_id].status.value
+            else:
+                disc_status = "completed"
             items.append(HallItemResponse(
                 type="discussion",
-                id=r["id"],
+                id=disc_id,
                 name=r["topic"],
                 description=r.get("summary", "") or "",
                 updated_at=r.get("updated_at", ""),
-                extra={"message_count": r.get("message_count", 0), "owner_id": r.get("owner_id")},
+                extra={"message_count": r.get("message_count", 0), "owner_id": r.get("owner_id"), "status": disc_status},
             ))
         idx_db.close()
     except Exception as e:
