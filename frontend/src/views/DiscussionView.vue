@@ -118,7 +118,7 @@ function onDocClickModelMenu(e: MouseEvent) {
   if (!target.closest('.model-badge-area')) showModelMenu.value = false
 }
 
-
+const props = defineProps<{
   mode?: 'live' | 'playback';
 }>();
 
