@@ -306,9 +306,9 @@ function isStageCollapsed(stageId: string) {
 }
 
 function statusBadge(status: string) {
-  if (status === 'completed') return { text: '✅ 已完成', cls: 'completed' }
-  if (status === 'active') return { text: '💬 进行中', cls: 'active' }
-  return { text: '🔒 未解锁', cls: 'locked' }
+  if (status === 'completed') return { text: '已完成', cls: 'completed' }
+  if (status === 'active') return { text: '进行中', cls: 'active' }
+  return { text: '未解锁', cls: 'locked' }
 }
 
 async function doCompleteStage(stageId: string) {
@@ -387,13 +387,19 @@ async function createStageDiscussion(stageId: string) {
       <button class="back-btn" @click="router.push('/')">← 返回大厅</button>
       <h1 v-if="project">{{ project.name }}</h1>
       <div style="margin-left: auto; display: flex; gap: 8px;">
-        <button v-if="canEdit" class="btn btn-sm btn-secondary" @click="openMemberDialog">👥 成员</button>
-        <button v-if="userStore.role === 'superadmin'" class="btn btn-sm btn-danger" @click="showDeleteConfirm = true">🗑️ 删除项目</button>
+        <button v-if="canEdit" class="btn btn-sm btn-secondary" @click="openMemberDialog">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          成员
+        </button>
+        <button v-if="userStore.role === 'superadmin'" class="btn btn-sm btn-danger" @click="showDeleteConfirm = true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          删除项目
+        </button>
       </div>
     </header>
 
     <div v-if="isAdmin && pendingRequests.length > 0" class="pending-bar">
-      <span>📬 {{ pendingRequests.length }} 个权限申请待审批</span>
+      <span style="display:flex;align-items:center;gap:5px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2 2 0 0 1-3.46 0"/></svg>{{ pendingRequests.length }} 个权限申请待审批</span>
       <div v-for="req in pendingRequests" :key="req.user_id" class="pending-item">
         <span>{{ req.display_name || req.username }} 申请 <strong>{{ req.requested_role === 'editor' ? '编辑' : '查看' }}</strong> 权限</span>
         <button class="btn btn-sm btn-primary" @click="approveRequest(req.user_id)">✓ 批准</button>
@@ -405,11 +411,14 @@ async function createStageDiscussion(stageId: string) {
 
     <div v-else class="stages">
       <div v-if="isOwner" class="stages-toolbar">
-        <button v-if="canEdit" class="btn btn-sm btn-secondary" @click="openStageDialog">⚙️ 管理阶段</button>
+        <button v-if="canEdit" class="btn btn-sm btn-secondary" @click="openStageDialog">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
+          管理阶段
+        </button>
       </div>
       <div v-for="stage in stages" :key="stage.id" class="stage-section" :class="stage.status">
         <div class="stage-header" @click="toggleStage(stage.id)" style="cursor: pointer;">
-          <span class="stage-toggle" :class="{ collapsed: isStageCollapsed(stage.id) }">▶</span>
+          <span class="stage-toggle" :class="{ collapsed: isStageCollapsed(stage.id) }"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
           <h2 class="stage-name">{{ stage.name }}</h2>
           <span class="status-badge" :class="statusBadge(stage.status).cls">
             {{ statusBadge(stage.status).text }}
@@ -436,7 +445,7 @@ async function createStageDiscussion(stageId: string) {
               class="content-card doc-card"
               @click="goDocument(doc.id)"
             >
-              <span class="content-icon">📄</span>
+              <span class="content-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>
               <div class="content-info">
                 <div class="content-title">{{ doc.title }}</div>
                 <div class="content-meta">v{{ doc.current_version }} · {{ formatTime(doc.updated_at) }}</div>
@@ -448,7 +457,7 @@ async function createStageDiscussion(stageId: string) {
               class="content-card disc-card"
               @click="goDiscussion(disc.id)"
             >
-              <span class="content-icon">💬</span>
+              <span class="content-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
               <div class="content-info">
                 <div class="content-title">{{ disc.topic }}</div>
                 <div class="content-meta">
@@ -463,11 +472,11 @@ async function createStageDiscussion(stageId: string) {
               class="content-card output-card"
               @click="previewOutput = output"
             >
-              <span class="content-icon">📝</span>
+              <span class="content-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span>
               <div class="content-info">
                 <div class="content-title">{{ output.title }}</div>
                 <div class="content-meta">
-                  <span :class="'out-status-' + (output.status || 'draft')">{{ output.status === 'adopted' ? '✅ 已采纳' : '待采纳' }}</span>
+                  <span :class="'out-status-' + (output.status || 'draft')">{{ output.status === 'adopted' ? '已采纳' : '待采纳' }}</span>
                 </div>
               </div>
             </div>
@@ -506,7 +515,7 @@ async function createStageDiscussion(stageId: string) {
     <Transition name="fade">
       <div v-if="showAdoptDialog" class="dialog-overlay" @click.self="showAdoptDialog = null">
         <div class="dialog">
-          <h3>📝 采纳讨论产出</h3>
+          <h3 style="display:flex;align-items:center;gap:6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>采纳讨论产出</h3>
           <p class="adopt-preview">{{ showAdoptDialog.title }}</p>
           <div class="adopt-options">
             <label class="adopt-option">
@@ -572,7 +581,7 @@ async function createStageDiscussion(stageId: string) {
     <Transition name="fade">
       <div v-if="showMemberDialog" class="dialog-overlay" @click.self="showMemberDialog = false">
         <div class="dialog dialog-wide">
-          <h3 class="dialog-title">👥 成员管理</h3>
+          <h3 class="dialog-title" style="display:flex;align-items:center;gap:6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>成员管理</h3>
           <div v-if="loadingMembers" class="member-loading">加载中...</div>
           <div v-else class="member-list">
             <div v-for="m in members" :key="m.id" class="member-item">
@@ -602,7 +611,7 @@ async function createStageDiscussion(stageId: string) {
     <Transition name="fade">
       <div v-if="showStageDialog" class="dialog-overlay" @click.self="showStageDialog = false">
         <div class="dialog dialog-wide">
-          <h3 class="dialog-title">⚙️ 管理阶段</h3>
+          <h3 class="dialog-title" style="display:flex;align-items:center;gap:6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>管理阶段</h3>
           <div class="stage-edit-list">
             <div v-for="s in editingStages" :key="s.id" class="stage-edit-item">
               <input v-model="s.editName" class="dialog-input stage-edit-input" />
@@ -635,7 +644,7 @@ async function createStageDiscussion(stageId: string) {
     <Transition name="fade">
       <div v-if="showDeleteConfirm" class="dialog-overlay" @click.self="showDeleteConfirm = false">
         <div class="dialog">
-          <h3>⚠️ 确认删除项目</h3>
+          <h3 style="display:flex;align-items:center;gap:6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>确认删除项目</h3>
           <p style="color: #ef4444; font-weight: 500;">你确定要删除项目「{{ project?.name }}」吗？</p>
           <p style="color: #6b7280; font-size: 13px;">此操作不可撤销，项目的所有阶段、文档、讨论记录将被永久删除。</p>
           <div class="dialog-actions">
@@ -649,13 +658,13 @@ async function createStageDiscussion(stageId: string) {
     <Transition name="fade">
       <div v-if="showAccessModal" class="dialog-overlay access-overlay" @click.self="goBackToHall">
         <div class="modal access-modal">
-          <div class="access-icon">🔒</div>
+          <div class="access-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
           <h3>{{ project?.name }}</h3>
           <p class="access-desc">{{ project?.description || '这是一个私密项目' }}</p>
           <p class="access-hint">你需要获得权限才能查看此项目内容</p>
           <div class="access-actions">
-            <button class="btn btn-primary" @click="requestAccess('viewer')">📖 申请查看权限</button>
-            <button class="btn btn-secondary" @click="requestAccess('editor')">✏️ 申请编辑权限</button>
+            <button class="btn btn-primary" @click="requestAccess('viewer')" style="display:inline-flex;align-items:center;gap:5px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>申请查看权限</button>
+            <button class="btn btn-secondary" @click="requestAccess('editor')" style="display:inline-flex;align-items:center;gap:5px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>申请编辑权限</button>
           </div>
           <button class="btn-ghost" @click="goBackToHall">← 返回大厅</button>
         </div>
@@ -725,7 +734,8 @@ async function createStageDiscussion(stageId: string) {
   margin-bottom: 14px;
 }
 .stage-toggle {
-  font-size: 12px;
+  display: flex;
+  align-items: center;
   color: #9ca3af;
   transition: transform 0.25s ease;
   transform: rotate(90deg);
@@ -781,7 +791,7 @@ async function createStageDiscussion(stageId: string) {
   transition: background 0.1s;
 }
 .content-card:hover { background: #f9fafb; }
-.content-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+.content-icon { display: flex; align-items: center; flex-shrink: 0; margin-top: 1px; color: #6b7280; }
 .content-title {
   font-size: 14px;
   font-weight: 500;
@@ -1100,7 +1110,7 @@ async function createStageDiscussion(stageId: string) {
   text-align: center; padding: 32px 40px; max-width: 420px; width: 90%;
   border-radius: 16px; background: #fff;
 }
-.access-icon { font-size: 40px; margin-bottom: 12px; }
+.access-icon { display: flex; justify-content: center; align-items: center; margin-bottom: 12px; color: #6b7280; }
 .access-modal h3 { font-size: 20px; margin-bottom: 6px; color: #1f2937; }
 .access-desc { color: #6b7280; font-size: 13px; margin-bottom: 2px; }
 .access-hint { color: #9ca3af; font-size: 12px; margin-bottom: 20px; }

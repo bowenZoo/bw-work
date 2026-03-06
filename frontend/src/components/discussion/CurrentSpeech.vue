@@ -24,8 +24,8 @@ const avatarUrl = computed(() => {
 })
 
 const roleIcon = computed(() => {
-  if (!props.speaker) return '💬'
-  return props.speaker.role === 'lead_planner' ? '👑' : '👤'
+  if (!props.speaker) return 'chat'
+  return props.speaker.role === 'lead_planner' ? 'star' : 'user'
 })
 
 const renderedContent = computed(() => {
@@ -47,7 +47,7 @@ const hasContent = computed(() => {
   <div class="current-speech">
     <!-- Header -->
     <div class="speech-header">
-      <span class="header-icon">💬</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
       <span class="header-title">当前发言</span>
       <span v-if="isStreaming" class="streaming-indicator">
         <span class="dot"></span>
@@ -68,7 +68,10 @@ const hasContent = computed(() => {
               :alt="displayName"
               class="avatar-image"
             />
-            <span v-else class="avatar-fallback">{{ roleIcon }}</span>
+            <span v-else class="avatar-fallback">
+              <svg v-if="roleIcon === 'star'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </span>
           </div>
           <span class="speaker-name">{{ displayName }}:</span>
         </div>
@@ -85,7 +88,7 @@ const hasContent = computed(() => {
 
       <template v-else>
         <div class="no-speech">
-          <span class="no-speech-icon">🎙️</span>
+          <svg class="no-speech-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
           <span class="no-speech-text">等待发言...</span>
         </div>
       </template>
@@ -111,10 +114,7 @@ const hasContent = computed(() => {
   padding: 12px 16px;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color);
-}
-
-.header-icon {
-  font-size: 16px;
+  color: var(--text-secondary);
 }
 
 .header-title {
@@ -289,8 +289,8 @@ const hasContent = computed(() => {
 }
 
 .no-speech-icon {
-  font-size: 48px;
   opacity: 0.4;
+  color: var(--text-weak);
 }
 
 .no-speech-text {

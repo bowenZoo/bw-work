@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BW-Work 大厅首页</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #FFFBF5;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script>
+    const { createApp, ref, computed } = Vue;
+
+    /* ─── 设计 Token ─── */
+    const C = {
+      bg: '#FFFBF5',
+      white: '#FFFFFF',
+      purple: '#7C3AED',
+      green: '#3D8A5A',
+      gray: '#9C9B99',
+      text: '#1A1918',
+      textSub: '#6D6C6A',
+      textMuted: '#9C9B99',
+      border: '#EDE9E2',
+      tabInactive: '#F0EDE8',
+      searchBg: '#F5F3F0',
+      pillPurpleBg: '#EDE9FE',
+      pillGreenBg: '#D1FAE5',
+      progPurpleBg: '#EDE9FE',
+      progGreenBg: '#D1FAE5',
+      tagBg: '#F0EDE8',
+    };
+
+    /* ─── Mock 数据 ─── */
+    const MOCK_ITEMS = [
+      {
+        id: 'p1', type: 'project', name: '智能客服系统',
+        description: '基于大模型的多轮对话系统',
+        updated_at: new Date(Date.now() - 2 * 3600000).toISOString(),
+        extra: {
+          status: 'running',
+          current_stage: '需求分析',
+          stage_progress: '1/5',
+          agents: [
+            { name: '张三', color: '#7C3AED' },
+            { name: '李四', color: '#D89575' },
+            { name: '王五', color: '#3D8A5A' }
+          ]
+        }
+      },
+      {
+        id: 'd1', type: 'discussion', name: '用户画像讨论',
+        description: '基于用户行为数据的画像分析',
+        updated_at: new Date(Date.now() - 1 * 3600000).toISOString(),
+        extra: {
+          status: 'running',
+          project_name: '智能客服系统',
+          participants_count: 3,
+          is_speaking: true,
+          speaking_agent_name: '产品策划师'
+        }
+      },
+      {
+        id: 'p2', type: 'project', name: '电商推荐引擎',
+        description: '个性化商品推荐算法',
+        updated_at: new Date(Date.now() - 1 * 86400000).toISOString(),
+        extra: {
+          status: 'running',
+          current_stage: '概念设计',
+          stage_progress: '3/5',
+          agents: [
+            { name: '张三', color: '#6366F1' },
+            { name: '李四', color: '#F59E0B' },
+            { name: '王五', color: '#EC4899' },
+            { name: '赵六', color: '#14B8A6' },
+            { name: '孙七', color: '#8B5CF6' }
+          ]
+        }
+      },
+      {
+        id: 'd2', type: 'discussion', name: '技术方案评审',
+        description: '讨论推荐算法的技术实现方案',
+        updated_at: new Date(Date.now() - 2 * 3600000).toISOString(),
+        extra: {
+          status: 'running',
+          project_name: '电商推荐引擎',
+          participants_count: 4,
+          is_speaking: false,
+          speaking_agent_name: ''
+        }
+      },
+      {
+        id: 'p3', type: 'project', name: '数据分析平台',
+        description: '企业级数据分析和可视化平台',
+        updated_at: new Date(Date.now() - 3 * 86400000).toISOString(),
+        extra: {
+          status: 'completed',
+          current_stage: '已完成',
+          stage_progress: '5/5',
+          agents: [
+            { name: '张三', color: '#7C3AED' },
+            { name: '李四', color: '#F59E0B' },
+            { name: '王五', color: '#EC4899' },
+            { name: '赵六', color: '#3D8A5A' }
+          ]
+        }
+      },
+      {
+        id: 'd3', type: 'discussion', name: '竞品分析报告',
+        description: '对标业界主流分析平台的功能对比',
+        updated_at: new Date(Date.now() - 1 * 86400000).toISOString(),
+        extra: {
+          status: 'completed',
+          project_name: '智能客服系统',
+          participants_count: 2,
+          is_speaking: false,
+          speaking_agent_name: ''
+        }
+      },
+      {
+        id: 'p4', type: 'project', name: 'AI写作助手',
+        description: '支持多种文体的AI内容生成工具',
+        updated_at: new Date(Date.now() - 60000).toISOString(),
+        extra: {
+          status: 'running',
+          current_stage: '需求分析',
+          stage_progress: '1/5',
+          agents: [
+            { name: '张三', color: '#6366F1' },
+            { name: '李四', color: '#D89575' }
+          ]
+        }
+      },
+      {
+        id: 'd4', type: 'discussion', name: '移动端交互讨论',
+        description: '讨论移动端用户界面交互设计',
+        updated_at: new Date(Date.now() - 30000).toISOString(),
+        extra: {
+          status: 'running',
+          project_name: '移动端重构',
+          participants_count: 5,
+          is_speaking: true,
+          speaking_agent_name: 'UI设计师'
+        }
+      }
+    ];
+
+    const app = createApp({
+      template: `
+        <div class="hall" :style="{ background: C.bg }">
+          <!-- Header -->
+          <header class="hall-header">
+            <div class="header-logo">🎮</div>
+
+            <div class="header-search">
+              <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" :stroke="C.gray" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+              </svg>
+              <input
+                v-model="searchQuery"
+                class="search-input"
+                placeholder="搜索标题或描述..."
+              />
+            </div>
+
+            <div class="header-actions">
+              <button class="icon-btn" title="通知">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" :stroke="C.textSub" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                </svg>
+              </button>
+              <button class="user-btn">👤</button>
+            </div>
+          </header>
+
+          <!-- Main Content -->
+          <div class="hall-content">
+            <!-- Tabs -->
+            <div class="tab-bar">
+              <button
+                v-for="tab in tabs"
+                :key="tab.key"
+                class="tab-pill"
+                :class="{ active: activeTab === tab.key }"
+                :style="activeTab === tab.key ? { background: C.purple, color: 'white' } : { background: C.tabInactive, color: C.text }"
+                @click="activeTab = tab.key"
+              >{{ tab.label }}</button>
+            </div>
+
+            <!-- Grid -->
+            <div v-if="filteredItems.length === 0" class="no-results">
+              <div class="no-results-icon">🔍</div>
+              <p class="no-results-text">没有找到匹配的内容</p>
+            </div>
+
+            <div v-else class="grid-container">
+              <div
+                v-for="item in filteredItems"
+                :key="\`\${item.type}-\${item.id}\`"
+                class="card"
+              >
+                <!-- Card accent bar -->
+                <div class="card-accent" :style="{ background: getCardAccentColor(item) }"/>
+
+                <!-- Project Card -->
+                <template v-if="item.type === 'project'">
+                  <div class="card-title-section">
+                    <span class="emoji">📁</span>
+                    <h3 class="card-title">{{ item.name }}</h3>
+                  </div>
+                  <p v-if="item.extra?.current_stage" class="card-stage">{{ item.extra.current_stage }}</p>
+                  <div class="progress-section" v-if="item.extra?.stage_progress">
+                    <div class="progress-bar">
+                      <div class="progress-fill" :style="{ width: getProgressPercent(item) + '%', background: item.extra?.status === 'completed' ? C.green : C.purple }"/>
+                    </div>
+                    <span class="progress-label">{{ getProgressPercent(item) }}%</span>
+                  </div>
+                  <div class="agents-section" v-if="item.extra?.agents && item.extra.agents.length > 0">
+                    <div class="agent-avatars">
+                      <div
+                        v-for="(agent, idx) in item.extra.agents.slice(0, 5)"
+                        :key="idx"
+                        class="agent-avatar"
+                        :style="{ background: agent.color }"
+                        :title="agent.name"
+                      >{{ agent.name.charAt(0) }}</div>
+                      <div v-if="item.extra.agents.length > 5" class="agent-more">+{{ item.extra.agents.length - 5 }}</div>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Discussion Card -->
+                <template v-else>
+                  <div class="card-title-section">
+                    <span class="emoji">💬</span>
+                    <h3 class="card-title">{{ item.name }}</h3>
+                  </div>
+                  <div v-if="item.extra?.project_name" class="project-tag">{{ item.extra.project_name }}</div>
+                  <div class="status-line">
+                    <div class="live-indicator" :style="{ background: getCardAccentColor(item) }"/>
+                    <p v-if="item.extra?.status === 'completed'" class="live-text">{{ item.extra.participants_count || 0 }}人·已完成</p>
+                    <p v-else class="live-text">{{ item.extra?.participants_count || 0 }}人{{ item.extra?.is_speaking ? '·' + item.extra.speaking_agent_name + '发言中...' : '' }}</p>
+                  </div>
+                </template>
+
+                <!-- Time -->
+                <p class="card-time">{{ formatTime(item.updated_at) }}</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- FAB Button -->
+          <div class="fab-container">
+            <button class="fab-btn" :style="{ background: C.purple }" @click="showFabMenu = !showFabMenu">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
+            <transition name="fab">
+              <div v-if="showFabMenu" class="fab-menu">
+                <button class="fab-menu-item" @click="alert('新建讨论')">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="C.purple" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                  </svg>
+                  新讨论
+                </button>
+                <button class="fab-menu-item" @click="alert('新建项目')">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="C.purple" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                  </svg>
+                  新项目
+                </button>
+              </div>
+            </transition>
+          </div>
+        </div>
+      `,
+      setup() {
+        const searchQuery = ref('');
+        const activeTab = ref('all');
+        const showFabMenu = ref(false);
+
+        const tabs = [
+          { key: 'all', label: '全部' },
+          { key: 'discussion', label: '💬 讨论' },
+          { key: 'project', label: '📁 项目' },
+          { key: 'completed', label: '✅ 已完成' },
+          { key: 'archived', label: '📦 已归档' },
+        ];
+
+        const filteredItems = computed(() => {
+          let list = MOCK_ITEMS;
+          const q = searchQuery.value.trim().toLowerCase();
+          if (q) {
+            list = list.filter(item =>
+              item.name.toLowerCase().includes(q) ||
+              (item.description || '').toLowerCase().includes(q)
+            );
+          }
+          if (activeTab.value === 'discussion') {
+            list = list.filter(item => item.type === 'discussion');
+          } else if (activeTab.value === 'project') {
+            list = list.filter(item => item.type === 'project');
+          } else if (activeTab.value === 'completed') {
+            list = list.filter(item => item.extra?.status === 'completed');
+          } else if (activeTab.value === 'archived') {
+            list = list.filter(item => item.extra?.status === 'archived');
+          }
+          return list.sort((a, b) => {
+            const ta = new Date(a.updated_at || 0).getTime();
+            const tb = new Date(b.updated_at || 0).getTime();
+            return tb - ta;
+          });
+        });
+
+        function formatTime(dt) {
+          if (!dt) return '';
+          const d = new Date(dt);
+          const now = new Date();
+          const diff = now.getTime() - d.getTime();
+          if (diff < 60000) return '刚刚';
+          if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`;
+          if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`;
+          return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+        }
+
+        function getCardAccentColor(item) {
+          if (item.type === 'project') {
+            return item.extra?.status === 'completed' ? C.gray : C.purple;
+          } else {
+            return item.extra?.status === 'completed' ? C.gray : C.green;
+          }
+        }
+
+        function getProgressPercent(item) {
+          if (item.extra?.stage_progress) {
+            const [curr, total] = item.extra.stage_progress.split('/').map(Number);
+            return total > 0 ? Math.round((curr / total) * 100) : 0;
+          }
+          return 0;
+        }
+
+        return {
+          C,
+          searchQuery,
+          activeTab,
+          showFabMenu,
+          tabs,
+          filteredItems,
+          formatTime,
+          getCardAccentColor,
+          getProgressPercent,
+        };
+      }
+    });
+
+    app.mount('#app');
+  </script>
+
+  <style>
+    /* ─── Global ─── */
+    .hall {
+      min-height: 100vh;
+      position: relative;
+    }
+
+    /* ─── Header ─── */
+    .hall-header {
+      height: 56px;
+      padding: 0 24px;
+      background: white;
+      border-bottom: 1px solid #EDE9E2;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .header-logo {
+      font-size: 24px;
+      font-weight: 700;
+      color: #7C3AED;
+      min-width: 40px;
+    }
+
+    .header-search {
+      flex: 1;
+      max-width: 360px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 100px;
+      background: #F5F3F0;
+      border: 1px solid #EDE9E2;
+    }
+
+    .search-icon {
+      flex-shrink: 0;
+    }
+
+    .search-input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      color: #1A1918;
+      font-size: 13px;
+      outline: none;
+      font-family: inherit;
+    }
+
+    .search-input::placeholder {
+      color: #9C9B99;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .icon-btn, .user-btn {
+      width: 40px;
+      height: 40px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      border-radius: 50%;
+      transition: background 0.2s;
+    }
+
+    .icon-btn:hover, .user-btn:hover {
+      background: #f5f3f0;
+    }
+
+    /* ─── Content ─── */
+    .hall-content {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    /* ─── Tab Bar ─── */
+    .tab-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+
+    .tab-pill {
+      padding: 8px 16px;
+      border-radius: 100px;
+      font-size: 13px;
+      font-weight: 500;
+      border: none;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    /* ─── Grid ─── */
+    .no-results {
+      text-align: center;
+      padding: 60px 20px;
+    }
+
+    .no-results-icon {
+      font-size: 40px;
+      margin-bottom: 12px;
+    }
+
+    .no-results-text {
+      font-size: 15px;
+      color: #6D6C6A;
+      margin: 0;
+    }
+
+    .grid-container {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+    }
+
+    /* ─── Card ─── */
+    .card {
+      background: white;
+      border-radius: 16px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: box-shadow 0.2s, transform 0.2s;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      position: relative;
+    }
+
+    .card:hover {
+      box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+      transform: translateY(-2px);
+    }
+
+    .card-accent {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+    }
+
+    .card-title-section {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .emoji {
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1A1918;
+      margin: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .card-stage {
+      font-size: 12px;
+      color: #6D6C6A;
+      margin: 0;
+    }
+
+    .progress-section {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .progress-bar {
+      flex: 1;
+      height: 6px;
+      background: #EDE9FE;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+
+    .progress-label {
+      font-size: 11px;
+      color: #9C9B99;
+      white-space: nowrap;
+    }
+
+    .agents-section {
+      margin-top: 4px;
+    }
+
+    .agent-avatars {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .agent-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: white;
+      flex-shrink: 0;
+    }
+
+    .agent-more {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #F0EDE8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: #6D6C6A;
+      flex-shrink: 0;
+    }
+
+    .project-tag {
+      font-size: 12px;
+      color: #6D6C6A;
+      background: #F0EDE8;
+      padding: 4px 10px;
+      border-radius: 12px;
+      width: fit-content;
+    }
+
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .live-indicator {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .live-text {
+      font-size: 12px;
+      color: #6D6C6A;
+      margin: 0;
+    }
+
+    .card-time {
+      font-size: 12px;
+      color: #9C9B99;
+      margin: 0;
+      align-self: flex-end;
+    }
+
+    /* ─── FAB ─── */
+    .fab-container {
+      position: fixed;
+      bottom: 32px;
+      right: 32px;
+      z-index: 50;
+    }
+
+    .fab-btn {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      border: none;
+      color: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      transition: transform 0.2s;
+    }
+
+    .fab-btn:hover {
+      transform: scale(1.1);
+    }
+
+    .fab-menu {
+      position: absolute;
+      bottom: 72px;
+      right: 0;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+      overflow: hidden;
+      min-width: 160px;
+    }
+
+    .fab-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      padding: 12px 16px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font-size: 13px;
+      color: #1A1918;
+      transition: background 0.15s;
+    }
+
+    .fab-menu-item:hover {
+      background: #f5f3f0;
+    }
+
+    /* ─── Transitions ─── */
+    .fab-enter-active, .fab-leave-active {
+      transition: all 0.2s;
+    }
+    .fab-enter-from, .fab-leave-to {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+
+    /* ─── Responsive ─── */
+    @media (max-width: 1200px) {
+      .grid-container {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    @media (max-width: 768px) {
+      .header-search {
+        max-width: 100%;
+      }
+      .grid-container {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 480px) {
+      .grid-container {
+        grid-template-columns: 1fr;
+      }
+      .tab-bar {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+      }
+    }
+  </style>
+</body>
+</html>

@@ -35,6 +35,10 @@ cd frontend && pnpm type-check
 # 前端构建
 cd frontend && pnpm build
 
+# E2E 测试（需要前后端已启动）
+cd frontend && pnpm test:e2e
+cd frontend && pnpm test:e2e:ui    # 带调试 UI
+
 # Docker 部署
 docker-compose up -d --build
 ```
@@ -157,6 +161,44 @@ Lead Planner 在每轮讨论结束时生成 Checkpoint，有三种类型：
 ### Agent 定义
 
 每个策划 Agent 必须包含 `role`、`goal`、`backstory`、`tools`，配置在 `backend/src/config/roles/` 的 YAML 文件中。
+
+### E2E 测试规范（Playwright）
+
+测试文件位于 `frontend/e2e/`，使用 `frontend/e2e/fixtures.ts` 提供的 `authedPage` fixture。
+
+**什么时候必须写测试：**
+
+| 变更类型 | 操作 |
+|----------|------|
+| 新增页面/路由（新 `.vue` 文件在 `views/`） | 在 `e2e/` 创建对应 `xxx.spec.ts`，覆盖页面加载和核心交互 |
+| 新增弹窗/对话框 | 在对应 spec 文件添加「打开→交互→关闭」测试用例 |
+| 新增后端 API 端点 | 在对应 spec 文件添加 API 调用测试（直接用 `request` fixture） |
+| Bug 修复 | 添加验证该 bug 不再出现的回归测试 |
+| 修改认证/权限逻辑 | 在 `auth.spec.ts` 添加覆盖新逻辑的用例 |
+
+**文件对应关系：**
+- `HallView.vue` 相关 → `e2e/hall.spec.ts`
+- `ProjectDetailView.vue` 相关 → `e2e/project.spec.ts`
+- `DiscussionView.vue` 相关 → `e2e/discussion.spec.ts`
+- 认证相关 → `e2e/auth.spec.ts`
+- 新页面 → 新建 `e2e/<page-name>.spec.ts`
+
+**测试编写规则：**
+- 使用 `authedPage` fixture（已登录状态），避免在每个测试重复登录
+- 测试结束后必须清理创建的数据（`afterEach` 中调用 API 删除）
+- 不测试真实 LLM 调用，只测试 UI 结构和 API 响应格式
+- Selector 优先用语义化文本（`filter({ hasText: '...' })`），次选 CSS class
+
+**运行命令：**
+```bash
+cd frontend
+pnpm test:e2e                    # 无头运行全部测试
+pnpm test:e2e:ui                 # 带 UI 调试器（推荐调试时用）
+pnpm test:e2e:headed             # 有头模式（能看到浏览器）
+pnpm test:e2e e2e/hall.spec.ts   # 只跑某个文件
+pnpm test:e2e --grep "弹窗"      # 只跑匹配名称的测试
+pnpm test:e2e:report             # 查看上次运行的 HTML 报告
+```
 
 ## 关键陷阱
 

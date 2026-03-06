@@ -58,7 +58,7 @@ function handleOverlayClick(event: MouseEvent) {
         <!-- Header -->
         <div class="modal-header">
           <h3 class="modal-title">
-            <span class="title-icon">📋</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="title-icon"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
             议题小结
           </h3>
           <button class="btn-close" @click="handleClose" title="关闭">
@@ -71,7 +71,7 @@ function handleOverlayClick(event: MouseEvent) {
           <template v-if="item">
             <!-- Item Title -->
             <div class="item-header">
-              <span class="item-status">✅</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="item-status"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
               <h4 class="item-title">{{ item.title }}</h4>
             </div>
 
@@ -238,7 +238,8 @@ export default {
 }
 
 .title-icon {
-  font-size: 20px;
+  color: var(--text-secondary, #888);
+  flex-shrink: 0;
 }
 
 .btn-close {
@@ -273,7 +274,7 @@ export default {
 }
 
 .item-status {
-  font-size: 20px;
+  flex-shrink: 0;
 }
 
 .item-title {

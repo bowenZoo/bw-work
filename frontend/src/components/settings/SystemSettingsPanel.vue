@@ -50,15 +50,15 @@ onMounted(load);
       <div class="status-grid">
         <div class="stat-card">
           <Zap :size="16" class="stat-icon blue" />
-          <div><div class="stat-label">LLM</div><div class="stat-val">{{ status.llm_configured ? '✅ 已配置' : '❌ 未配置' }}</div></div>
+          <div><div class="stat-label">LLM</div><div class="stat-val"><span :class="status.llm_configured ? 'ok-dot' : 'err-dot'">{{ status.llm_configured ? '已配置' : '未配置' }}</span></div></div>
         </div>
         <div class="stat-card">
           <Eye :size="16" class="stat-icon purple" />
-          <div><div class="stat-label">Langfuse</div><div class="stat-val">{{ status.langfuse_enabled ? '✅ 已启用' : status.langfuse_configured ? '⏸ 已禁用' : '❌ 未配置' }}</div></div>
+          <div><div class="stat-label">Langfuse</div><div class="stat-val"><span :class="status.langfuse_enabled ? 'ok-dot' : status.langfuse_configured ? 'warn-dot' : 'err-dot'">{{ status.langfuse_enabled ? '已启用' : status.langfuse_configured ? '已禁用' : '未配置' }}</span></div></div>
         </div>
         <div class="stat-card">
           <BarChart3 :size="16" class="stat-icon green" />
-          <div><div class="stat-label">图片模型</div><div class="stat-val">{{ status.image_configured ? '✅ 已配置' : '❌ 未配置' }}</div><div class="stat-sub">{{ status.default_image_provider || '-' }}</div></div>
+          <div><div class="stat-label">图片模型</div><div class="stat-val"><span :class="status.image_configured ? 'ok-dot' : 'err-dot'">{{ status.image_configured ? '已配置' : '未配置' }}</span></div><div class="stat-sub">{{ status.default_image_provider || '-' }}</div></div>
         </div>
       </div>
 
@@ -102,6 +102,9 @@ onMounted(load);
 .stat-label { font-size:11px; color:#6b7280; font-weight:500; }
 .stat-val { font-size:13px; font-weight:600; }
 .stat-sub { font-size:11px; color:#9ca3af; }
+.ok-dot { color:#16a34a; font-weight:600; }
+.err-dot { color:#dc2626; font-weight:600; }
+.warn-dot { color:#d97706; font-weight:600; }
 .card { padding:18px; background:#f9fafb; border-radius:10px; margin-bottom:16px; }
 .card-title { font-size:14px; font-weight:600; margin:0 0 12px; }
 .form-grid { display:flex; flex-direction:column; gap:12px; }

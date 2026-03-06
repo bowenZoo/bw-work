@@ -90,7 +90,7 @@ onMounted(load);
           <button class="act-btn danger" @click="remove(p.id)" :disabled="p.is_active"><Trash2 :size="12" /> 删除</button>
         </div>
         <div v-if="testResult && testingId==='' && profiles.indexOf(p)===profiles.findIndex(x=>x.id===p.id)" class="test-result" :class="{ok:testResult.ok}">
-          {{ testResult.ok ? '✅ 测试通过' : '❌ ' + testResult.msg }}
+          {{ testResult.ok ? '连接成功' : testResult.msg }}
         </div>
       </div>
     </div>

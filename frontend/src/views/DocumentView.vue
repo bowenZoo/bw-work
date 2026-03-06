@@ -102,10 +102,19 @@ onMounted(async () => { await fetchDoc(); await fetchVersions() })
       </div>
       <div class="header-actions" v-if="doc">
         <button v-if="!editing" class="btn btn-export" @click="exportMarkdown">导出 Markdown</button>
-        <button v-if="!editing" class="btn btn-secondary" @click="toggleVersions">📋 历史 ({{ versions.length }})</button>
-        <button v-if="!editing" class="btn btn-primary" @click="startEdit">✏️ 编辑</button>
+        <button v-if="!editing" class="btn btn-secondary" @click="toggleVersions">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+          历史 ({{ versions.length }})
+        </button>
+        <button v-if="!editing" class="btn btn-primary" @click="startEdit">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+          编辑
+        </button>
         <button v-if="editing" class="btn btn-secondary" @click="cancelEdit">取消</button>
-        <button v-if="editing" class="btn btn-primary" @click="save" :disabled="saving">{{ saving ? '保存中...' : '💾 保存' }}</button>
+        <button v-if="editing" class="btn btn-primary" @click="save" :disabled="saving">
+          <svg v-if="!saving" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>
+          {{ saving ? '保存中...' : '保存' }}
+        </button>
       </div>
     </header>
 
@@ -128,7 +137,8 @@ onMounted(async () => { await fetchDoc(); await fetchVersions() })
 
       <main class="doc-content" :class="{ 'with-panel': showVersions }">
         <div v-if="previewVersion" class="preview-banner">
-          👁️ 预览 v{{ previewVersion.version }} —
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+          预览 v{{ previewVersion.version }} —
           <button @click="previewVersion = null">关闭预览</button>
           <button @click="revertTo(previewVersion.id)">回退到此版本</button>
         </div>
@@ -160,7 +170,7 @@ onMounted(async () => { await fetchDoc(); await fetchVersions() })
 .title-input:focus { outline: none; border-color: #4f46e5; }
 .version-badge { background: #ede9fe; color: #4f46e5; font-size: 12px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
 .header-actions { display: flex; gap: 8px; white-space: nowrap; }
-.btn { padding: 6px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none; font-weight: 500; transition: all 0.15s; }
+.btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none; font-weight: 500; transition: all 0.15s; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary { background: #4f46e5; color: #fff; }
 .btn-primary:hover:not(:disabled) { background: #4338ca; }

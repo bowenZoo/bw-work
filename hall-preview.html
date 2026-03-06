@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BW-Work 大厅首页</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  button { cursor: pointer; font-family: inherit; }
+  input { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState } = React;
+
+/* ─── 设计 Token ─── */
+const C = {
+  bg:        '#FFFBF5',
+  white:     '#FFFFFF',
+  purple:    '#7C3AED',
+  green:     '#3D8A5A',
+  gray:      '#9C9B99',
+  text:      '#1A1918',
+  textSub:   '#6D6C6A',
+  textMuted: '#9C9B99',
+  border:    '#EDE9E2',
+  tabInactive:'#F0EDE8',
+  searchBg:  '#F5F3F0',
+  pillPurpleBg:'#EDE9FE',
+  pillGreenBg: '#D1FAE5',
+  progPurpleBg:'#EDE9FE',
+  progGreenBg: '#D1FAE5',
+  tagBg:     '#F0EDE8',
+};
+
+/* ─── Mock 数据（完全来自设计稿） ─── */
+const CARDS = [
+  {
+    id:'p1', type:'project', accent: C.purple,
+    emoji:'📁', title:'智能客服系统',
+    stage:'需求分析', progress:35,
+    agents:[{c:'#7C3AED',l:'A'},{c:'#D89575',l:'B'},{c:'#3D8A5A',l:'C'}],
+    status:'进行中', statusType:'purple', time:'2小时前',
+  },
+  {
+    id:'d1', type:'discussion', accent: C.green,
+    emoji:'💬', title:'用户画像讨论',
+    projectTag:'智能客服系统',
+    liveText:'3人·产品策划师发言中...', liveDot: C.green, time:'14:40',
+  },
+  {
+    id:'p2', type:'project', accent: C.purple,
+    emoji:'📁', title:'电商推荐引擎',
+    stage:'概念设计', progress:60,
+    agents:[{c:'#6366F1',l:'D'},{c:'#F59E0B',l:'E'},{c:'#EC4899',l:'F'},{c:'#14B8A6',l:'G'},{c:'#8B5CF6',l:'H'}],
+    status:'进行中', statusType:'purple', time:'昨天',
+  },
+  {
+    id:'d2', type:'discussion', accent: C.green,
+    emoji:'💬', title:'技术方案评审',
+    projectTag:'电商推荐引擎',
+    liveText:'4人', liveDot: C.green, time:'1小时前',
+  },
+  {
+    id:'p3', type:'project', accent: C.purple,
+    emoji:'📁', title:'数据分析平台',
+    stage:null, progress:100,
+    agents:[{c:'#7C3AED',l:'I'},{c:'#F59E0B',l:'J'},{c:'#EC4899',l:'K'},{c:'#3D8A5A',l:'L'}],
+    status:'已完成', statusType:'green', time:'3天前',
+  },
+  {
+    id:'d3', type:'discussion', accent: C.gray,
+    emoji:'💬', title:'竞品分析报告',
+    projectTag:'智能客服系统',
+    liveText:'2人·已完成', liveDot: C.gray, time:'昨天',
+  },
+  {
+    id:'p4', type:'project', accent: C.purple,
+    emoji:'📁', title:'AI写作助手',
+    stage:'需求分析', progress:15,
+    agents:[{c:'#6366F1',l:'M'},{c:'#D89575',l:'N'}],
+    status:'进行中', statusType:'purple', time:'刚刚',
+  },
+  {
+    id:'d4', type:'discussion', accent: C.green,
+    emoji:'💬', title:'移动端交互讨论',
+    projectTag:'移动端重构',
+    liveText:'5人', liveDot: C.green, time:'刚刚',
+  },
+];
+
+/* ─── Icon SVG ─── */
+function IconSearch() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.gray} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+    </svg>
+  );
+}
+function IconBell() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.textSub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+      <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+    </svg>
+  );
+}
+function IconChevronDown() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.textSub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="6 9 12 15 18 9"/>
+    </svg>
+  );
+}
+function IconPlus({ size = 24, color = '#fff' }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round">
+      <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+    </svg>
+  );
+}
+function IconMessageSquare({ size = 16, color = C.textSub }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+    </svg>
+  );
+}
+function IconFolder({ size = 16, color = C.textSub }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+    </svg>
+  );
+}
+
+/* ─── 进度条 ─── */
+function ProgressBar({ pct, statusType }) {
+  const trackBg = statusType === 'green' ? C.progGreenBg : C.progPurpleBg;
+  const fillBg  = statusType === 'green' ? C.green : C.purple;
+  const textClr = statusType === 'green' ? C.green : C.purple;
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+      <div style={{ flex:1, height:6, background:trackBg, borderRadius:100, overflow:'hidden' }}>
+        <div style={{ width:`${pct}%`, height:'100%', background:fillBg, borderRadius:100, transition:'width .3s' }} />
+      </div>
+      <span style={{ fontSize:11, fontWeight:600, color:textClr, minWidth:32, textAlign:'right' }}>{pct}%</span>
+    </div>
+  );
+}
+
+/* ─── Agent 头像行 ─── */
+function AgentRow({ agents }) {
+  return (
+    <div style={{ display:'flex', alignItems:'center' }}>
+      <div style={{ flex:1 }} />
+      {agents.map((a, i) => (
+        <div key={i} style={{
+          width:22, height:22, borderRadius:'50%',
+          background:a.c, border:'2px solid #fff',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          fontSize:10, fontWeight:600, color:'#fff',
+          marginLeft: i === 0 ? 0 : -4, zIndex: agents.length - i,
+          position:'relative',
+        }}>{a.l}</div>
+      ))}
+    </div>
+  );
+}
+
+/* ─── 状态 Pill ─── */
+function StatusPill({ label, type }) {
+  const bg   = type === 'green' ? C.pillGreenBg : C.pillPurpleBg;
+  const clr  = type === 'green' ? C.green       : C.purple;
+  return (
+    <span style={{
+      display:'inline-flex', alignItems:'center', gap:4,
+      padding:'3px 10px', borderRadius:100,
+      background:bg, fontSize:11, fontWeight:500, color:clr,
+    }}>
+      <span style={{ width:6, height:6, borderRadius:'50%', background:clr, flexShrink:0 }} />
+      {label}
+    </span>
+  );
+}
+
+/* ─── Project Card ─── */
+function ProjectCard({ card }) {
+  return (
+    <div style={{
+      background: C.white, borderRadius:16, overflow:'hidden',
+      boxShadow:'0 1px 4px rgba(0,0,0,0.07)', cursor:'pointer',
+      transition:'box-shadow .15s, transform .15s',
+    }}
+    onMouseEnter={e => { e.currentTarget.style.boxShadow='0 6px 20px rgba(0,0,0,0.11)'; e.currentTarget.style.transform='translateY(-2px)'; }}
+    onMouseLeave={e => { e.currentTarget.style.boxShadow='0 1px 4px rgba(0,0,0,0.07)'; e.currentTarget.style.transform='none'; }}
+    >
+      {/* 顶部色条 */}
+      <div style={{ height:4, background: card.accent }} />
+      {/* 内容 */}
+      <div style={{ padding:'16px 18px', display:'flex', flexDirection:'column', gap:10 }}>
+        {/* 标题 */}
+        <div style={{ display:'flex', alignItems:'flex-start', gap:6 }}>
+          <span style={{ fontSize:16, lineHeight:'1.4', flexShrink:0 }}>{card.emoji}</span>
+          <span style={{ fontSize:15, fontWeight:600, color:C.text, lineHeight:1.4 }}>{card.title}</span>
+        </div>
+        {/* 阶段文字 */}
+        {card.stage && (
+          <span style={{ fontSize:12, fontWeight:500, color:C.textMuted }}>{card.stage}</span>
+        )}
+        {/* 进度条 */}
+        <ProgressBar pct={card.progress} statusType={card.statusType} />
+        {/* Agent 头像 */}
+        <AgentRow agents={card.agents} />
+        {/* 状态行 */}
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <StatusPill label={card.status} type={card.statusType} />
+          <div style={{ flex:1 }} />
+          <span style={{ fontSize:11, color:C.textMuted }}>{card.time}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Discussion Card ─── */
+function DiscussionCard({ card }) {
+  return (
+    <div style={{
+      background: C.white, borderRadius:16, overflow:'hidden',
+      boxShadow:'0 1px 4px rgba(0,0,0,0.07)', cursor:'pointer',
+      transition:'box-shadow .15s, transform .15s',
+    }}
+    onMouseEnter={e => { e.currentTarget.style.boxShadow='0 6px 20px rgba(0,0,0,0.11)'; e.currentTarget.style.transform='translateY(-2px)'; }}
+    onMouseLeave={e => { e.currentTarget.style.boxShadow='0 1px 4px rgba(0,0,0,0.07)'; e.currentTarget.style.transform='none'; }}
+    >
+      {/* 顶部色条 */}
+      <div style={{ height:4, background: card.accent }} />
+      {/* 内容 */}
+      <div style={{ padding:'16px 18px', display:'flex', flexDirection:'column', gap:10 }}>
+        {/* 标题 */}
+        <div style={{ display:'flex', alignItems:'flex-start', gap:6 }}>
+          <span style={{ fontSize:16, lineHeight:'1.4', flexShrink:0 }}>{card.emoji}</span>
+          <span style={{ fontSize:15, fontWeight:600, color:C.text, lineHeight:1.4 }}>{card.title}</span>
+        </div>
+        {/* 关联项目 Tag */}
+        {card.projectTag && (
+          <span style={{
+            display:'inline-block', background:C.tagBg,
+            color:C.textSub, fontSize:11, fontWeight:500,
+            padding:'2px 8px', borderRadius:6, alignSelf:'flex-start',
+          }}>{card.projectTag}</span>
+        )}
+        {/* 在线状态 */}
+        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+          <span style={{ width:8, height:8, borderRadius:'50%', background:card.liveDot, flexShrink:0 }} />
+          <span style={{
+            fontSize:12, color:C.textSub,
+            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+          }}>{card.liveText}</span>
+        </div>
+        {/* 底部时间 */}
+        <div style={{ display:'flex', alignItems:'center' }}>
+          <div style={{ flex:1 }} />
+          <span style={{ fontSize:11, color:C.textMuted }}>{card.time}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── FAB ─── */
+function FAB() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position:'fixed', bottom:28, right:28, zIndex:50, display:'flex', flexDirection:'column', alignItems:'flex-end', gap:8 }}>
+      {open && (
+        <div style={{ display:'flex', flexDirection:'column', gap:6, alignItems:'flex-end' }}>
+          {[
+            { icon:<IconMessageSquare size={15} color={C.purple}/>, label:'新建讨论' },
+            { icon:<IconFolder size={15} color={C.purple}/>, label:'新建项目' },
+          ].map(item => (
+            <button key={item.label} onClick={() => setOpen(false)} style={{
+              display:'flex', alignItems:'center', gap:8,
+              padding:'9px 16px', background:C.white, border:'none',
+              borderRadius:24, fontSize:14, fontWeight:500, color:'#374151',
+              boxShadow:'0 2px 12px rgba(0,0,0,0.12)', whiteSpace:'nowrap',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background='#f3f4f6'}
+            onMouseLeave={e => e.currentTarget.style.background=C.white}
+            >
+              {item.icon}{item.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          width:56, height:56, borderRadius:'50%',
+          background:C.purple, border:'none', color:'#fff',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          boxShadow:'0 4px 16px rgba(124,58,237,0.4)',
+          transition:'background .15s, transform .2s',
+          transform: open ? 'rotate(45deg)' : 'none',
+        }}
+        onMouseEnter={e => e.currentTarget.style.background='#6d28d9'}
+        onMouseLeave={e => e.currentTarget.style.background=C.purple}
+      >
+        <IconPlus />
+      </button>
+    </div>
+  );
+}
+
+/* ─── 主页面 ─── */
+const TABS = [
+  { key:'all',       label:'全部' },
+  { key:'project',   label:'项目' },
+  { key:'discussion',label:'讨论' },
+  { key:'running',   label:'进行中' },
+  { key:'mine',      label:'我参与的' },
+];
+
+function HallPage() {
+  const [activeTab, setActiveTab] = useState('all');
+  const [search, setSearch] = useState('');
+
+  const filtered = CARDS.filter(c => {
+    const q = search.trim().toLowerCase();
+    if (q && !c.title.toLowerCase().includes(q)) return false;
+    if (activeTab === 'project')    return c.type === 'project';
+    if (activeTab === 'discussion') return c.type === 'discussion';
+    if (activeTab === 'running')    return c.statusType === 'purple'; // 进行中
+    return true;
+  });
+
+  return (
+    <div style={{ minHeight:'100vh', background:C.bg }}>
+
+      {/* ── Header ── */}
+      <header style={{
+        display:'flex', alignItems:'center', height:56,
+        padding:'0 24px', gap:16,
+        background:C.white, borderBottom:`1px solid ${C.border}`,
+        position:'sticky', top:0, zIndex:10,
+      }}>
+        {/* Logo */}
+        <span style={{ fontSize:20, fontWeight:700, color:C.purple, whiteSpace:'nowrap', flexShrink:0 }}>
+          BW-Work
+        </span>
+
+        {/* Spacer */}
+        <div style={{ flex:1 }} />
+
+        {/* 搜索框 */}
+        <div style={{ position:'relative', flexShrink:0 }}>
+          <span style={{ position:'absolute', left:12, top:'50%', transform:'translateY(-50%)', pointerEvents:'none', display:'flex' }}>
+            <IconSearch />
+          </span>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="搜索项目或讨论..."
+            style={{
+              width:360, height:36,
+              padding:'0 14px 0 34px',
+              border:'none', borderRadius:100,
+              background:C.searchBg,
+              fontSize:14, color:C.text, outline:'none',
+            }}
+          />
+        </div>
+
+        {/* Spacer */}
+        <div style={{ flex:1 }} />
+
+        {/* 右侧操作区 */}
+        <div style={{ display:'flex', alignItems:'center', gap:16, flexShrink:0 }}>
+          {/* 铃铛 */}
+          <div style={{ position:'relative', width:24, height:24, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' }}>
+            <IconBell />
+            <span style={{
+              position:'absolute', top:0, right:0,
+              width:8, height:8, borderRadius:'50%',
+              background:'#EF4444', border:`1.5px solid ${C.white}`,
+            }} />
+          </div>
+          {/* 用户头像 */}
+          <div style={{
+            width:32, height:32, borderRadius:'50%',
+            background:C.purple, display:'flex',
+            alignItems:'center', justifyContent:'center',
+            fontSize:14, fontWeight:600, color:'#fff', cursor:'pointer',
+          }}>V</div>
+        </div>
+      </header>
+
+      {/* ── Tab 栏 ── */}
+      <nav style={{
+        display:'flex', alignItems:'center', height:52,
+        padding:'0 24px', gap:12,
+        background:C.white, borderBottom:`1px solid ${C.border}`,
+        overflowX:'auto',
+      }}>
+        {TABS.map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            style={{
+              height:32, padding:'0 16px',
+              borderRadius:100, border:'none',
+              fontSize:13,
+              fontWeight: activeTab === tab.key ? 600 : 500,
+              background: activeTab === tab.key ? C.purple : C.tabInactive,
+              color: activeTab === tab.key ? '#fff' : C.textSub,
+              whiteSpace:'nowrap', flexShrink:0,
+              transition:'background .15s, color .15s',
+            }}
+          >{tab.label}</button>
+        ))}
+
+        {/* Spacer */}
+        <div style={{ flex:1 }} />
+
+        {/* 排序按钮 */}
+        <button style={{
+          display:'flex', alignItems:'center', gap:4,
+          background:'none', border:'none',
+          fontSize:13, fontWeight:500, color:C.textSub,
+          flexShrink:0,
+        }}>
+          最近更新 <IconChevronDown />
+        </button>
+      </nav>
+
+      {/* ── 卡片网格 ── */}
+      <main style={{ padding:24, paddingBottom:80 }}>
+        {filtered.length === 0 ? (
+          <div style={{ textAlign:'center', padding:'60px 20px', color:C.textMuted }}>
+            <div style={{ fontSize:40, marginBottom:12 }}>🔍</div>
+            <p style={{ fontSize:16, fontWeight:500, marginBottom:6 }}>没有找到匹配的内容</p>
+            <p style={{ fontSize:13 }}>试试其他关键词或切换分类</p>
+          </div>
+        ) : (
+          <div style={{
+            display:'grid',
+            gridTemplateColumns:'repeat(4, 1fr)',
+            gap:14,
+          }}>
+            {filtered.map(card =>
+              card.type === 'project'
+                ? <ProjectCard key={card.id} card={card} />
+                : <DiscussionCard key={card.id} card={card} />
+            )}
+          </div>
+        )}
+      </main>
+
+      {/* ── FAB ── */}
+      <FAB />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<HallPage />);
+</script>
+</body>
+</html>

@@ -688,8 +688,8 @@ onUnmounted(() => {
           v-if="isHallDiscussion && discussionStatus === 'completed'"
           class="archive-btn"
           @click="openArchiveDialog"
-          title="归档到项目"
-        >📦 归档</button>
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:4px;"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>归档</button>
         <button
           class="back-btn"
           @click="goBackToHome"
@@ -1037,7 +1037,7 @@ onUnmounted(() => {
     <Transition name="fade">
       <div v-if="showArchiveDialog" class="dialog-overlay" @click.self="showArchiveDialog = false">
         <div class="archive-dialog">
-          <h3>📦 归档讨论到项目</h3>
+          <h3 style="display:flex;align-items:center;gap:6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>归档讨论到项目</h3>
           <div class="archive-field">
             <label>选择项目</label>
             <select v-model="selectedProject" @change="onProjectSelected" class="archive-select">
@@ -1827,7 +1827,7 @@ onUnmounted(() => {
     padding: 8px 12px;
   }
 }
-.archive-btn { background: #f0fdf4; color: #16a34a; border: 1px solid #86efac; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.archive-btn { display: inline-flex; align-items: center; background: #f0fdf4; color: #16a34a; border: 1px solid #86efac; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
 .archive-btn:hover { background: #dcfce7; }
 .dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .archive-dialog { background: #fff; border-radius: 12px; padding: 24px; width: 380px; box-shadow: 0 8px 30px rgba(0,0,0,0.15); }

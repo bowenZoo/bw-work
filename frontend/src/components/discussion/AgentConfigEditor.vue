@@ -20,13 +20,17 @@ const isLoadingDefaults = ref(false);
 
 // All available agent roles (order matters for display)
 const AGENT_ROLES = [
-  { id: 'lead_planner', name: '主策划', emoji: '👔', locked: true },
-  { id: 'system_designer', name: '系统策划', emoji: '⚙️', locked: false },
-  { id: 'number_designer', name: '数值策划', emoji: '📊', locked: false },
-  { id: 'player_advocate', name: '玩家代言人', emoji: '🎮', locked: false },
-  { id: 'operations_analyst', name: '市场运营', emoji: '📈', locked: false },
-  { id: 'visual_concept', name: '视觉概念', emoji: '🎨', locked: false },
+  { id: 'lead_planner', name: '主策划', locked: true },
+  { id: 'system_designer', name: '系统策划', locked: false },
+  { id: 'number_designer', name: '数值策划', locked: false },
+  { id: 'player_advocate', name: '玩家代言人', locked: false },
+  { id: 'operations_analyst', name: '市场运营', locked: false },
+  { id: 'visual_concept', name: '视觉概念', locked: false },
 ];
+
+const ROLE_ICON_PATHS: Record<string, string> = {
+  lead_planner: 'M12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2',
+};
 
 // Currently selected agent for editing
 const selectedAgentId = ref<string | null>(null);
@@ -167,7 +171,14 @@ onMounted(() => {
         @click="role.locked ? undefined : toggleAgent(role.id)"
         :title="role.locked ? '必选参与者' : (isAgentEnabled(role.id) ? '点击移除' : '点击添加')"
       >
-        <span class="chip-emoji">{{ role.emoji }}</span>
+        <span class="chip-icon">
+          <svg v-if="role.id === 'lead_planner'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          <svg v-else-if="role.id === 'system_designer'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/></svg>
+          <svg v-else-if="role.id === 'number_designer'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>
+          <svg v-else-if="role.id === 'player_advocate'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <svg v-else-if="role.id === 'operations_analyst'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+          <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+        </span>
         <span class="chip-name">{{ role.name }}</span>
         <span v-if="role.locked" class="chip-lock">必选</span>
         <span v-if="hasOverrides(role.id)" class="chip-dot" />
@@ -195,7 +206,14 @@ onMounted(() => {
           }"
           @click="selectedAgentId = role.id"
         >
-          <span class="tab-emoji">{{ role.emoji }}</span>
+          <span class="tab-icon">
+            <svg v-if="role.id === 'lead_planner'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg v-else-if="role.id === 'system_designer'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/></svg>
+            <svg v-else-if="role.id === 'number_designer'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>
+            <svg v-else-if="role.id === 'player_advocate'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <svg v-else-if="role.id === 'operations_analyst'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+            <svg v-else width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+          </span>
           <span>{{ role.name }}</span>
           <span v-if="hasOverrides(role.id)" class="tab-dot" />
         </button>
@@ -316,9 +334,21 @@ onMounted(() => {
   color: var(--text-primary, #374151);
 }
 
-.chip-emoji {
-  font-size: 14px;
-  line-height: 1;
+.chip-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-secondary, #9ca3af);
+}
+
+.agent-chip.is-active .chip-icon {
+  color: var(--primary-color, #3b82f6);
+}
+
+.tab-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 .chip-name {
@@ -416,9 +446,7 @@ onMounted(() => {
   opacity: 0.35;
 }
 
-.tab-emoji {
-  font-size: 13px;
-}
+/* tab-emoji removed, tab-dot below */
 
 .tab-dot {
   width: 5px;

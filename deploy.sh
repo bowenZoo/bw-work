@@ -7,6 +7,36 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "=== bw-work Deploy to $REMOTE ==="
 
+# ─── E2E 测试门控 ──────────────────────────────────────────────────────────────
+# 跳过：SKIP_TESTS=1 ./deploy.sh
+if [ "${SKIP_TESTS}" != "1" ]; then
+  echo ""
+  echo "[0/4] 运行 E2E 测试（跳过请用 SKIP_TESTS=1）..."
+
+  # 检查本地前后端是否已启动
+  if ! curl -sf http://localhost:18000/api/health > /dev/null 2>&1 && \
+     ! curl -sf http://localhost:18000/docs > /dev/null 2>&1; then
+    echo "  警告：后端（18000）未响应，跳过 E2E 测试"
+    echo "  提示：运行 /restart 后再部署，或用 SKIP_TESTS=1 ./deploy.sh 强制跳过"
+  elif ! curl -sf http://localhost:18001 > /dev/null 2>&1; then
+    echo "  警告：前端（18001）未响应，跳过 E2E 测试"
+    echo "  提示：运行 /restart 后再部署，或用 SKIP_TESTS=1 ./deploy.sh 强制跳过"
+  else
+    cd "$PROJECT_DIR/frontend"
+    if pnpm test:e2e --reporter=list; then
+      echo "  E2E 测试全部通过"
+    else
+      echo ""
+      echo "  E2E 测试失败！部署已中止。"
+      echo "  查看报告：cd frontend && pnpm test:e2e:report"
+      echo "  强制部署：SKIP_TESTS=1 ./deploy.sh"
+      exit 1
+    fi
+    cd "$PROJECT_DIR"
+  fi
+fi
+# ──────────────────────────────────────────────────────────────────────────────
+
 # 1. Sync project files (exclude runtime/generated dirs)
 echo "[1/4] Syncing files to $REMOTE:$REMOTE_DIR ..."
 rsync -avz --delete \

@@ -19,41 +19,17 @@ const emit = defineEmits<{
 const statusConfig = computed(() => {
   switch (props.status) {
     case 'pending':
-      return {
-        icon: '⏳',
-        text: '待开始',
-        class: 'text-gray-500',
-      };
+      return { iconType: 'hourglass', text: '待开始', class: 'text-gray-500' };
     case 'running':
-      return {
-        icon: '🔵',
-        text: '进行中',
-        class: 'text-blue-600',
-      };
+      return { iconType: 'circle-blue', text: '进行中', class: 'text-blue-600' };
     case 'completed':
-      return {
-        icon: '✅',
-        text: '已完成',
-        class: 'text-green-600',
-      };
+      return { iconType: 'check', text: '已完成', class: 'text-green-600' };
     case 'stopped':
-      return {
-        icon: '⏸️',
-        text: '已停止',
-        class: 'text-amber-600',
-      };
+      return { iconType: 'pause', text: '已停止', class: 'text-amber-600' };
     case 'failed':
-      return {
-        icon: '❌',
-        text: '已中断',
-        class: 'text-red-500',
-      };
+      return { iconType: 'x', text: '已中断', class: 'text-red-500' };
     default:
-      return {
-        icon: '❓',
-        text: '未知',
-        class: 'text-gray-400',
-      };
+      return { iconType: 'question', text: '未知', class: 'text-gray-400' };
   }
 });
 
@@ -97,8 +73,14 @@ function handleAttachmentClick() {
       <!-- 状态显示 -->
       <div class="flex items-center gap-2">
         <span class="text-sm text-gray-500">状态：</span>
-        <span :class="['text-sm font-medium', statusConfig.class]">
-          {{ statusConfig.icon }} {{ statusConfig.text }}
+        <span :class="['flex items-center gap-1 text-sm font-medium', statusConfig.class]">
+          <svg v-if="statusConfig.iconType === 'check'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
+          <svg v-else-if="statusConfig.iconType === 'circle-blue'" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="12" r="10"/></svg>
+          <svg v-else-if="statusConfig.iconType === 'pause'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" x2="10" y1="15" y2="9"/><line x1="14" x2="14" y1="15" y2="9"/></svg>
+          <svg v-else-if="statusConfig.iconType === 'x'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></svg>
+          <svg v-else-if="statusConfig.iconType === 'hourglass'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 1 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></svg>
+          <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+          {{ statusConfig.text }}
         </span>
       </div>
     </div>

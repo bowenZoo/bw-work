@@ -36,14 +36,10 @@ const progress = computed(() => {
 
 function getStatusIcon(status: string): string {
   switch (status) {
-    case 'completed':
-      return '✅'
-    case 'in_progress':
-      return '🔵'
-    case 'skipped':
-      return '⏭️'
-    default:
-      return '⬜'
+    case 'completed': return 'check'
+    case 'in_progress': return 'circle'
+    case 'skipped': return 'skip'
+    default: return 'empty'
   }
 }
 
@@ -75,17 +71,20 @@ function toggleCollapse() {
   <div class="agenda-panel">
     <!-- Header -->
     <div class="agenda-header" @click="toggleCollapse">
-      <span class="agenda-icon">📝</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="agenda-icon"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
       <span class="agenda-title">议程</span>
       <template v-if="currentItem">
         <span class="agenda-current-indicator">-</span>
         <span class="agenda-current">
-          <span class="current-icon">🔵</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="#3b82f6" stroke="none" class="current-icon"><circle cx="12" cy="12" r="10"/></svg>
           {{ progress.completed + 1 }}. {{ currentItem.title }}
           <span class="current-marker">← 当前</span>
         </span>
       </template>
-      <span class="agenda-toggle">{{ isCollapsed ? '展开▼' : '收起▲' }}</span>
+      <span class="agenda-toggle">
+        <svg v-if="isCollapsed" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+      </span>
     </div>
 
     <!-- Content (expandable) -->
@@ -101,7 +100,12 @@ function toggleCollapse() {
           class="agenda-item"
           :class="[getStatusClass(item.status), { 'is-current': index === agenda.current_index }]"
         >
-          <span class="item-status">{{ getStatusIcon(item.status) }}</span>
+          <span class="item-status">
+              <svg v-if="getStatusIcon(item.status) === 'check'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
+              <svg v-else-if="getStatusIcon(item.status) === 'circle'" width="14" height="14" viewBox="0 0 24 24" fill="#3b82f6" stroke="none"><circle cx="12" cy="12" r="10"/></svg>
+              <svg v-else-if="getStatusIcon(item.status) === 'skip'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" x2="19" y1="5" y2="19"/></svg>
+              <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg>
+            </span>
           <span class="item-index">{{ index + 1 }}.</span>
           <span class="item-title">{{ item.title }}</span>
 
@@ -147,7 +151,7 @@ function toggleCollapse() {
 
         <!-- Add item button -->
         <div class="agenda-add" @click="emit('addItem')">
-          <span class="add-icon">➕</span>
+          <svg class="add-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>
           <span class="add-text">添加新议题</span>
         </div>
       </div>
@@ -190,7 +194,8 @@ function toggleCollapse() {
 }
 
 .agenda-icon {
-  font-size: 16px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
 .agenda-title {
@@ -223,7 +228,14 @@ function toggleCollapse() {
 
 .agenda-toggle {
   color: var(--text-secondary);
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+}
+
+.current-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 .agenda-content {
@@ -262,9 +274,11 @@ function toggleCollapse() {
 }
 
 .item-status {
-  font-size: 14px;
   width: 20px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .item-index {
@@ -336,7 +350,7 @@ function toggleCollapse() {
 }
 
 .add-icon {
-  font-size: 14px;
+  flex-shrink: 0;
 }
 
 .add-text {

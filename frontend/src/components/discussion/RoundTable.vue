@@ -48,7 +48,7 @@ function handleAgentClick(agentId: string) {
   <div class="round-table">
     <!-- Table center -->
     <div class="table-center">
-      <span class="center-icon">💬</span>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
     </div>
 
     <!-- Agent avatars positioned around the table -->
@@ -72,7 +72,8 @@ function handleAgentClick(agentId: string) {
           class="avatar-image"
         />
         <span v-else class="avatar-fallback">
-          {{ agent.role === 'lead_planner' ? '👑' : '👤' }}
+          <svg v-if="agent.role === 'lead_planner'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         </span>
 
         <!-- Status indicator dot -->
@@ -116,10 +117,7 @@ function handleAgentClick(agentId: string) {
   justify-content: center;
   border: 2px solid var(--border-color);
   z-index: 2;
-}
-
-.center-icon {
-  font-size: 18px;
+  color: var(--text-secondary);
 }
 
 .agent-seat {

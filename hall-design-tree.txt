@@ -1,0 +1,196 @@
+<frame> Final: 大厅首页 | width=1440 height=900 fill=#FFFBF5
+  <frame> Top Bar | width=fill_container height=56 fill=#FFFFFF padding=[0, 24] gap=16 effect={'type': 'shadow', 'shadowType': 'outer', 'color': '#0000000A', 'offset': {'x': 0, 'y': 1}, 'blur': 4}
+    <text> logoText | fill=#7C3AED fontSize=20 fontWeight=700 fontFamily=Outfit letterSpacing=-0.5
+    <frame> spacer1 | width=fill_container height=1
+    <frame> Search Box | width=360 height=36 fill=#F5F3F0 padding=[0, 14] gap=8
+      <icon_font> searchIcon | width=16 height=16 fill=#9C9B99
+      <text> searchText | fill=#9C9B99 fontSize=14 fontFamily=Outfit
+    <frame> spacer2 | width=fill_container height=1
+    <frame> Right Actions | gap=16
+      <frame> Bell Wrap | width=24 height=24
+        <icon_font> bellIcon | width=22 height=22 fill=#6D6C6A
+        <ellipse> redDot | width=8 height=8 fill=#EF4444
+      <frame> avatar | width=32 height=32 fill=#7C3AED
+        <text> avatarText | fill=#FFFFFF fontSize=14 fontWeight=600 fontFamily=Outfit
+  <frame> Filter Tabs | width=fill_container height=52 padding=[0, 24] gap=12
+    <frame> tabAll | height=32 fill=#7C3AED padding=[6, 16]
+      <text> tabAllText | fill=#FFFFFF fontSize=13 fontWeight=600 fontFamily=Outfit
+    <frame> tabProj | height=32 fill=#F0EDE8 padding=[6, 16]
+      <text> tabProjText | fill=#6D6C6A fontSize=13 fontWeight=500 fontFamily=Outfit
+    <frame> tabDisc | height=32 fill=#F0EDE8 padding=[6, 16]
+      <text> tabDiscText | fill=#6D6C6A fontSize=13 fontWeight=500 fontFamily=Outfit
+    <frame> tabRunning | height=32 fill=#F0EDE8 padding=[6, 16]
+      <text> tabRunningText | fill=#6D6C6A fontSize=13 fontWeight=500 fontFamily=Outfit
+    <frame> tabMine | height=32 fill=#F0EDE8 padding=[6, 16]
+      <text> tabMineText | fill=#6D6C6A fontSize=13 fontWeight=500 fontFamily=Outfit
+    <frame> spacer3 | width=fill_container height=1
+    <frame> sortBtn | gap=4
+      <text> sortText | fill=#6D6C6A fontSize=13 fontWeight=500 fontFamily=Outfit
+      <icon_font> sortIcon | width=14 height=14 fill=#6D6C6A
+  <frame> Grid Container | width=fill_container height=fill_container padding=24 gap=14
+    <frame> Row 1 | width=fill_container height=fill_container gap=14
+      <frame> P1 智能客服系统 | width=fill_container height=fill_container fill=#FFFFFF effect={'type': 'shadow', 'shadowType': 'outer', 'color': '#0000000D', 'offset': {'x': 0, 'y': 2}, 'blur': 12}
+        <rectangle> p1Left | width=fill_container height=4 fill=#7C3AED
+        <frame> p1Body | width=fill_container height=fill_container padding=[16, 18] gap=10
+          <frame> p1Header | width=fill_container gap=6
+            <text> p1Emoji | fill=#1A1918 fontSize=16 fontWeight=normal fontFamily=Outfit
+            <text> p1Title | fill=#1A1918 fontSize=15 fontWeight=600 fontFamily=Outfit
+          <text> p1Stage | fill=#9C9B99 fontSize=12 fontWeight=500 fontFamily=Outfit
+          <frame> p1ProgRow | width=fill_container gap=8
+            <frame> p1ProgBar | width=fill_container height=6 fill=#EDE9FE
+              <rectangle> p1ProgFill | width=80 height=6 fill=#7C3AED
+            <text> p1ProgText | fill=#7C3AED fontSize=11 fontWeight=600 fontFamily=Outfit
+          <frame> p1Bottom | width=fill_container gap=6
+            <frame> p1Spacer | width=fill_container height=1
+            <frame> p1Av1 | width=22 height=22 fill=#7C3AED
+              <text> p1Av1T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+            <frame> p1Av2 | width=22 height=22 fill=#D89575
+              <text> p1Av2T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+            <frame> p1Av3 | width=22 height=22 fill=#3D8A5A
+              <text> p1Av3T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+          <frame> p1StatusRow | width=fill_container gap=8
+            <frame> p1Pill | fill=#EDE9FE padding=[3, 10] gap=4
+              <ellipse> p1Dot | width=6 height=6 fill=#7C3AED
+              <text> p1PillT | fill=#7C3AED fontSize=11 fontWeight=500 fontFamily=Outfit
+            <frame> p1Spacer2 | width=fill_container height=1
+            <text> p1Time | fill=#9C9B99 fontSize=11 fontFamily=Outfit
+      <frame> D1 用户画像讨论 | width=fill_container height=fill_container fill=#FFFFFF effect={'type': 'shadow', 'shadowType': 'outer', 'color': '#0000000D', 'offset': {'x': 0, 'y': 2}, 'blur': 12}
+        <rectangle> d1Top | width=fill_container height=4 fill=#3D8A5A
+        <frame> d1Body | width=fill_container height=fill_container padding=[16, 18] gap=10
+          <frame> d1Header | width=fill_container gap=6
+            <text> d1Emoji | fill=#1A1918 fontSize=16 fontWeight=normal fontFamily=Outfit
+            <text> d1Title | fill=#1A1918 fontSize=15 fontWeight=600 fontFamily=Outfit
+          <frame> d1Tag | fill=#F0EDE8 padding=[2, 8]
+            <text> d1TagT | fill=#6D6C6A fontSize=11 fontWeight=500 fontFamily=Outfit
+          <frame> d1StatusRow | width=fill_container gap=6
+            <ellipse> d1LiveDot | width=8 height=8 fill=#3D8A5A
+            <text> d1LiveT | width=fill_container fill=#6D6C6A fontSize=12 fontFamily=Outfit
+          <frame> d1BottomRow | width=fill_container
+            <frame> d1Spacer | width=fill_container height=1
+            <text> d1TimeT | fill=#9C9B99 fontSize=11 fontFamily=Outfit
+      <frame> P2 电商推荐引擎 | width=fill_container height=fill_container fill=#FFFFFF effect={'type': 'shadow', 'shadowType': 'outer', 'color': '#0000000D', 'offset': {'x': 0, 'y': 2}, 'blur': 12}
+        <rectangle> p2Top | width=fill_container height=4 fill=#7C3AED
+        <frame> p2Body | width=fill_container height=fill_container padding=[16, 18] gap=10
+          <frame> p2H | width=fill_container gap=6
+            <text> p2E | fill=#1A1918 fontSize=16 fontWeight=normal fontFamily=Outfit
+            <text> p2T | fill=#1A1918 fontSize=15 fontWeight=600 fontFamily=Outfit
+          <text> p2St | fill=#9C9B99 fontSize=12 fontWeight=500 fontFamily=Outfit
+          <frame> p2PR | width=fill_container gap=8
+            <frame> p2PB | width=fill_container height=6 fill=#EDE9FE
+              <rectangle> p2PF | width=140 height=6 fill=#7C3AED
+            <text> p2PT | fill=#7C3AED fontSize=11 fontWeight=600 fontFamily=Outfit
+          <frame> p2Bot | width=fill_container gap=4
+            <frame> p2Sp | width=fill_container height=1
+            <frame> p2A1 | width=22 height=22 fill=#6366F1
+              <text> p2A1T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+            <frame> p2A2 | width=22 height=22 fill=#F59E0B
+              <text> p2A2T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+            <frame> p2A3 | width=22 height=22 fill=#EC4899
+              <text> p2A3T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+            <frame> p2A4 | width=22 height=22 fill=#14B8A6
+              <text> p2A4T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+            <frame> p2A5 | width=22 height=22 fill=#8B5CF6
+              <text> p2A5T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+          <frame> p2SR | width=fill_container gap=8
+            <frame> p2Pill | fill=#EDE9FE padding=[3, 10] gap=4
+              <ellipse> p2Dot | width=6 height=6 fill=#7C3AED
+              <text> p2PillT | fill=#7C3AED fontSize=11 fontWeight=500 fontFamily=Outfit
+            <frame> p2Sp2 | width=fill_container height=1
+            <text> p2Time | fill=#9C9B99 fontSize=11 fontWeight=normal fontFamily=Outfit
+      <frame> D2 技术方案评审 | width=fill_container height=fill_container fill=#FFFFFF effect={'type': 'shadow', 'shadowType': 'outer', 'color': '#0000000D', 'offset': {'x': 0, 'y': 2}, 'blur': 12}
+        <rectangle> d2Top | width=fill_container height=4 fill=#3D8A5A
+        <frame> d2Body | width=fill_container height=fill_container padding=[16, 18] gap=10
+          <frame> d2H | width=fill_container gap=6
+            <text> d2E | fill=#1A1918 fontSize=16 fontWeight=normal fontFamily=Outfit
+            <text> d2T | fill=#1A1918 fontSize=15 fontWeight=600 fontFamily=Outfit
+          <frame> d2Tag | fill=#F0EDE8 padding=[2, 8]
+            <text> d2TagT | fill=#6D6C6A fontSize=11 fontWeight=500 fontFamily=Outfit
+          <frame> d2SR | width=fill_container gap=6
+            <ellipse> d2LiveDot | width=8 height=8 fill=#3D8A5A
+            <text> d2LiveT | fill=#6D6C6A fontSize=12 fontWeight=normal fontFamily=Outfit
+          <frame> d2BotRow | width=fill_container
+            <frame> d2BotSp | width=fill_container height=1
+            <text> d2TimeT | fill=#9C9B99 fontSize=11 fontWeight=normal fontFamily=Outfit
+    <frame> Row 2 | width=fill_container height=fill_container gap=14
+      <frame> P3 数据分析平台 | width=fill_container height=fill_container fill=#FFFFFF effect={'type': 'shadow', 'shadowType': 'outer', 'color': '#0000000D', 'offset': {'x': 0, 'y': 2}, 'blur': 12}
+        <rectangle> p3Top | width=fill_container height=4 fill=#7C3AED
+        <frame> p3Body | width=fill_container height=fill_container padding=[16, 18] gap=10
+          <frame> p3H | width=fill_container gap=6
+            <text> p3E | fill=#1A1918 fontSize=16 fontWeight=normal fontFamily=Outfit
+            <text> p3T | fill=#1A1918 fontSize=15 fontWeight=600 fontFamily=Outfit
+          <frame> p3PR | width=fill_container gap=8
+            <frame> p3PB | width=fill_container height=6 fill=#D1FAE5
+              <rectangle> p3PF | width=230 height=6 fill=#3D8A5A
+            <text> p3PT | fill=#3D8A5A fontSize=11 fontWeight=600 fontFamily=Outfit
+          <frame> p3Bot | width=fill_container gap=4
+            <frame> p3Sp | width=fill_container height=1
+            <frame> p3A1 | width=22 height=22 fill=#7C3AED
+              <text> p3A1T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+            <frame> p3A2 | width=22 height=22 fill=#F59E0B
+              <text> p3A2T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+            <frame> p3A3 | width=22 height=22 fill=#EC4899
+              <text> p3A3T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+            <frame> p3A4 | width=22 height=22 fill=#3D8A5A
+              <text> p3A4T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+          <frame> p3SR | width=fill_container gap=8
+            <frame> p3Pill | fill=#D1FAE5 padding=[3, 10] gap=4
+              <ellipse> p3PDot | width=6 height=6 fill=#3D8A5A
+              <text> p3PillT | fill=#3D8A5A fontSize=11 fontWeight=500 fontFamily=Outfit
+            <frame> p3Sp2 | width=fill_container height=1
+            <text> p3Time | fill=#9C9B99 fontSize=11 fontWeight=normal fontFamily=Outfit
+      <frame> D3 竞品分析报告 | width=fill_container height=fill_container fill=#FFFFFF effect={'type': 'shadow', 'shadowType': 'outer', 'color': '#0000000D', 'offset': {'x': 0, 'y': 2}, 'blur': 12}
+        <rectangle> d3Top | width=fill_container height=4 fill=#9C9B99
+        <frame> d3Body | width=fill_container height=fill_container padding=[16, 18] gap=10
+          <frame> d3H | width=fill_container gap=6
+            <text> d3E | fill=#1A1918 fontSize=16 fontWeight=normal fontFamily=Outfit
+            <text> d3T | fill=#1A1918 fontSize=15 fontWeight=600 fontFamily=Outfit
+          <frame> d3Tag | fill=#F0EDE8 padding=[2, 8]
+            <text> d3TagT | fill=#6D6C6A fontSize=11 fontWeight=500 fontFamily=Outfit
+          <frame> d3SR | width=fill_container gap=6
+            <ellipse> d3GrayDot | width=8 height=8 fill=#9C9B99
+            <text> d3LiveT | fill=#9C9B99 fontSize=12 fontWeight=normal fontFamily=Outfit
+          <frame> d3BotRow | width=fill_container
+            <frame> d3BotSp | width=fill_container height=1
+            <text> d3TimeT | fill=#9C9B99 fontSize=11 fontWeight=normal fontFamily=Outfit
+      <frame> P4 AI写作助手 | width=fill_container height=fill_container fill=#FFFFFF effect={'type': 'shadow', 'shadowType': 'outer', 'color': '#0000000D', 'offset': {'x': 0, 'y': 2}, 'blur': 12}
+        <rectangle> p4Top | width=fill_container height=4 fill=#7C3AED
+        <frame> p4Body | width=fill_container height=fill_container padding=[16, 18] gap=10
+          <frame> p4H | width=fill_container gap=6
+            <text> p4E | fill=#1A1918 fontSize=16 fontWeight=normal fontFamily=Outfit
+            <text> p4T | fill=#1A1918 fontSize=15 fontWeight=600 fontFamily=Outfit
+          <text> p4St | fill=#9C9B99 fontSize=12 fontWeight=500 fontFamily=Outfit
+          <frame> p4PR | width=fill_container gap=8
+            <frame> p4PB | width=fill_container height=6 fill=#EDE9FE
+              <rectangle> p4PF | width=35 height=6 fill=#7C3AED
+            <text> p4PT | fill=#7C3AED fontSize=11 fontWeight=600 fontFamily=Outfit
+          <frame> p4Bot | width=fill_container gap=4
+            <frame> p4Sp | width=fill_container height=1
+            <frame> p4A1 | width=22 height=22 fill=#6366F1
+              <text> p4A1T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+            <frame> p4A2 | width=22 height=22 fill=#D89575
+              <text> p4A2T | fill=#FFFFFF fontSize=10 fontWeight=600 fontFamily=Outfit
+          <frame> p4SR | width=fill_container gap=8
+            <frame> p4Pill | fill=#EDE9FE padding=[3, 10] gap=4
+              <ellipse> p4PDot | width=6 height=6 fill=#7C3AED
+              <text> p4PillT | fill=#7C3AED fontSize=11 fontWeight=500 fontFamily=Outfit
+            <frame> p4Sp2 | width=fill_container height=1
+            <text> p4Time | fill=#9C9B99 fontSize=11 fontWeight=normal fontFamily=Outfit
+      <frame> D4 移动端交互讨论 | width=fill_container height=fill_container fill=#FFFFFF effect={'type': 'shadow', 'shadowType': 'outer', 'color': '#0000000D', 'offset': {'x': 0, 'y': 2}, 'blur': 12}
+        <rectangle> d4Top | width=fill_container height=4 fill=#3D8A5A
+        <frame> d4Body | width=fill_container height=fill_container padding=[16, 18] gap=10
+          <frame> d4H | width=fill_container gap=6
+            <text> d4E | fill=#1A1918 fontSize=16 fontWeight=normal fontFamily=Outfit
+            <text> d4T | fill=#1A1918 fontSize=15 fontWeight=600 fontFamily=Outfit
+          <frame> d4Tag | fill=#F0EDE8 padding=[2, 8]
+            <text> d4TagT | fill=#6D6C6A fontSize=11 fontWeight=500 fontFamily=Outfit
+          <frame> d4SR | width=fill_container gap=6
+            <ellipse> d4LiveDot | width=8 height=8 fill=#3D8A5A
+            <text> d4LiveT | fill=#6D6C6A fontSize=12 fontWeight=normal fontFamily=Outfit
+          <frame> d4BotRow | width=fill_container
+            <frame> d4BotSp | width=fill_container height=1
+            <text> d4TimeT | fill=#9C9B99 fontSize=11 fontWeight=normal fontFamily=Outfit
+  <frame> FAB | width=fill_container
+    <frame> FAB Button | width=56 height=56 fill=#7C3AED effect=[{'type': 'shadow', 'shadowType': 'outer', 'color': '#7C3AED40', 'offset': {'x': 0, 'y': 4}, 'blur': 16}, {'type': 'shadow', 'shadowType': 'outer', 'color': '#0000001A', 'offset': {'x': 0, 'y': 2}, 'blur': 6}]
+      <icon_font> fabIcon | width=24 height=24 fill=#FFFFFF
+    <frame> fabLabel | fill=#1A1918CC padding=[4, 10]
+      <text> fabLabelT | fill=#FFFFFF fontSize=12 fontWeight=500 fontFamily=Outfit

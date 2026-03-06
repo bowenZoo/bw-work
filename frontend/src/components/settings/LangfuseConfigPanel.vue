@@ -67,7 +67,7 @@ onMounted(load);
         <span v-if="saved" class="msg-ok"><Check :size="14" /> 已保存</span>
         <span v-if="error" class="msg-err"><AlertCircle :size="14" /> {{ error }}</span>
       </div>
-      <div v-if="testResult" class="test-result" :class="{ok:testResult.ok}">{{ testResult.ok?'✅ 连接成功':'❌ '+testResult.msg }}</div>
+      <div v-if="testResult" class="test-result" :class="{ok:testResult.ok}">{{ testResult.ok ? '连接成功' : testResult.msg }}</div>
     </div>
   </div>
 </template>

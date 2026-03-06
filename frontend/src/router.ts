@@ -12,6 +12,12 @@ const router = createRouter({
       component: HallView,
     },
     {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/LoginView.vue'),
+      meta: { guestOnly: true },
+    },
+    {
       path: '/project/:projectId',
       name: 'project-detail',
       component: ProjectDetailView,
@@ -65,9 +71,18 @@ router.beforeEach(async (to) => {
 
   const { useUserStore } = await import('@/stores/user')
   const userStore = useUserStore()
-  if (!userStore.isAuthenticated && to.name !== 'hall') {
+
+  // 已登录用户不能访问 /login，直接回大厅
+  if (to.meta.guestOnly && userStore.isAuthenticated) {
     return { name: 'hall' }
   }
+
+  // 未登录用户访问需要登录的页面，跳到 /login 并记录来源
+  const publicRoutes = ['hall', 'login']
+  if (!userStore.isAuthenticated && !publicRoutes.includes(to.name as string)) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
   return true
 })
 

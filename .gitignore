@@ -36,3 +36,12 @@ data/knowledge/references/*
 
 # Reference projects (external)
 github/
+
+# Playwright E2E test artifacts
+frontend/playwright-report/
+frontend/test-results/
+
+# Temporary / backup files
+*.bak
+*.bak.*
+*.template.vue
