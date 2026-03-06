@@ -184,12 +184,15 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* ===== Style C — Design Token Aligned (ytzkC) ===== */
+
 .user-menu {
   position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
 }
+
 .notif-bell {
   position: relative;
   background: none;
@@ -200,131 +203,156 @@ onUnmounted(() => {
   border-radius: 8px;
   transition: background 0.15s;
 }
-.notif-bell:hover { background: #f3f4f6; }
+
+.notif-bell:hover { background: #F0EDE8; }
+
+/* Notification badge — token: #EF4444, 20×20, radius 10px */
 .notif-badge {
   position: absolute;
   top: -2px;
   right: -4px;
-  min-width: 18px;
-  height: 18px;
-  background: #ff4444;
-  color: #fff;
+  min-width: 20px;
+  height: 20px;
+  background: #EF4444;
+  color: #FFFFFF;
   font-size: 12px;
   font-weight: 600;
-  border-radius: 9px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0 4px;
   line-height: 1;
 }
+
 .user-menu-trigger {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 4px 10px;
   background: none;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #F0EBE4;
   border-radius: 8px;
   cursor: pointer;
   font-size: 14px;
   color: #374151;
   transition: background 0.15s;
 }
-.user-menu-trigger:hover { background: #f3f4f6; }
+
+.user-menu-trigger:hover { background: #F0EDE8; }
+
 .username {
   max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .menu-backdrop {
   position: fixed;
   inset: 0;
   z-index: 99;
 }
+
+/* User dropdown — token: 280px, radius 16px, shadow 0 8px 24px #00000018, border #F0EDE8 */
 .menu-dropdown {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  min-width: 200px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  width: 280px;
+  background: #FFFFFF;
+  border: 1px solid #F0EDE8;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px #00000018;
   padding: 6px 0;
   z-index: 100;
 }
+
+/* Menu items — token: padding 10px 16px, color #2D2D2D */
 .menu-item {
   display: block;
   width: 100%;
-  padding: 8px 16px;
+  padding: 10px 16px;
   background: none;
   border: none;
   text-align: left;
   font-size: 14px;
-  color: #374151;
+  color: #2D2D2D;
   cursor: pointer;
   transition: background 0.1s;
+  font-family: Inter, sans-serif;
 }
-.menu-item:hover { background: #f3f4f6; }
-.menu-item.logout { color: #ef4444; }
-.menu-divider { height: 1px; background: #e5e7eb; margin: 4px 0; }
 
-/* Notification dropdown */
+.menu-item:hover { background: #F0EDE8; }
+.menu-item.logout { color: #EF4444; }
+
+/* Dividers — token: #F0EDE8 */
+.menu-divider { height: 1px; background: #F0EDE8; margin: 4px 0; }
+
+/* Notification panel — token: 300px, radius 12px, shadow 0 8px 24px #00000012, border #F0EDE8 */
 .notif-dropdown {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  width: 340px;
+  width: 300px;
   max-height: 400px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  background: #FFFFFF;
+  border: 1px solid #F0EDE8;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px #00000012;
   z-index: 100;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
+
 .notif-header {
-  padding: 12px 16px;
+  padding: 14px 16px;
   font-size: 14px;
   font-weight: 600;
-  border-bottom: 1px solid #f0f0f0;
-  color: #111827;
+  border-bottom: 1px solid #F0EDE8;
+  color: #18181B;
+  font-family: Inter, sans-serif;
 }
+
 .notif-empty {
   padding: 24px 16px;
   text-align: center;
-  color: #9ca3af;
+  color: #9CA3AF;
   font-size: 13px;
 }
+
 .notif-list {
   overflow-y: auto;
   flex: 1;
 }
+
+/* Notification items — token: padding 12px 16px, gap 10px */
 .notif-item {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 10px 16px;
+  padding: 12px 16px;
   cursor: pointer;
   transition: background 0.1s;
-  border-bottom: 1px solid #f8f8f8;
+  border-bottom: 1px solid #F0EDE8;
 }
-.notif-item:hover { background: #f9fafb; }
-.notif-unread { background: #eff6ff; }
-.notif-unread:hover { background: #dbeafe; }
+
+.notif-item:hover { background: #FAFAFA; }
+/* Unread tint — soft brand overlay */
+.notif-unread { background: #EDE9FE; }
+.notif-unread:hover { background: #DDD6FE; }
 .notif-icon { font-size: 16px; flex-shrink: 0; margin-top: 2px; }
 .notif-body { flex: 1; min-width: 0; }
 .notif-msg { font-size: 13px; color: #374151; line-height: 1.4; }
-.notif-time { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+.notif-time { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+
+/* Notification dot — token: #3B82F6, 8×8, radius 4px */
 .notif-dot {
   width: 8px;
   height: 8px;
-  background: #3b82f6;
-  border-radius: 50%;
+  background: #3B82F6;
+  border-radius: 4px;
   flex-shrink: 0;
   margin-top: 6px;
 }

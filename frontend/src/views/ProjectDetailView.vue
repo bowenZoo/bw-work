@@ -668,16 +668,16 @@ async function createStageDiscussion(stageId: string) {
 <style scoped>
 .project-detail {
   min-height: 100vh;
-  background: #f9fafb;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #FFFBF5;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 .pd-header {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 16px 24px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  background: #FFFFFF;
+  box-shadow: 0 1px 3px #0000000A;
   position: sticky;
   top: 0;
   z-index: 10;
@@ -686,22 +686,22 @@ async function createStageDiscussion(stageId: string) {
   font-size: 20px;
   font-weight: 700;
   margin: 0;
-  color: #111827;
+  color: #18181B;
 }
 .back-btn {
   background: none;
   border: none;
-  color: #4f46e5;
+  color: #374151;
   font-size: 14px;
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 6px;
 }
-.back-btn:hover { background: #f3f4f6; }
+.back-btn:hover { background: #F5F3F0; }
 .pd-loading {
   text-align: center;
   padding: 60px;
-  color: #9ca3af;
+  color: #9CA3AF;
 }
 .stages {
   max-width: 900px;
@@ -709,11 +709,11 @@ async function createStageDiscussion(stageId: string) {
   padding: 24px;
 }
 .stage-section {
-  background: #fff;
+  background: #FFFFFF;
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 16px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: 0 1px 3px #0000000A;
 }
 .stage-section.locked {
   opacity: 0.6;
@@ -726,7 +726,7 @@ async function createStageDiscussion(stageId: string) {
 }
 .stage-toggle {
   font-size: 12px;
-  color: #9ca3af;
+  color: #9CA3AF;
   transition: transform 0.25s ease;
   transform: rotate(90deg);
   flex-shrink: 0;
@@ -748,19 +748,19 @@ async function createStageDiscussion(stageId: string) {
   font-size: 17px;
   font-weight: 600;
   margin: 0;
-  color: #111827;
+  color: #18181B;
 }
 .status-badge {
   font-size: 12px;
-  padding: 2px 10px;
-  border-radius: 10px;
+  padding: 4px 10px;
+  border-radius: 100px;
   font-weight: 500;
 }
-.status-badge.completed { background: #ecfdf5; color: #10b981; }
-.status-badge.active { background: #eff6ff; color: #3b82f6; }
-.status-badge.locked { background: #f3f4f6; color: #9ca3af; }
+.status-badge.completed { background: #D1FAE5; color: #16A34A; }
+.status-badge.active { background: #F0FDF4; color: #16A34A; }
+.status-badge.locked { background: #F3F4F6; color: #9CA3AF; }
 .stage-locked-msg {
-  color: #9ca3af;
+  color: #9CA3AF;
   font-size: 13px;
   font-style: italic;
 }
@@ -775,17 +775,17 @@ async function createStageDiscussion(stageId: string) {
   align-items: flex-start;
   gap: 10px;
   padding: 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #E5E7EB;
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.1s;
 }
-.content-card:hover { background: #f9fafb; }
+.content-card:hover { background: #FFFBF5; }
 .content-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
 .content-title {
   font-size: 14px;
   font-weight: 500;
-  color: #111827;
+  color: #18181B;
   margin-bottom: 4px;
 }
 .content-meta {
@@ -793,10 +793,10 @@ async function createStageDiscussion(stageId: string) {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #9ca3af;
+  color: #9CA3AF;
 }
 .stage-empty {
-  color: #d1d5db;
+  color: #D1D5DB;
   font-size: 13px;
   text-align: center;
   padding: 16px;
@@ -818,73 +818,73 @@ async function createStageDiscussion(stageId: string) {
   transition: background 0.15s;
 }
 .btn-sm { padding: 5px 12px; font-size: 13px; }
-.btn-primary { background: #4f46e5; color: #fff; }
-.btn-primary:hover { background: #4338ca; }
+.btn-primary { background: #7C3AED; color: #fff; }
+.btn-primary:hover { background: #6D28D9; }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
-.btn-secondary:hover { background: #e5e7eb; }
-.btn-complete { background: #10b981; color: #fff; }
-.btn-complete:hover { background: #059669; }
+.btn-secondary { background: #F3F4F6; color: #374151; border: 1px solid #E5E7EB; }
+.btn-secondary:hover { background: #E5E7EB; }
+.btn-complete { background: #22C55E; color: #fff; }
+.btn-complete:hover { background: #16A34A; }
 
 .dialog-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.3);
+  background: #00000066;
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 200;
 }
 .dialog {
-  background: #fff;
+  background: #FFFFFF;
   border-radius: 12px;
   padding: 24px;
   width: min(400px, 90vw);
-  box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+  box-shadow: 0 8px 32px -4px #00000020;
 }
 .dialog h3 { margin: 0 0 16px; font-size: 18px; font-weight: 600; }
 .dialog-input {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #D1D5DB;
   border-radius: 8px;
   font-size: 14px;
   outline: none;
   box-sizing: border-box;
 }
-.dialog-input:focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
+.dialog-input:focus { border-color: #7C3AED; box-shadow: 0 0 0 2px rgba(124,58,237,0.15); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 
 .output-card { border-color: #fbbf24; background: #fffbeb; }
-.output-card:hover { background: #fef3c7; }
+.output-card:hover { background: #FEF3C7; }
 .out-status-draft { color: #f59e0b; font-weight: 500; }
-.out-status-adopted { color: #10b981; font-weight: 500; }
-.adopt-preview { font-size: 14px; color: #374151; background: #f9fafb; padding: 8px 12px; border-radius: 6px; margin: 0 0 12px; }
+.out-status-adopted { color: #16A34A; font-weight: 500; }
+.adopt-preview { font-size: 14px; color: #374151; background: #FFFBF5; padding: 8px 12px; border-radius: 6px; margin: 0 0 12px; }
 .adopt-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .adopt-option { display: flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
-.adopt-option input[type=radio] { accent-color: #4f46e5; }
+.adopt-option input[type=radio] { accent-color: #7C3AED; }
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
 .preview-modal {
-  background: #fff;
+  background: #FFFFFF;
   border-radius: 16px;
   padding: 28px;
   width: min(700px, 90vw);
   max-height: 80vh;
   overflow-y: auto;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  box-shadow: 0 8px 32px -4px #00000020;
   display: flex;
   flex-direction: column;
 }
 .preview-modal-title {
   font-size: 18px;
   font-weight: 700;
-  color: #111827;
+  color: #18181B;
   margin: 0 0 16px;
   padding-bottom: 12px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid #E5E7EB;
 }
 .preview-modal-body {
   flex: 1;
@@ -892,34 +892,34 @@ async function createStageDiscussion(stageId: string) {
   margin-bottom: 16px;
 }
 .markdown-body { font-size: 14px; line-height: 1.8; color: #374151; }
-.markdown-body h1 { font-size: 1.5em; font-weight: 700; margin: 0 0 12px; color: #111827; }
-.markdown-body h2 { font-size: 1.3em; font-weight: 700; margin: 20px 0 10px; color: #111827; }
-.markdown-body h3 { font-size: 1.15em; font-weight: 600; margin: 16px 0 8px; color: #1f2937; }
+.markdown-body h1 { font-size: 1.5em; font-weight: 700; margin: 0 0 12px; color: #18181B; }
+.markdown-body h2 { font-size: 1.3em; font-weight: 700; margin: 20px 0 10px; color: #18181B; }
+.markdown-body h3 { font-size: 1.15em; font-weight: 600; margin: 16px 0 8px; color: #1F2937; }
 .markdown-body p { margin: 0 0 10px; }
 .markdown-body ul, .markdown-body ol { margin: 0 0 10px; padding-left: 2em; }
 .markdown-body li { margin-bottom: 4px; }
 .markdown-body ul li { list-style-type: disc; }
 .markdown-body ol li { list-style-type: decimal; }
-.markdown-body code { background: #f3f4f6; color: #e11d48; font-size: 0.875em; padding: 2px 5px; border-radius: 4px; }
-.markdown-body pre { background: #1f2937; color: #f9fafb; padding: 14px; border-radius: 8px; overflow-x: auto; margin: 0 0 12px; }
+.markdown-body code { background: #F3F4F6; color: #e11d48; font-size: 0.875em; padding: 2px 5px; border-radius: 4px; }
+.markdown-body pre { background: #1F2937; color: #f9fafb; padding: 14px; border-radius: 8px; overflow-x: auto; margin: 0 0 12px; }
 .markdown-body pre code { background: none; color: inherit; padding: 0; }
-.markdown-body blockquote { border-left: 4px solid #d1d5db; padding-left: 14px; margin: 0 0 10px; color: #6b7280; }
+.markdown-body blockquote { border-left: 4px solid #D1D5DB; padding-left: 14px; margin: 0 0 10px; color: #6B7280; }
 .markdown-body table { width: 100%; border-collapse: collapse; margin: 0 0 12px; font-size: 14px; }
-.markdown-body th { background: #f3f4f6; font-weight: 600; text-align: left; padding: 6px 10px; border: 1px solid #d1d5db; }
-.markdown-body td { padding: 6px 10px; border: 1px solid #e5e7eb; }
-.markdown-body strong { font-weight: 700; color: #111827; }
+.markdown-body th { background: #F3F4F6; font-weight: 600; text-align: left; padding: 6px 10px; border: 1px solid #D1D5DB; }
+.markdown-body td { padding: 6px 10px; border: 1px solid #E5E7EB; }
+.markdown-body strong { font-weight: 700; color: #18181B; }
 
 .dialog-enhanced {
   border-radius: 16px;
   padding: 28px;
   width: min(440px, 90vw);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  box-shadow: 0 8px 32px -4px #00000020;
 }
 .dialog-title {
   margin: 0 0 20px;
   font-size: 19px;
   font-weight: 700;
-  color: #111827;
+  color: #18181B;
 }
 .dialog-field { margin-bottom: 14px; }
 .dialog-label {
@@ -932,7 +932,7 @@ async function createStageDiscussion(stageId: string) {
 .dialog-textarea {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #D1D5DB;
   border-radius: 8px;
   font-size: 14px;
   outline: none;
@@ -941,13 +941,13 @@ async function createStageDiscussion(stageId: string) {
   font-family: inherit;
   line-height: 1.5;
 }
-.dialog-textarea:focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
+.dialog-textarea:focus { border-color: #7C3AED; box-shadow: 0 0 0 2px rgba(124,58,237,0.15); }
 
 .dialog-wide {
   border-radius: 16px;
   padding: 28px;
   width: min(500px, 90vw);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  box-shadow: 0 8px 32px -4px #00000020;
 }
 .stages-toolbar {
   display: flex;
@@ -956,31 +956,31 @@ async function createStageDiscussion(stageId: string) {
 }
 
 /* Member dialog */
-.member-loading { text-align: center; color: #9ca3af; padding: 20px; }
+.member-loading { text-align: center; color: #9CA3AF; padding: 20px; }
 .member-list { margin-bottom: 16px; max-height: 260px; overflow-y: auto; }
 .member-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 0;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid #F3F4F6;
 }
 .member-info { display: flex; align-items: center; gap: 10px; }
-.member-name { font-size: 14px; font-weight: 500; color: #111827; }
+.member-name { font-size: 14px; font-weight: 500; color: #18181B; }
 .member-role-badge {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 6px;
   font-weight: 500;
 }
-.role-owner { background: #fef3c7; color: #d97706; }
-.role-editor { background: #eff6ff; color: #3b82f6; }
-.role-viewer { background: #f3f4f6; color: #6b7280; }
-.member-empty { text-align: center; color: #d1d5db; font-size: 13px; padding: 16px; }
+.role-owner { background: #FEF3C7; color: #D97706; }
+.role-editor { background: #EDE9FE; color: #7C3AED; }
+.role-viewer { background: #F3F4F6; color: #6B7280; }
+.member-empty { text-align: center; color: #D1D5DB; font-size: 13px; padding: 16px; }
 .btn-remove {
   background: none;
   border: 1px solid #fca5a5;
-  color: #ef4444;
+  color: #EF4444;
   font-size: 12px;
   padding: 3px 10px;
   border-radius: 6px;
@@ -1003,13 +1003,13 @@ async function createStageDiscussion(stageId: string) {
   align-items: center;
   gap: 8px;
   padding: 8px 0;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid #F3F4F6;
 }
 .stage-edit-input { flex: 1; }
 .stage-default-tag {
   font-size: 11px;
-  color: #9ca3af;
-  background: #f3f4f6;
+  color: #9CA3AF;
+  background: #F3F4F6;
   padding: 2px 8px;
   border-radius: 6px;
   flex-shrink: 0;
@@ -1098,19 +1098,20 @@ async function createStageDiscussion(stageId: string) {
 .access-overlay { z-index: 300; }
 .access-modal {
   text-align: center; padding: 32px 40px; max-width: 420px; width: 90%;
-  border-radius: 16px; background: #fff;
+  border-radius: 16px; background: #FFFFFF;
+  box-shadow: 0 8px 32px -4px #00000020;
 }
 .access-icon { font-size: 40px; margin-bottom: 12px; }
-.access-modal h3 { font-size: 20px; margin-bottom: 6px; color: #1f2937; }
-.access-desc { color: #6b7280; font-size: 13px; margin-bottom: 2px; }
-.access-hint { color: #9ca3af; font-size: 12px; margin-bottom: 20px; }
+.access-modal h3 { font-size: 20px; margin-bottom: 6px; color: #1F2937; }
+.access-desc { color: #6B7280; font-size: 13px; margin-bottom: 2px; }
+.access-hint { color: #9CA3AF; font-size: 12px; margin-bottom: 20px; }
 .access-actions { display: flex; gap: 10px; justify-content: center; margin-bottom: 12px; }
-.btn-ghost { background: none; border: none; color: #6b7280; cursor: pointer; font-size: 13px; padding: 6px 10px; }
+.btn-ghost { background: none; border: none; color: #6B7280; cursor: pointer; font-size: 13px; padding: 6px 10px; }
 .btn-ghost:hover { color: #374151; }
 
-.pending-bar { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
+.pending-bar { background: #FEF3C7; border: 1px solid #D97706; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
 .pending-item { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; }
 .pending-item .btn-sm { padding: 2px 8px; font-size: 12px; }
-.btn-danger { background: #ef4444; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+.btn-danger { background: #EF4444; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
 .btn-danger:hover { background: #dc2626; }
 </style>
