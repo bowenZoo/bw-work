@@ -93,26 +93,93 @@ function switchTab(tab: 'login' | 'register') { activeTab.value = tab; error.val
 </template>
 
 <style scoped>
-.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 2000; }
-.modal { background: #fff; border-radius: 12px; width: 380px; max-width: 95vw; box-shadow: 0 20px 40px rgba(0,0,0,0.15); overflow: hidden; }
-.modal-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px 0; }
-.tabs { display: flex; }
-.tab { padding: 8px 20px; font-size: 14px; font-weight: 500; color: #9ca3af; border: none; border-bottom: 2px solid transparent; background: none; cursor: pointer; }
-.tab.on { color: #3b82f6; border-bottom-color: #3b82f6; }
-.close { color: #9ca3af; padding: 4px; border-radius: 6px; background: none; border: none; cursor: pointer; }
-.close:hover { background: #f3f4f6; }
-.modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: #00000066;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+.modal {
+  background: #FFFFFF;
+  border-radius: 16px;
+  width: 380px;
+  max-width: 95vw;
+  box-shadow: 0 8px 32px -4px #00000020;
+  overflow: hidden;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 0;
+}
+.tabs { display: flex; gap: 4px; }
+.tab {
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #9CA3AF;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s;
+}
+.tab.on { color: #7C3AED; border-bottom-color: #7C3AED; }
+.close {
+  color: #9CA3AF;
+  padding: 4px;
+  border-radius: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.close:hover { background: #F5F3F0; }
+.modal-body { padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
 
-.avatar-preview { display: flex; flex-direction: column; align-items: center; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid #f0f0f0; }
-.avatar-hint { font-size: 12px; color: #9ca3af; }
+.avatar-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #F0EDE8;
+}
+.avatar-hint { font-size: 12px; color: #9CA3AF; }
 
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field label { font-size: 13px; font-weight: 500; color: #374151; }
-.opt { color: #9ca3af; font-weight: 400; }
-.field input { padding: 9px 12px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; transition: border-color 0.2s; }
-.field input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
-.error { color: #dc2626; font-size: 13px; margin: 0; }
-.submit { padding: 10px; background: #3b82f6; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; }
-.submit:hover:not(:disabled) { background: #2563eb; }
+.opt { color: #9CA3AF; font-weight: 400; }
+.field input {
+  padding: 9px 12px;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #FFFFFF;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.field input:focus { border-color: #7C3AED; box-shadow: 0 0 0 3px #7C3AED20; }
+.error { color: #EF4444; font-size: 13px; margin: 0; }
+.submit {
+  padding: 10px;
+  background: #7C3AED;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.submit:hover:not(:disabled) { background: #6D28D9; }
 .submit:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

@@ -392,14 +392,17 @@ async function createStageDiscussion(stageId: string) {
           成员
         </button>
         <button v-if="userStore.role === 'superadmin'" class="btn btn-sm btn-danger" @click="showDeleteConfirm = true">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
           删除项目
         </button>
       </div>
     </header>
 
     <div v-if="isAdmin && pendingRequests.length > 0" class="pending-bar">
-      <span style="display:flex;align-items:center;gap:5px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2 2 0 0 1-3.46 0"/></svg>{{ pendingRequests.length }} 个权限申请待审批</span>
+      <span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:middle"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.63 3.4 2 2 0 0 1 3.6 1.21h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.79a16 16 0 0 0 6.29 6.29l.95-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+        {{ pendingRequests.length }} 个权限申请待审批
+      </span>
       <div v-for="req in pendingRequests" :key="req.user_id" class="pending-item">
         <span>{{ req.display_name || req.username }} 申请 <strong>{{ req.requested_role === 'editor' ? '编辑' : '查看' }}</strong> 权限</span>
         <button class="btn btn-sm btn-primary" @click="approveRequest(req.user_id)">✓ 批准</button>
@@ -412,13 +415,15 @@ async function createStageDiscussion(stageId: string) {
     <div v-else class="stages">
       <div v-if="isOwner" class="stages-toolbar">
         <button v-if="canEdit" class="btn btn-sm btn-secondary" @click="openStageDialog">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           管理阶段
         </button>
       </div>
       <div v-for="stage in stages" :key="stage.id" class="stage-section" :class="stage.status">
         <div class="stage-header" @click="toggleStage(stage.id)" style="cursor: pointer;">
-          <span class="stage-toggle" :class="{ collapsed: isStageCollapsed(stage.id) }"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          <span class="stage-toggle" :class="{ collapsed: isStageCollapsed(stage.id) }">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </span>
           <h2 class="stage-name">{{ stage.name }}</h2>
           <span class="status-badge" :class="statusBadge(stage.status).cls">
             {{ statusBadge(stage.status).text }}
@@ -445,7 +450,9 @@ async function createStageDiscussion(stageId: string) {
               class="content-card doc-card"
               @click="goDocument(doc.id)"
             >
-              <span class="content-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>
+              <span class="content-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              </span>
               <div class="content-info">
                 <div class="content-title">{{ doc.title }}</div>
                 <div class="content-meta">v{{ doc.current_version }} · {{ formatTime(doc.updated_at) }}</div>
@@ -457,7 +464,9 @@ async function createStageDiscussion(stageId: string) {
               class="content-card disc-card"
               @click="goDiscussion(disc.id)"
             >
-              <span class="content-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+              <span class="content-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              </span>
               <div class="content-info">
                 <div class="content-title">{{ disc.topic }}</div>
                 <div class="content-meta">
@@ -472,11 +481,19 @@ async function createStageDiscussion(stageId: string) {
               class="content-card output-card"
               @click="previewOutput = output"
             >
-              <span class="content-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span>
+              <span class="content-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </span>
               <div class="content-info">
                 <div class="content-title">{{ output.title }}</div>
                 <div class="content-meta">
-                  <span :class="'out-status-' + (output.status || 'draft')">{{ output.status === 'adopted' ? '已采纳' : '待采纳' }}</span>
+                  <span :class="'out-status-' + (output.status || 'draft')">
+                    <template v-if="output.status === 'adopted'">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                      已采纳
+                    </template>
+                    <template v-else>待采纳</template>
+                  </span>
                 </div>
               </div>
             </div>
@@ -515,7 +532,10 @@ async function createStageDiscussion(stageId: string) {
     <Transition name="fade">
       <div v-if="showAdoptDialog" class="dialog-overlay" @click.self="showAdoptDialog = null">
         <div class="dialog">
-          <h3 style="display:flex;align-items:center;gap:6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>采纳讨论产出</h3>
+          <h3>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            采纳讨论产出
+          </h3>
           <p class="adopt-preview">{{ showAdoptDialog.title }}</p>
           <div class="adopt-options">
             <label class="adopt-option">
@@ -581,7 +601,10 @@ async function createStageDiscussion(stageId: string) {
     <Transition name="fade">
       <div v-if="showMemberDialog" class="dialog-overlay" @click.self="showMemberDialog = false">
         <div class="dialog dialog-wide">
-          <h3 class="dialog-title" style="display:flex;align-items:center;gap:6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>成员管理</h3>
+          <h3 class="dialog-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            成员管理
+          </h3>
           <div v-if="loadingMembers" class="member-loading">加载中...</div>
           <div v-else class="member-list">
             <div v-for="m in members" :key="m.id" class="member-item">
@@ -611,7 +634,10 @@ async function createStageDiscussion(stageId: string) {
     <Transition name="fade">
       <div v-if="showStageDialog" class="dialog-overlay" @click.self="showStageDialog = false">
         <div class="dialog dialog-wide">
-          <h3 class="dialog-title" style="display:flex;align-items:center;gap:6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>管理阶段</h3>
+          <h3 class="dialog-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            管理阶段
+          </h3>
           <div class="stage-edit-list">
             <div v-for="s in editingStages" :key="s.id" class="stage-edit-item">
               <input v-model="s.editName" class="dialog-input stage-edit-input" />
@@ -644,7 +670,7 @@ async function createStageDiscussion(stageId: string) {
     <Transition name="fade">
       <div v-if="showDeleteConfirm" class="dialog-overlay" @click.self="showDeleteConfirm = false">
         <div class="dialog">
-          <h3 style="display:flex;align-items:center;gap:6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>确认删除项目</h3>
+          <h3>⚠️ 确认删除项目</h3>
           <p style="color: #ef4444; font-weight: 500;">你确定要删除项目「{{ project?.name }}」吗？</p>
           <p style="color: #6b7280; font-size: 13px;">此操作不可撤销，项目的所有阶段、文档、讨论记录将被永久删除。</p>
           <div class="dialog-actions">
@@ -658,13 +684,21 @@ async function createStageDiscussion(stageId: string) {
     <Transition name="fade">
       <div v-if="showAccessModal" class="dialog-overlay access-overlay" @click.self="goBackToHall">
         <div class="modal access-modal">
-          <div class="access-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+          <div class="access-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
           <h3>{{ project?.name }}</h3>
           <p class="access-desc">{{ project?.description || '这是一个私密项目' }}</p>
           <p class="access-hint">你需要获得权限才能查看此项目内容</p>
           <div class="access-actions">
-            <button class="btn btn-primary" @click="requestAccess('viewer')" style="display:inline-flex;align-items:center;gap:5px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>申请查看权限</button>
-            <button class="btn btn-secondary" @click="requestAccess('editor')" style="display:inline-flex;align-items:center;gap:5px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>申请编辑权限</button>
+            <button class="btn btn-primary" @click="requestAccess('viewer')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+              申请查看权限
+            </button>
+            <button class="btn btn-secondary" @click="requestAccess('editor')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              申请编辑权限
+            </button>
           </div>
           <button class="btn-ghost" @click="goBackToHall">← 返回大厅</button>
         </div>
@@ -677,16 +711,16 @@ async function createStageDiscussion(stageId: string) {
 <style scoped>
 .project-detail {
   min-height: 100vh;
-  background: #f9fafb;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #FFFBF5;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 .pd-header {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 16px 24px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  background: #FFFFFF;
+  box-shadow: 0 1px 3px #0000000A;
   position: sticky;
   top: 0;
   z-index: 10;
@@ -695,22 +729,22 @@ async function createStageDiscussion(stageId: string) {
   font-size: 20px;
   font-weight: 700;
   margin: 0;
-  color: #111827;
+  color: #18181B;
 }
 .back-btn {
   background: none;
   border: none;
-  color: #4f46e5;
+  color: #374151;
   font-size: 14px;
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 6px;
 }
-.back-btn:hover { background: #f3f4f6; }
+.back-btn:hover { background: #F5F3F0; }
 .pd-loading {
   text-align: center;
   padding: 60px;
-  color: #9ca3af;
+  color: #9CA3AF;
 }
 .stages {
   max-width: 900px;
@@ -718,11 +752,11 @@ async function createStageDiscussion(stageId: string) {
   padding: 24px;
 }
 .stage-section {
-  background: #fff;
+  background: #FFFFFF;
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 16px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: 0 1px 3px #0000000A;
 }
 .stage-section.locked {
   opacity: 0.6;
@@ -734,9 +768,9 @@ async function createStageDiscussion(stageId: string) {
   margin-bottom: 14px;
 }
 .stage-toggle {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  color: #9ca3af;
+  color: #9CA3AF;
   transition: transform 0.25s ease;
   transform: rotate(90deg);
   flex-shrink: 0;
@@ -758,19 +792,19 @@ async function createStageDiscussion(stageId: string) {
   font-size: 17px;
   font-weight: 600;
   margin: 0;
-  color: #111827;
+  color: #18181B;
 }
 .status-badge {
   font-size: 12px;
-  padding: 2px 10px;
-  border-radius: 10px;
+  padding: 4px 10px;
+  border-radius: 100px;
   font-weight: 500;
 }
-.status-badge.completed { background: #ecfdf5; color: #10b981; }
-.status-badge.active { background: #eff6ff; color: #3b82f6; }
-.status-badge.locked { background: #f3f4f6; color: #9ca3af; }
+.status-badge.completed { background: #D1FAE5; color: #16A34A; }
+.status-badge.active { background: #F0FDF4; color: #16A34A; }
+.status-badge.locked { background: #F3F4F6; color: #9CA3AF; }
 .stage-locked-msg {
-  color: #9ca3af;
+  color: #9CA3AF;
   font-size: 13px;
   font-style: italic;
 }
@@ -785,17 +819,17 @@ async function createStageDiscussion(stageId: string) {
   align-items: flex-start;
   gap: 10px;
   padding: 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #E5E7EB;
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.1s;
 }
-.content-card:hover { background: #f9fafb; }
-.content-icon { display: flex; align-items: center; flex-shrink: 0; margin-top: 1px; color: #6b7280; }
+.content-card:hover { background: #FFFBF5; }
+.content-icon { display: inline-flex; align-items: center; flex-shrink: 0; margin-top: 1px; }
 .content-title {
   font-size: 14px;
   font-weight: 500;
-  color: #111827;
+  color: #18181B;
   margin-bottom: 4px;
 }
 .content-meta {
@@ -803,10 +837,10 @@ async function createStageDiscussion(stageId: string) {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #9ca3af;
+  color: #9CA3AF;
 }
 .stage-empty {
-  color: #d1d5db;
+  color: #D1D5DB;
   font-size: 13px;
   text-align: center;
   padding: 16px;
@@ -819,6 +853,9 @@ async function createStageDiscussion(stageId: string) {
 
 /* Shared styles */
 .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 7px 16px;
   border-radius: 8px;
   font-size: 14px;
@@ -828,73 +865,73 @@ async function createStageDiscussion(stageId: string) {
   transition: background 0.15s;
 }
 .btn-sm { padding: 5px 12px; font-size: 13px; }
-.btn-primary { background: #4f46e5; color: #fff; }
-.btn-primary:hover { background: #4338ca; }
+.btn-primary { background: #7C3AED; color: #fff; }
+.btn-primary:hover { background: #6D28D9; }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
-.btn-secondary:hover { background: #e5e7eb; }
-.btn-complete { background: #10b981; color: #fff; }
-.btn-complete:hover { background: #059669; }
+.btn-secondary { background: #F3F4F6; color: #374151; border: 1px solid #E5E7EB; }
+.btn-secondary:hover { background: #E5E7EB; }
+.btn-complete { background: #22C55E; color: #fff; }
+.btn-complete:hover { background: #16A34A; }
 
 .dialog-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.3);
+  background: #00000066;
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 200;
 }
 .dialog {
-  background: #fff;
+  background: #FFFFFF;
   border-radius: 12px;
   padding: 24px;
   width: min(400px, 90vw);
-  box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+  box-shadow: 0 8px 32px -4px #00000020;
 }
 .dialog h3 { margin: 0 0 16px; font-size: 18px; font-weight: 600; }
 .dialog-input {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #D1D5DB;
   border-radius: 8px;
   font-size: 14px;
   outline: none;
   box-sizing: border-box;
 }
-.dialog-input:focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
+.dialog-input:focus { border-color: #7C3AED; box-shadow: 0 0 0 2px rgba(124,58,237,0.15); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 
 .output-card { border-color: #fbbf24; background: #fffbeb; }
-.output-card:hover { background: #fef3c7; }
+.output-card:hover { background: #FEF3C7; }
 .out-status-draft { color: #f59e0b; font-weight: 500; }
-.out-status-adopted { color: #10b981; font-weight: 500; }
-.adopt-preview { font-size: 14px; color: #374151; background: #f9fafb; padding: 8px 12px; border-radius: 6px; margin: 0 0 12px; }
+.out-status-adopted { display: inline-flex; align-items: center; gap: 3px; color: #16A34A; font-weight: 500; }
+.adopt-preview { font-size: 14px; color: #374151; background: #FFFBF5; padding: 8px 12px; border-radius: 6px; margin: 0 0 12px; }
 .adopt-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .adopt-option { display: flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
-.adopt-option input[type=radio] { accent-color: #4f46e5; }
+.adopt-option input[type=radio] { accent-color: #7C3AED; }
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
 .preview-modal {
-  background: #fff;
+  background: #FFFFFF;
   border-radius: 16px;
   padding: 28px;
   width: min(700px, 90vw);
   max-height: 80vh;
   overflow-y: auto;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  box-shadow: 0 8px 32px -4px #00000020;
   display: flex;
   flex-direction: column;
 }
 .preview-modal-title {
   font-size: 18px;
   font-weight: 700;
-  color: #111827;
+  color: #18181B;
   margin: 0 0 16px;
   padding-bottom: 12px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid #E5E7EB;
 }
 .preview-modal-body {
   flex: 1;
@@ -902,34 +939,34 @@ async function createStageDiscussion(stageId: string) {
   margin-bottom: 16px;
 }
 .markdown-body { font-size: 14px; line-height: 1.8; color: #374151; }
-.markdown-body h1 { font-size: 1.5em; font-weight: 700; margin: 0 0 12px; color: #111827; }
-.markdown-body h2 { font-size: 1.3em; font-weight: 700; margin: 20px 0 10px; color: #111827; }
-.markdown-body h3 { font-size: 1.15em; font-weight: 600; margin: 16px 0 8px; color: #1f2937; }
+.markdown-body h1 { font-size: 1.5em; font-weight: 700; margin: 0 0 12px; color: #18181B; }
+.markdown-body h2 { font-size: 1.3em; font-weight: 700; margin: 20px 0 10px; color: #18181B; }
+.markdown-body h3 { font-size: 1.15em; font-weight: 600; margin: 16px 0 8px; color: #1F2937; }
 .markdown-body p { margin: 0 0 10px; }
 .markdown-body ul, .markdown-body ol { margin: 0 0 10px; padding-left: 2em; }
 .markdown-body li { margin-bottom: 4px; }
 .markdown-body ul li { list-style-type: disc; }
 .markdown-body ol li { list-style-type: decimal; }
-.markdown-body code { background: #f3f4f6; color: #e11d48; font-size: 0.875em; padding: 2px 5px; border-radius: 4px; }
-.markdown-body pre { background: #1f2937; color: #f9fafb; padding: 14px; border-radius: 8px; overflow-x: auto; margin: 0 0 12px; }
+.markdown-body code { background: #F3F4F6; color: #e11d48; font-size: 0.875em; padding: 2px 5px; border-radius: 4px; }
+.markdown-body pre { background: #1F2937; color: #f9fafb; padding: 14px; border-radius: 8px; overflow-x: auto; margin: 0 0 12px; }
 .markdown-body pre code { background: none; color: inherit; padding: 0; }
-.markdown-body blockquote { border-left: 4px solid #d1d5db; padding-left: 14px; margin: 0 0 10px; color: #6b7280; }
+.markdown-body blockquote { border-left: 4px solid #D1D5DB; padding-left: 14px; margin: 0 0 10px; color: #6B7280; }
 .markdown-body table { width: 100%; border-collapse: collapse; margin: 0 0 12px; font-size: 14px; }
-.markdown-body th { background: #f3f4f6; font-weight: 600; text-align: left; padding: 6px 10px; border: 1px solid #d1d5db; }
-.markdown-body td { padding: 6px 10px; border: 1px solid #e5e7eb; }
-.markdown-body strong { font-weight: 700; color: #111827; }
+.markdown-body th { background: #F3F4F6; font-weight: 600; text-align: left; padding: 6px 10px; border: 1px solid #D1D5DB; }
+.markdown-body td { padding: 6px 10px; border: 1px solid #E5E7EB; }
+.markdown-body strong { font-weight: 700; color: #18181B; }
 
 .dialog-enhanced {
   border-radius: 16px;
   padding: 28px;
   width: min(440px, 90vw);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  box-shadow: 0 8px 32px -4px #00000020;
 }
 .dialog-title {
   margin: 0 0 20px;
   font-size: 19px;
   font-weight: 700;
-  color: #111827;
+  color: #18181B;
 }
 .dialog-field { margin-bottom: 14px; }
 .dialog-label {
@@ -942,7 +979,7 @@ async function createStageDiscussion(stageId: string) {
 .dialog-textarea {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #D1D5DB;
   border-radius: 8px;
   font-size: 14px;
   outline: none;
@@ -951,13 +988,13 @@ async function createStageDiscussion(stageId: string) {
   font-family: inherit;
   line-height: 1.5;
 }
-.dialog-textarea:focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
+.dialog-textarea:focus { border-color: #7C3AED; box-shadow: 0 0 0 2px rgba(124,58,237,0.15); }
 
 .dialog-wide {
   border-radius: 16px;
   padding: 28px;
   width: min(500px, 90vw);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  box-shadow: 0 8px 32px -4px #00000020;
 }
 .stages-toolbar {
   display: flex;
@@ -966,31 +1003,31 @@ async function createStageDiscussion(stageId: string) {
 }
 
 /* Member dialog */
-.member-loading { text-align: center; color: #9ca3af; padding: 20px; }
+.member-loading { text-align: center; color: #9CA3AF; padding: 20px; }
 .member-list { margin-bottom: 16px; max-height: 260px; overflow-y: auto; }
 .member-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 0;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid #F3F4F6;
 }
 .member-info { display: flex; align-items: center; gap: 10px; }
-.member-name { font-size: 14px; font-weight: 500; color: #111827; }
+.member-name { font-size: 14px; font-weight: 500; color: #18181B; }
 .member-role-badge {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 6px;
   font-weight: 500;
 }
-.role-owner { background: #fef3c7; color: #d97706; }
-.role-editor { background: #eff6ff; color: #3b82f6; }
-.role-viewer { background: #f3f4f6; color: #6b7280; }
-.member-empty { text-align: center; color: #d1d5db; font-size: 13px; padding: 16px; }
+.role-owner { background: #FEF3C7; color: #D97706; }
+.role-editor { background: #EDE9FE; color: #7C3AED; }
+.role-viewer { background: #F3F4F6; color: #6B7280; }
+.member-empty { text-align: center; color: #D1D5DB; font-size: 13px; padding: 16px; }
 .btn-remove {
   background: none;
   border: 1px solid #fca5a5;
-  color: #ef4444;
+  color: #EF4444;
   font-size: 12px;
   padding: 3px 10px;
   border-radius: 6px;
@@ -1013,13 +1050,13 @@ async function createStageDiscussion(stageId: string) {
   align-items: center;
   gap: 8px;
   padding: 8px 0;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid #F3F4F6;
 }
 .stage-edit-input { flex: 1; }
 .stage-default-tag {
   font-size: 11px;
-  color: #9ca3af;
-  background: #f3f4f6;
+  color: #9CA3AF;
+  background: #F3F4F6;
   padding: 2px 8px;
   border-radius: 6px;
   flex-shrink: 0;
@@ -1108,19 +1145,21 @@ async function createStageDiscussion(stageId: string) {
 .access-overlay { z-index: 300; }
 .access-modal {
   text-align: center; padding: 32px 40px; max-width: 420px; width: 90%;
-  border-radius: 16px; background: #fff;
+  border-radius: 16px; background: #FFFFFF;
+  box-shadow: 0 8px 32px -4px #00000020;
 }
-.access-icon { display: flex; justify-content: center; align-items: center; margin-bottom: 12px; color: #6b7280; }
-.access-modal h3 { font-size: 20px; margin-bottom: 6px; color: #1f2937; }
-.access-desc { color: #6b7280; font-size: 13px; margin-bottom: 2px; }
-.access-hint { color: #9ca3af; font-size: 12px; margin-bottom: 20px; }
+.access-icon { display: flex; justify-content: center; color: #6B7280; margin-bottom: 12px; }
+.access-modal h3 { font-size: 20px; margin-bottom: 6px; color: #1F2937; }
+.access-desc { color: #6B7280; font-size: 13px; margin-bottom: 2px; }
+.access-hint { color: #9CA3AF; font-size: 12px; margin-bottom: 20px; }
 .access-actions { display: flex; gap: 10px; justify-content: center; margin-bottom: 12px; }
-.btn-ghost { background: none; border: none; color: #6b7280; cursor: pointer; font-size: 13px; padding: 6px 10px; }
+.btn-ghost { background: none; border: none; color: #6B7280; cursor: pointer; font-size: 13px; padding: 6px 10px; }
 .btn-ghost:hover { color: #374151; }
 
-.pending-bar { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
+.pending-bar { display: flex; flex-direction: column; gap: 8px; background: #FEF3C7; border: 1px solid #D97706; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
+.pending-bar > span { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 500; color: #92400E; }
 .pending-item { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; }
 .pending-item .btn-sm { padding: 2px 8px; font-size: 12px; }
-.btn-danger { background: #ef4444; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+.btn-danger { background: #EF4444; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
 .btn-danger:hover { background: #dc2626; }
 </style>

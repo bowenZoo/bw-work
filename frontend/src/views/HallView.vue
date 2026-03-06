@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useHall } from '@/composables/useHall'
 import { useUserStore } from '@/stores/user'
 import UserMenu from '@/components/layout/UserMenu.vue'
+import LoginModal from '@/components/auth/LoginModal.vue'
 import AgentConfigEditor from '@/components/discussion/AgentConfigEditor.vue'
 import type { DiscussionStyleFull, DiscussionStyleOverrides } from '@/types'
 
@@ -11,11 +12,7 @@ const router = useRouter()
 const userStore = useUserStore()
 const { items, loading, refresh, createProject, createDiscussion, loadStyles, discussionStylesFull, defaultStyleId } = useHall()
 
-const showLoginModal = ref(false)  // 保留变量避免破坏现有 watch 逻辑，实际行为已改为跳转
-
-function goLogin(redirect?: string) {
-  router.push(redirect ? `/login?redirect=${encodeURIComponent(redirect)}` : '/login')
-}
+const showLoginModal = ref(false)
 const showNewDiscussion = ref(false)
 const showNewProject = ref(false)
 
@@ -86,12 +83,12 @@ const showAdvancedModal = ref(false)
 const advancedTab = ref<'base' | 'crew'>('base')
 // === Crew Tab Logic ===
 const AGENT_ROLES = [
-  { id: 'lead_planner', name: '主策划', locked: true },
-  { id: 'system_designer', name: '系统策划', locked: false },
-  { id: 'number_designer', name: '数值策划', locked: false },
-  { id: 'player_advocate', name: '玩家代言人', locked: false },
-  { id: 'operations_analyst', name: '市场运营', locked: false },
-  { id: 'visual_concept', name: '视觉概念', locked: false },
+  { id: 'lead_planner', name: '主策划', emoji: '👔', locked: true },
+  { id: 'system_designer', name: '系统策划', emoji: '⚙️', locked: false },
+  { id: 'number_designer', name: '数值策划', emoji: '📊', locked: false },
+  { id: 'player_advocate', name: '玩家代言人', emoji: '🎮', locked: false },
+  { id: 'operations_analyst', name: '市场运营', emoji: '📈', locked: false },
+  { id: 'visual_concept', name: '视觉概念', emoji: '🎨', locked: false },
 ]
 const crewDefaultConfigs = ref<Record<string, any>>({})
 
@@ -279,14 +276,14 @@ onMounted(async () => {
       onStyleSelect(discussionStylesFull.value[0].id)
     }
   } else {
-    goLogin()
+    showLoginModal.value = true
   }
 })
 
 watch(() => userStore.isAuthenticated, (val) => {
   if (!val) {
     items.value = []
-    goLogin()
+    showLoginModal.value = true
   } else {
     refresh()
   }
@@ -409,6 +406,7 @@ async function doCreateProject() {
 }
 
 function onLoginSuccess() {
+  showLoginModal.value = false
   refresh()
 }
 
@@ -435,14 +433,14 @@ onUnmounted(() => { delete (window as any).__bwHall })
 <template>
   <div class="hall">
     <header class="hall-header">
-      <h1 class="hall-title">BW-Work</h1>
+      <h1 class="hall-title">🎮 BW-Work</h1>
       <div class="hall-actions" v-if="userStore.isAuthenticated">
         <button class="btn btn-secondary" @click="showNewDiscussion = true">+ 新讨论</button>
         <button class="btn btn-secondary" @click="showNewProject = true">+ 新项目</button>
         <UserMenu @open-panel="(s: string) => emit('open-panel', s)" />
       </div>
       <div v-else class="hall-actions">
-        <button class="btn btn-primary" @click="goLogin()">登录</button>
+        <button class="btn btn-primary" @click="showLoginModal = true">登录</button>
       </div>
     </header>
 
@@ -471,7 +469,7 @@ onUnmounted(() => { delete (window as any).__bwHall })
 
       <div v-if="filteredItems.length === 0" class="hall-filter-empty">
         <div class="empty-icon">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </div>
         <p class="empty-text">没有找到匹配的内容</p>
         <p class="empty-hint">试试其他关键词或切换分类</p>
@@ -486,8 +484,8 @@ onUnmounted(() => { delete (window as any).__bwHall })
         >
           <div class="card-header">
             <span class="card-icon">
-              <svg v-if="item.type === 'discussion'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
-              <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <svg v-if="item.type === 'discussion'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
             </span>
             <span class="card-type-badge" :class="item.type">{{ item.type === 'discussion' ? '讨论' : '项目' }}</span>
             <span
@@ -498,8 +496,8 @@ onUnmounted(() => { delete (window as any).__bwHall })
           </div>
           <h3 class="card-title">
             <span v-if="item.type==='project'" class="vis-icon">
-              <svg v-if="item.is_public" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-              <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <svg v-if="item.is_public" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             </span>{{ item.name }}
           </h3>
           <p class="card-desc" v-if="item.description">{{ item.description }}</p>
@@ -616,15 +614,15 @@ onUnmounted(() => { delete (window as any).__bwHall })
             </label>
             <input ref="fileInputRef" type="file" accept=".md" style="display:none" @change="handleFileSelect" />
             <div v-if="attachmentFile" class="attachment-chip">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
               {{ attachmentFile.name }} <button class="chip-remove" @click="removeAttachment">✕</button>
             </div>
             <button v-else class="btn-ghost-sm" @click="triggerFileInput">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
               参考文档
             </button>
             <button class="btn-ghost-sm" @click="showAdvancedModal = true; loadCrewDefaults()">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
               高级选项
             </button>
           </div>
@@ -634,8 +632,8 @@ onUnmounted(() => { delete (window as any).__bwHall })
             <div class="password-field">
               <input v-model="password" :type="showPassword ? 'text' : 'password'" class="dialog-input" placeholder="输入密码" />
               <button class="btn-icon" @click="showPassword = !showPassword" type="button">
-                <svg v-if="showPassword" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
-                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg v-if="showPassword" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
             </div>
           </div>
@@ -657,11 +655,11 @@ onUnmounted(() => { delete (window as any).__bwHall })
           <!-- Tab 切换 -->
           <div class="adv-tabs">
             <button class="adv-tab" :class="{ 'adv-tab-active': advancedTab === 'base' }" @click="advancedTab = 'base'">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
               基础
             </button>
             <button class="adv-tab" :class="{ 'adv-tab-active': advancedTab === 'crew' }" @click="advancedTab = 'crew'">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               人员
             </button>
           </div>
@@ -706,14 +704,7 @@ onUnmounted(() => { delete (window as any).__bwHall })
                   :class="{ 'crew-item-active': crewSelectedId === role.id }"
                   @click="crewSelectedId = role.id"
                 >
-                  <span class="crew-icon">
-                    <svg v-if="role.id === 'lead_planner'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                    <svg v-else-if="role.id === 'system_designer'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/></svg>
-                    <svg v-else-if="role.id === 'number_designer'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>
-                    <svg v-else-if="role.id === 'player_advocate'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                    <svg v-else-if="role.id === 'operations_analyst'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
-                    <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
-                  </span>
+                  <span class="crew-emoji">{{ role.emoji }}</span>
                   <span class="crew-name">{{ role.name }}</span>
                   <span v-if="role.locked" class="crew-lock">必选</span>
                   <button v-else class="crew-remove" @click.stop="removeAgent(role.id)" title="移除">−</button>
@@ -727,7 +718,7 @@ onUnmounted(() => { delete (window as any).__bwHall })
                       :key="role.id"
                       class="crew-picker-item"
                       @click="addAgent(role.id)"
-                    >{{ role.name }}</button>
+                    >{{ role.emoji }} {{ role.name }}</button>
                   </div>
                 </div>
               </div>
@@ -792,7 +783,7 @@ onUnmounted(() => { delete (window as any).__bwHall })
             <label class="dialog-label">可见性</label>
             <div class="visibility-pills">
               <button class="vis-pill" :class="{ 'vis-pill-active': newProjectIsPublic }" @click="newProjectIsPublic = true">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                 公开
               </button>
               <button class="vis-pill" :class="{ 'vis-pill-active': !newProjectIsPublic }" @click="newProjectIsPublic = false">
@@ -828,9 +819,9 @@ onUnmounted(() => { delete (window as any).__bwHall })
             </div>
           </div>
           <div v-else class="access-modal-body">
-            <div class="access-done-icon">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
-            </div>
+            <p class="access-done-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </p>
             <p class="access-done-text">已提交申请，等待管理员审批</p>
             <p class="access-done-hint">申请角色：{{ accessPendingRole === 'viewer' ? '查看者' : '编辑者' }}</p>
             <div class="access-actions">
@@ -841,324 +832,276 @@ onUnmounted(() => { delete (window as any).__bwHall })
       </div>
     </Transition>
 
-
+    <!-- Login Modal -->
+    <LoginModal v-if="showLoginModal" @close="showLoginModal = false" @success="onLoginSuccess" />
   </div>
 </template>
 
 <style scoped>
+/* === Base === */
 .hall {
   min-height: 100vh;
-  background: #f8fafc;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #FFFBF5;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
+
+/* === Top Bar === */
 .hall-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 0 24px;
+  background: #FFFFFF;
+  box-shadow: 0 1px 4px #0000000A;
+  height: 56px;
   position: sticky;
   top: 0;
   z-index: 10;
+  gap: 16px;
 }
 .hall-title {
+  font-family: Outfit, sans-serif;
   font-size: 20px;
   font-weight: 700;
-  color: #111827;
+  color: #7C3AED;
+  letter-spacing: -0.5px;
   margin: 0;
 }
 .hall-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
 }
-.hall-body {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 24px;
-}
+
+/* === Main Body === */
+.hall-body { padding: 0; }
+
+/* === Filter Toolbar === */
 .hall-toolbar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
+  gap: 12px;
+  height: 52px;
+  padding: 0 24px;
+  background: #FFFFFF;
+  flex-wrap: nowrap;
 }
 .hall-search {
-  flex: 0 0 260px;
-  padding: 8px 14px;
-  border: 1px solid #d1d5db;
-  border-radius: 20px;
+  flex: 0 0 360px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 100px;
   font-size: 14px;
+  height: 36px;
   outline: none;
-  background: #fff;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  background: #F5F3F0;
+  color: #18181B;
+  font-family: inherit;
+  transition: box-shadow 0.15s;
 }
-.hall-search:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59,130,246,0.15);
-}
-.hall-tabs {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
+.hall-search::placeholder { color: #9C9B99; }
+.hall-search:focus { box-shadow: 0 0 0 2px #7C3AED40; }
+
+/* === Filter Tabs === */
+.hall-tabs { display: flex; gap: 12px; flex-wrap: wrap; }
 .tab-btn {
-  padding: 6px 14px;
-  border-radius: 20px;
+  padding: 6px 16px;
+  height: 32px;
+  border-radius: 100px;
+  font-family: Outfit, sans-serif;
   font-size: 13px;
   font-weight: 500;
   border: none;
-  background: transparent;
-  color: #6b7280;
+  background: #F0EDE8;
+  color: #6D6C6A;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
 }
-.tab-btn:hover { background: #f3f4f6; }
-.tab-btn.active {
-  background: #3b82f6;
-  color: #fff;
-}
+.tab-btn:hover { background: #E8E4DE; }
+.tab-btn.active { background: #7C3AED; color: #FFFFFF; font-weight: 600; }
+
+/* === Status Badges === */
 .card-status-badge {
-  font-size: 11px;
-  padding: 2px 7px;
-  border-radius: 6px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 100px;
   font-weight: 500;
   margin-left: auto;
 }
-.status-active    { background: #eff6ff; color: #2563eb; }
-.status-waiting   { background: #fffbeb; color: #d97706; }
-.status-completed { background: #f0fdf4; color: #16a34a; }
-.status-archived  { background: #f3f4f6; color: #6b7280; }
+.status-active    { background: #EDE9FE; color: #7C3AED; }
+.status-waiting   { background: #FEF3C7; color: #92400E; }
+.status-completed { background: #D1FAE5; color: #16A34A; }
+.status-archived  { background: #F4F4F5; color: #71717A; }
 
+/* === Loading / Empty === */
 .hall-loading, .hall-empty {
   text-align: center;
   padding: 60px 20px;
-  color: #9ca3af;
+  color: #9CA3AF;
   font-size: 15px;
 }
+
+/* === Grid === */
 .hall-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  gap: 14px;
+  padding: 24px;
 }
+
+/* === Cards === */
 .hall-card {
-  background: #fff;
-  border-radius: 10px;
+  background: #FFFFFF;
+  border-radius: 16px;
   padding: 18px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 12px #0000000D;
   cursor: pointer;
   transition: box-shadow 0.15s, transform 0.15s;
 }
 .hall-card:hover {
-  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  box-shadow: 0 8px 24px #00000018;
   transform: translateY(-2px);
 }
-.card-border-blue {
-  border-left: 3px solid #3b82f6;
-}
-.card-border-green {
-  border-left: 3px solid #10b981;
-}
-.card-border-gray {
-  border-left: 3px solid #9ca3af;
-}
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.card-icon {
-  display: flex;
-  align-items: center;
-  color: var(--text-secondary, #6b7280);
-}
+.card-border-blue  { border-left: 3px solid #7C3AED; }
+.card-border-green { border-left: 3px solid #22C55E; }
+.card-border-gray  { border-left: 3px solid #D1D5DB; }
+
+.card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.card-icon { display: inline-flex; align-items: center; color: #7C3AED; }
 .card-type-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 100px;
   font-weight: 500;
 }
-.card-type-badge.discussion {
-  background: #3b82f6;
-  color: #fff;
-}
-.card-type-badge.project {
-  background: #10b981;
-  color: #fff;
-}
+.card-type-badge.discussion { background: #7C3AED; color: #FFFFFF; }
+.card-type-badge.project    { background: #22C55E; color: #FFFFFF; }
+
 .card-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-size: 16px;
-  font-weight: 600;
-  color: #111827;
+  font-weight: 700;
+  color: #18181B;
   margin: 0 0 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.vis-icon { display: inline-flex; align-items: center; color: #6B7280; flex-shrink: 0; }
 .card-desc {
   font-size: 13px;
-  color: #6b7280;
+  color: #6B7280;
   margin: 0 0 12px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.card-footer {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.card-meta {
-  font-size: 12px;
-  color: #9ca3af;
-}
-.card-time {
-  font-size: 12px;
-  color: #9ca3af;
-  margin-left: auto;
-}
+.card-footer { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.card-meta  { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: #9CA3AF; }
+.card-time  { font-size: 12px; color: #9CA3AF; margin-left: auto; }
 .card-last-active {
   font-size: 11px;
-  color: #b0b8c4;
+  color: #A1A1AA;
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid #f3f4f6;
-}
-.card-progress {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-}
-.progress-bar {
-  flex: 1;
-  height: 6px;
-  background: #e5e7eb;
-  border-radius: 3px;
-  overflow: hidden;
-}
-.progress-fill {
-  height: 100%;
-  background: #10b981;
-  border-radius: 3px;
-  transition: width 0.3s ease;
-}
-.progress-label {
-  font-size: 11px;
-  color: #6b7280;
-  white-space: nowrap;
-}
-.hall-filter-empty {
-  text-align: center;
-  padding: 60px 20px;
-}
-.empty-icon {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 12px;
-  color: #9ca3af;
-}
-.empty-text {
-  font-size: 16px;
-  color: #6b7280;
-  margin: 0 0 6px;
-  font-weight: 500;
-}
-.empty-hint {
-  font-size: 13px;
-  color: #9ca3af;
-  margin: 0;
+  border-top: 1px solid #F0EDE8;
 }
 
-/* Buttons */
+/* === Progress === */
+.card-progress { display: flex; align-items: center; gap: 8px; flex: 1; }
+.progress-bar { flex: 1; height: 6px; background: #F0EDE8; border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: #7C3AED; border-radius: 3px; transition: width 0.3s ease; }
+.progress-label { font-size: 11px; color: #6B7280; white-space: nowrap; }
+
+/* === Filter Empty === */
+.hall-filter-empty { text-align: center; padding: 60px 20px; }
+.empty-icon  { display: flex; justify-content: center; align-items: center; margin-bottom: 12px; color: #9CA3AF; }
+.empty-text  { font-size: 16px; color: #6B7280; margin: 0 0 6px; font-weight: 500; }
+.empty-hint  { font-size: 13px; color: #9CA3AF; margin: 0; }
+
+/* === Buttons === */
 .btn {
-  padding: 7px 16px;
+  padding: 6px 14px;
   border-radius: 8px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   border: none;
+  font-family: inherit;
   transition: background 0.15s;
 }
-.btn-primary {
-  background: #4f46e5;
-  color: #fff;
-}
-.btn-primary:hover { background: #4338ca; }
+.btn-primary { background: #7C3AED; color: #FFFFFF; }
+.btn-primary:hover   { background: #6D28D9; }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-secondary {
-  background: #f3f4f6;
+  background: transparent;
   color: #374151;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #D1D5DB;
 }
-.btn-secondary:hover { background: #e5e7eb; }
+.btn-secondary:hover { background: #F5F3F0; }
 
-/* Dialogs */
+/* === Dialog Overlay === */
 .dialog-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.3);
+  background: #00000066;
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 200;
 }
 .dialog {
-  background: #fff;
-  border-radius: 12px;
+  background: #FFFFFF;
+  border-radius: 16px;
   padding: 24px;
   width: min(400px, 90vw);
-  box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+  box-shadow: 0 8px 32px -4px #00000020;
 }
 .dialog h3 {
   margin: 0 0 16px;
   font-size: 18px;
   font-weight: 600;
+  color: #18181B;
+  font-family: Geist, Inter, sans-serif;
 }
 .dialog-input {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #D1D5DB;
   border-radius: 8px;
   font-size: 14px;
   outline: none;
   box-sizing: border-box;
+  font-family: inherit;
+  background: #FFFFFF;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-.dialog-input:focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
+.dialog-input:focus { border-color: #7C3AED; box-shadow: 0 0 0 3px #7C3AED20; }
 .dialog-enhanced {
   border-radius: 16px;
   padding: 28px;
   width: min(440px, 90vw);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  box-shadow: 0 8px 32px -4px #00000020;
 }
 .dialog-title {
   margin: 0 0 20px;
-  font-size: 19px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  color: #111827;
+  font-size: 18px;
+  font-weight: 600;
+  color: #18181B;
+  font-family: Geist, Inter, sans-serif;
 }
-.dialog-field {
-  margin-bottom: 14px;
-}
-.dialog-label {
-  display: block;
-  font-size: 13px;
-  font-weight: 500;
-  color: #374151;
-  margin-bottom: 6px;
-}
+.dialog-field { margin-bottom: 14px; }
+.dialog-label { display: block; font-size: 13px; font-weight: 500; color: #374151; margin-bottom: 6px; }
 .dialog-textarea {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #D1D5DB;
   border-radius: 8px;
   font-size: 14px;
   outline: none;
@@ -1166,44 +1109,24 @@ onUnmounted(() => { delete (window as any).__bwHall })
   resize: vertical;
   font-family: inherit;
   line-height: 1.5;
+  background: #FFFFFF;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-.dialog-textarea:focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 16px;
-}
+.dialog-textarea:focus { border-color: #7C3AED; box-shadow: 0 0 0 3px #7C3AED20; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 
+/* === Transitions === */
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
+/* === Responsive === */
 @media (max-width: 768px) {
-  .hall-header {
-    padding: 12px 16px;
-  }
-  .hall-title {
-    font-size: 17px;
-  }
-  .hall-actions {
-    gap: 6px;
-  }
-  .hall-actions .btn {
-    padding: 6px 10px;
-    font-size: 13px;
-  }
-  .hall-body {
-    padding: 16px 12px;
-  }
-  .hall-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-  }
-  .hall-search {
-    flex: none;
-    width: 100%;
-  }
+  .hall-header { padding: 0 16px; }
+  .hall-title  { font-size: 17px; }
+  .hall-actions { gap: 8px; }
+  .hall-actions .btn { padding: 5px 10px; font-size: 13px; }
+  .hall-toolbar { height: auto; flex-wrap: wrap; padding: 10px 16px; gap: 10px; }
+  .hall-search { flex: none; width: 100%; }
   .hall-tabs {
     overflow-x: auto;
     flex-wrap: nowrap;
@@ -1211,114 +1134,196 @@ onUnmounted(() => { delete (window as any).__bwHall })
     scrollbar-width: none;
     padding-bottom: 2px;
   }
-  .hall-tabs::-webkit-scrollbar {
-    display: none;
-  }
-  .tab-btn {
-    flex-shrink: 0;
-    white-space: nowrap;
-  }
-  .hall-grid {
-    grid-template-columns: 1fr;
-  }
-  .card-title {
-    font-size: 15px;
-  }
-  .dialog-enhanced {
-    width: calc(100vw - 32px);
-    padding: 20px;
-  }
-  .dialog-title {
-    font-size: 17px;
-  }
+  .hall-tabs::-webkit-scrollbar { display: none; }
+  .tab-btn { flex-shrink: 0; }
+  .hall-grid { grid-template-columns: 1fr; padding: 16px; }
+  .card-title { font-size: 15px; }
+  .dialog-enhanced { width: calc(100vw - 32px); padding: 20px; }
+  .dialog-title { font-size: 17px; }
 }
 
 /* === 新建讨论弹窗样式 === */
 .dialog-compact { max-width: 560px; width: calc(100vw - 48px); }
 .dialog-row-3 { display: grid; grid-template-columns: 1fr 1fr 120px; gap: 12px; }
-.required { color: #ef4444; }
+.required { color: #EF4444; }
 .dialog-inline-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.btn-ghost-sm { background: none; border: 1px solid #e5e7eb; border-radius: 8px; padding: 4px 10px; font-size: 12px; color: #6b7280; cursor: pointer; white-space: nowrap; transition: all 0.15s; }
-.btn-ghost-sm:hover { border-color: #3b82f6; color: #3b82f6; }
-.attachment-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: #eff6ff; border-radius: 8px; font-size: 12px; color: #2563eb; }
-
+.btn-ghost-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #6B7280;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+.btn-ghost-sm:hover { border-color: #7C3AED; color: #7C3AED; }
+.attachment-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: #EDE9FE; border-radius: 8px; font-size: 12px; color: #7C3AED; }
 
 /* === Crew Panel === */
 .crew-panel { display: flex; flex-direction: column; gap: 10px; }
 .crew-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.crew-item { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border-radius: 20px; font-size: 13px; border: 1.5px solid #e5e7eb; background: #fff; cursor: pointer; transition: all 0.15s; }
-.crew-item:hover { border-color: #93c5fd; }
-.crew-item-active { border-color: #3b82f6; background: rgba(59,130,246,0.06); }
-.crew-icon { display: flex; align-items: center; color: #6b7280; }
+.crew-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 100px;
+  font-size: 13px;
+  border: 1.5px solid #D1D5DB;
+  background: #FFFFFF;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.crew-item:hover { border-color: #C4B5FD; }
+.crew-item-active { border-color: #7C3AED; background: #EDE9FE; }
+.crew-emoji { font-size: 14px; }
 .crew-name { font-weight: 500; color: #374151; }
-.crew-lock { font-size: 10px; padding: 0 4px; background: #e5e7eb; color: #6b7280; border-radius: 3px; }
-.crew-remove { background: none; border: none; color: #d1d5db; font-size: 16px; cursor: pointer; padding: 0 2px; line-height: 1; }
-.crew-remove:hover { color: #ef4444; }
+.crew-lock { font-size: 10px; padding: 0 4px; background: #F0EDE8; color: #6B7280; border-radius: 3px; }
+.crew-remove { background: none; border: none; color: #D1D5DB; font-size: 16px; cursor: pointer; padding: 0 2px; line-height: 1; }
+.crew-remove:hover { color: #EF4444; }
 .crew-add-wrap { position: relative; }
-.crew-add-btn { width: 30px; height: 30px; border-radius: 50%; border: 1.5px dashed #d1d5db; background: #fff; font-size: 16px; color: #9ca3af; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
-.crew-add-btn:hover { border-color: #3b82f6; color: #3b82f6; }
-.crew-picker { position: absolute; top: 36px; left: 0; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 10; min-width: 140px; }
-.crew-picker-item { display: block; width: 100%; text-align: left; padding: 8px 12px; font-size: 13px; border: none; background: none; cursor: pointer; }
-.crew-picker-item:hover { background: #f3f4f6; }
-.crew-detail { border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px; background: #f8fafc; }
+.crew-add-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1.5px dashed #D1D5DB;
+  background: #FFFFFF;
+  font-size: 16px;
+  color: #9CA3AF;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, color 0.15s;
+}
+.crew-add-btn:hover { border-color: #7C3AED; color: #7C3AED; }
+.crew-picker {
+  position: absolute;
+  top: 36px;
+  left: 0;
+  background: #FFFFFF;
+  border: 1px solid #F0EDE8;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px #00000018;
+  z-index: 10;
+  min-width: 140px;
+}
+.crew-picker-item { display: block; width: 100%; text-align: left; padding: 9px 16px; font-size: 13px; border: none; background: none; cursor: pointer; color: #2D2D2D; }
+.crew-picker-item:hover { background: #FFFBF5; }
+.crew-detail { border: 1px solid #F0EDE8; border-radius: 10px; padding: 10px; background: #FAFAFA; }
 .crew-detail-header { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 8px; }
-.crew-reset { font-size: 12px; color: #9ca3af; background: none; border: none; cursor: pointer; }
-.crew-reset:hover { color: #3b82f6; }
+.crew-reset { font-size: 12px; color: #9CA3AF; background: none; border: none; cursor: pointer; }
+.crew-reset:hover { color: #7C3AED; }
 .crew-fields { display: flex; flex-direction: column; gap: 8px; }
-.crew-field label { font-size: 11px; font-weight: 500; color: #6b7280; display: block; margin-bottom: 2px; }
-.crew-input { width: 100%; padding: 5px 8px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 12px; font-family: inherit; resize: vertical; transition: border-color 0.15s; }
-.crew-input:focus { outline: none; border-color: #3b82f6; }
+.crew-field label { font-size: 11px; font-weight: 500; color: #6B7280; display: block; margin-bottom: 2px; }
+.crew-input {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+  transition: border-color 0.15s;
+  background: #FFFFFF;
+}
+.crew-input:focus { outline: none; border-color: #7C3AED; }
+
 /* 高级选项 Tab */
-.adv-tabs { display: flex; gap: 0; border-bottom: 2px solid #f0f0f0; margin-bottom: 12px; }
-.adv-tab { flex: 1; padding: 8px 0; background: none; border: none; font-size: 13px; font-weight: 500; color: #9ca3af; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.15s; }
-.adv-tab:hover { color: #6b7280; }
-.adv-tab-active { color: #3b82f6; border-bottom-color: #3b82f6; }
+.adv-tabs { display: flex; gap: 0; border-bottom: 2px solid #F0EDE8; margin-bottom: 12px; }
+.adv-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: #9CA3AF;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.15s;
+}
+.adv-tab:hover { color: #6B7280; }
+.adv-tab-active { color: #7C3AED; border-bottom-color: #7C3AED; }
 .adv-tab-body { min-height: 200px; }
-.prompt-preview-section { background: #f8fafc; border-radius: 10px; padding: 12px; }
-.prompt-preview-title { font-size: 12px; font-weight: 600; color: #6b7280; margin-bottom: 8px; }
+.prompt-preview-section { background: #FAFAFA; border-radius: 10px; padding: 12px; }
+.prompt-preview-title { font-size: 12px; font-weight: 600; color: #6B7280; margin-bottom: 8px; }
 .prompt-fields-compact { display: flex; flex-direction: column; gap: 8px; }
 .prompt-field { display: flex; flex-direction: column; gap: 4px; }
 .prompt-field-label { font-size: 12px; font-weight: 600; color: #374151; }
-.prompt-field-input { width: 100%; padding: 6px 8px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 12px; resize: vertical; min-height: 44px; font-family: inherit; background: #fff; line-height: 1.5; }
-.prompt-field-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.1); }
+.prompt-field-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  font-size: 12px;
+  resize: vertical;
+  min-height: 44px;
+  font-family: inherit;
+  background: #FFFFFF;
+  line-height: 1.5;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.prompt-field-input:focus { outline: none; border-color: #7C3AED; box-shadow: 0 0 0 2px #7C3AED20; }
 
 .focus-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.focus-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; background: #eff6ff; color: #2563eb; border-radius: 12px; font-size: 12px; }
-.chip-remove { background: none; border: none; color: #93c5fd; cursor: pointer; font-size: 12px; padding: 0 2px; }
-.chip-remove:hover { color: #dc2626; }
-.focus-add-input { border: 1px dashed #d1d5db; border-radius: 8px; padding: 3px 8px; font-size: 12px; width: 120px; outline: none; }
-.focus-add-input:focus { border-color: #3b82f6; }
+.focus-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; background: #EDE9FE; color: #7C3AED; border-radius: 100px; font-size: 12px; }
+.chip-remove { background: none; border: none; color: #C4B5FD; cursor: pointer; font-size: 12px; padding: 0 2px; }
+.chip-remove:hover { color: #EF4444; }
+.focus-add-input { border: 1px dashed #D1D5DB; border-radius: 8px; padding: 3px 8px; font-size: 12px; width: 120px; outline: none; background: #FFFFFF; }
+.focus-add-input:focus { border-color: #7C3AED; }
 
 .style-pills { display: flex; flex-wrap: wrap; gap: 6px; }
-.style-pill { padding: 5px 12px; border-radius: 16px; border: 1px solid #d1d5db; background: #fff; font-size: 12px; cursor: pointer; transition: all 0.15s; color: #4b5563; }
-.style-pill:hover { border-color: #3b82f6; color: #3b82f6; }
-.style-pill-active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+.style-pill { padding: 5px 12px; border-radius: 100px; border: 1px solid #D1D5DB; background: #FFFFFF; font-size: 12px; cursor: pointer; transition: border-color 0.15s, color 0.15s; color: #374151; }
+.style-pill:hover { border-color: #7C3AED; color: #7C3AED; }
+.style-pill-active { background: #7C3AED; color: #FFFFFF; border-color: #7C3AED; }
 
 .checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #374151; cursor: pointer; }
 .password-field { display: flex; gap: 8px; margin-top: 6px; }
 .btn-icon { background: none; border: none; cursor: pointer; font-size: 16px; padding: 4px; }
-.btn-ghost { background: none; border: 1px dashed #d1d5db; border-radius: 8px; padding: 8px 12px; font-size: 13px; color: #6b7280; cursor: pointer; width: 100%; text-align: left; }
-.btn-ghost:hover { border-color: #3b82f6; color: #3b82f6; }
-.attachment-info { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #eff6ff; border-radius: 8px; font-size: 13px; color: #2563eb; }
-.attachment-remove { background: none; border: none; color: #93c5fd; cursor: pointer; font-size: 14px; margin-left: auto; }
-.attachment-remove:hover { color: #dc2626; }
+.btn-ghost {
+  background: none;
+  border: 1px dashed #D1D5DB;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #6B7280;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: border-color 0.15s, color 0.15s;
+}
+.btn-ghost:hover { border-color: #7C3AED; color: #7C3AED; }
+.attachment-info { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #EDE9FE; border-radius: 8px; font-size: 13px; color: #7C3AED; }
+.attachment-remove { background: none; border: none; color: #C4B5FD; cursor: pointer; font-size: 14px; margin-left: auto; }
+.attachment-remove:hover { color: #EF4444; }
 .auto-pause-row { display: flex; align-items: center; gap: 8px; }
 .auto-pause-input { width: 70px !important; }
 
 .visibility-pills { display: flex; gap: 8px; }
-.vis-pill { display: inline-flex; align-items: center; gap: 5px; padding: 6px 16px; border-radius: 20px; border: 1.5px solid #e5e7eb; background: #fff; font-size: 13px; cursor: pointer; transition: all 0.15s; }
-.vis-pill:hover { border-color: #93c5fd; }
-.vis-pill-active { border-color: #3b82f6; background: rgba(59,130,246,0.06); color: #3b82f6; font-weight: 500; }
-.hint-text { font-size: 12px; color: #9ca3af; }
+.vis-pill { display: inline-flex; align-items: center; gap: 5px; padding: 6px 16px; border-radius: 100px; border: 1.5px solid #D1D5DB; background: #FFFFFF; font-size: 13px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.vis-pill:hover { border-color: #C4B5FD; }
+.vis-pill-active { border-color: #7C3AED; background: #EDE9FE; color: #7C3AED; font-weight: 500; }
+.hint-text { font-size: 12px; color: #9CA3AF; }
 
 /* Access Request Modal */
 .access-modal-body { text-align: center; padding: 8px 0; }
-.access-project-name { font-size: 18px; font-weight: 600; color: #111827; margin: 0 0 8px; }
-.access-hint { font-size: 14px; color: #6b7280; margin: 0 0 20px; }
+.access-project-name { font-size: 18px; font-weight: 600; color: #18181B; margin: 0 0 8px; }
+.access-hint { font-size: 14px; color: #6B7280; margin: 0 0 20px; }
 .access-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 .access-done-icon { display: flex; justify-content: center; margin: 0 0 8px; }
-.access-done-text { font-size: 16px; font-weight: 500; color: #111827; margin: 0 0 4px; }
-.access-done-hint { font-size: 13px; color: #9ca3af; margin: 0 0 16px; }
+.access-done-text { font-size: 16px; font-weight: 500; color: #18181B; margin: 0 0 4px; }
+.access-done-hint { font-size: 13px; color: #9CA3AF; margin: 0 0 16px; }
 
 @media (max-width: 768px) {
   .dialog-wide { max-width: calc(100vw - 32px); }
