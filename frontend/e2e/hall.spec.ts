@@ -6,6 +6,8 @@
 import { test, expect } from './fixtures';
 import { getToken, createTestProject, deleteTestProject } from './helpers/api';
 
+const API_URL = 'http://localhost:18000';
+
 test.describe('大厅页面', () => {
   test('已登录用户看到大厅主体', async ({ authedPage: page }) => {
     await expect(page.locator('.hall')).toBeVisible();
@@ -39,7 +41,7 @@ test.describe('大厅页面', () => {
     await expect(modal).not.toBeVisible({ timeout: 3000 });
   });
 
-  test('新建项目 - 填写表单并提交', async ({ authedPage: page, request }) => {
+  test('新建项目 - 填写表单并提交后跳转概念孵化讨论', async ({ authedPage: page, request }) => {
     const token = await getToken(page);
     const projectName = `E2E项目_${Date.now()}`;
 
@@ -55,13 +57,21 @@ test.describe('大厅页面', () => {
     const submitBtn = modal.locator('button').filter({ hasText: /创建|确认|提交/ }).first();
     await submitBtn.click();
 
-    // 应跳转到项目详情页 /project/:id
-    await page.waitForURL(/\/project\//, { timeout: 10000 });
-    await expect(page.locator('.project-detail')).toBeVisible();
+    // 创建项目后应自动跳转到概念孵化讨论页 /discussion/:id
+    await page.waitForURL(/\/discussion\//, { timeout: 12000 });
+    const discussionId = page.url().split('/discussion/')[1].split('/')[0];
+    expect(discussionId).toBeTruthy();
 
-    // 清理：通过 API 删除项目
-    const projectId = page.url().split('/project/')[1].split('/')[0];
-    await deleteTestProject(request, token, projectId);
+    // 清理：获取项目 id 并删除
+    const discRes = await request.get(`${API_URL}/api/discussions/${discussionId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (discRes.ok()) {
+      const discData = await discRes.json();
+      if (discData.project_id) {
+        await deleteTestProject(request, token, discData.project_id);
+      }
+    }
   });
 
   test('新建讨论弹窗 - 打开后有主题输入框', async ({ authedPage: page }) => {
@@ -93,8 +103,8 @@ test.describe('大厅页面', () => {
     await expect(card).toBeVisible({ timeout: 8000 });
     await card.click();
 
-    await page.waitForURL(`/project/${projectId}`, { timeout: 10000 });
-    await expect(page.locator('.project-detail')).toBeVisible();
+    await page.waitForURL(/\/project\//, { timeout: 10000 });
+    await expect(page.locator('.project-detail')).toBeVisible({ timeout: 10000 });
 
     await deleteTestProject(request, token, projectId);
   });

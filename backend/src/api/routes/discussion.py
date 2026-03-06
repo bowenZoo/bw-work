@@ -62,6 +62,12 @@ class CreateDiscussionRequest(BaseModel):
     rounds: int = Field(default=10, ge=1, le=50, description="Number of discussion rounds")
     auto_pause_interval: int = Field(default=5, ge=0, le=50, description="Auto-pause every N rounds (0=disabled)")
     attachment: AttachmentInfo | None = Field(default=None, description="Optional markdown attachment")
+    project_id: str = Field(default="default", description="Project this discussion belongs to")
+    target_type: str | None = Field(default=None, description="Target type (e.g. 'stage')")
+    target_id: str | None = Field(default=None, description="Target ID (e.g. stage ID)")
+    agents: list[str] = Field(default_factory=list, description="Agent role names to participate")
+    briefing: str = Field(default="", description="Producer briefing / context for AI agents")
+    moderator_role: str = Field(default="", description="Moderator agent role (default: lead_planner)")
 
 
 class CreateDiscussionResponse(BaseModel):
@@ -95,6 +101,9 @@ class DiscussionState(BaseModel):
     password_hash: str = ""  # 空字符串表示无密码
     briefing: str = ""  # 制作人 briefing
     project_id: str = "default"  # 所属项目
+    target_type: str | None = None  # 关联类型（如 "stage"）
+    target_id: str | None = None  # 关联 ID（如 stage ID）
+    moderator_role: str = ""  # 主持 agent（留空=lead_planner）
 
 
 class GetDiscussionResponse(BaseModel):
@@ -116,6 +125,10 @@ class GetDiscussionResponse(BaseModel):
     has_password: bool = False  # 是否有密码保护
     briefing: str = ""  # 制作人 briefing
     project_id: str = "default"  # 所属项目
+    target_type: str | None = None  # 关联类型
+    target_id: str | None = None  # 关联 ID
+    moderator_role: str = ""  # 主持 agent
+    agents: list[str] = Field(default_factory=list, description="参与讨论的 agent 角色列表")
 
 
 class StartDiscussionResponse(BaseModel):
@@ -743,6 +756,7 @@ def _run_discussion_sync(discussion_id: str) -> None:
                 agent_roles=discussion.agents or None,
                 agent_configs=discussion.agent_configs or None,
                 project_id=discussion.project_id,
+                moderator_role=discussion.moderator_role or None,
             )
             _running_crews[discussion_id] = crew
             result = crew.run_document_centric(
@@ -1362,6 +1376,12 @@ async def create_discussion(
         status=DiscussionStatus.PENDING,
         created_at=now,
         attachment=request.attachment,
+        project_id=request.project_id,
+        target_type=request.target_type,
+        target_id=request.target_id,
+        agents=request.agents or [],
+        briefing=request.briefing or "",
+        moderator_role=request.moderator_role or "",
     )
     save_discussion_state(discussion)
 
@@ -1526,6 +1546,11 @@ async def get_discussion(discussion_id: str) -> GetDiscussionResponse:
         discussion_style=discussion.discussion_style,
         has_password=bool(discussion.password_hash),
         briefing=discussion.briefing,
+        project_id=discussion.project_id,
+        target_type=discussion.target_type,
+        target_id=discussion.target_id,
+        moderator_role=discussion.moderator_role or "",
+        agents=discussion.agents or [],
     )
 
 

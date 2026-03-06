@@ -18,6 +18,8 @@ from crewai import Crew, Process, Task
 from crewai.tasks.task_output import TaskOutput
 
 from src.agents import LeadPlanner, NumberDesigner, OperationsAnalyst, PlayerAdvocate, SystemDesigner, VisualConceptAgent
+from src.agents.creative_director import CreativeDirector
+from src.agents.market_director import MarketDirector
 import asyncio
 
 from src.agents.lead_planner import (
@@ -215,6 +217,13 @@ class DiscussionCrew:
         "number_designer": NumberDesigner,
         "player_advocate": PlayerAdvocate,
         "operations_analyst": OperationsAnalyst,
+        "market_director": MarketDirector,
+    }
+
+    # Agents that can serve as moderator (replace lead_planner)
+    MODERATOR_AGENTS: dict[str, type] = {
+        "lead_planner": LeadPlanner,
+        "creative_director": CreativeDirector,
     }
 
     _TOOL_CALL_RE = re.compile(
@@ -240,6 +249,7 @@ class DiscussionCrew:
         enable_visual_concept: bool = False,
         agent_roles: list[str] | None = None,
         agent_configs: dict | None = None,
+        moderator_role: str | None = None,
     ) -> None:
         """Initialize the discussion crew.
 
@@ -254,6 +264,8 @@ class DiscussionCrew:
             agent_roles: Optional list of agent role names to participate.
                         If None, all agents participate (backward compatible).
             agent_configs: Optional dict of role_name -> config overrides.
+            moderator_role: Optional role name to use as moderator instead of
+                           lead_planner (e.g. 'creative_director').
         """
         self._llm = llm
         self._callback = callback
@@ -262,17 +274,27 @@ class DiscussionCrew:
         self._data_dir = data_dir
         self._enable_visual_concept = enable_visual_concept
 
-        # Lead Planner always participates as moderator
-        lead_overrides = (agent_configs or {}).get("lead_planner")
-        self._lead_planner = LeadPlanner(llm=llm, config_overrides=lead_overrides)
+        # Determine moderator class
+        moderator_cls = self.MODERATOR_AGENTS.get(moderator_role or "lead_planner", LeadPlanner)
+        lead_overrides = (agent_configs or {}).get(moderator_role or "lead_planner") or (agent_configs or {}).get("lead_planner")
+        self._lead_planner = moderator_cls(llm=llm, config_overrides=lead_overrides)
+        self._moderator_role = moderator_role or "lead_planner"
 
         # Build discussion agents based on agent_roles selection
+        # Exclude the moderator role itself from discussion agents
         self._discussion_agents = []
         for role, cls in self.AVAILABLE_AGENTS.items():
             if agent_roles is None or role in agent_roles:
                 overrides = (agent_configs or {}).get(role)
                 agent = cls(llm=llm, config_overrides=overrides)
                 self._discussion_agents.append(agent)
+
+        # Also include lead_planner as discussion agent if using a different moderator
+        # and lead_planner is explicitly in agent_roles
+        if self._moderator_role != "lead_planner" and (agent_roles is None or "lead_planner" in (agent_roles or [])):
+            lp_overrides = (agent_configs or {}).get("lead_planner")
+            lp = LeadPlanner(llm=llm, config_overrides=lp_overrides)
+            self._discussion_agents.append(lp)
 
         # All agents including lead planner
         self._agents = [self._lead_planner] + self._discussion_agents

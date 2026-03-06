@@ -1,9 +1,11 @@
 """Agent definitions for the AI Game Design Team."""
 
 from src.agents.base import BaseAgent
+from src.agents.creative_director import CreativeDirector
 from src.agents.doc_organizer import DocOrganizer, OrganizeResult
 from src.agents.document_generator import DocumentGenerator, PlanningDocument
 from src.agents.lead_planner import LeadPlanner
+from src.agents.market_director import MarketDirector
 from src.agents.number_designer import NumberDesigner
 from src.agents.operations_analyst import OperationsAnalyst
 from src.agents.player_advocate import PlayerAdvocate
@@ -13,7 +15,9 @@ from src.agents.visual_concept import VisualConceptAgent, create_visual_concept_
 
 __all__ = [
     "BaseAgent",
+    "CreativeDirector",
     "LeadPlanner",
+    "MarketDirector",
     "SystemDesigner",
     "NumberDesigner",
     "OperationsAnalyst",

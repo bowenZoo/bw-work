@@ -65,6 +65,7 @@ class ProjectResponse(BaseModel):
     owner_id: Optional[int] = None
     is_public: bool = False
     discussion_count: int = 0
+    concept_discussion_id: Optional[str] = Field(None, description="Auto-created concept incubation discussion ID")
 
 
 class ProjectListResponse(BaseModel):
@@ -172,12 +173,55 @@ async def create_project(request: CreateProjectRequest, user: dict = Depends(get
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # Auto-create concept incubation discussion
+    concept_discussion_id: Optional[str] = None
+    try:
+        import uuid as _uuid
+        from datetime import datetime as _dt
+        from src.api.routes.discussion import DiscussionState, DiscussionStatus, save_discussion_state
+        concept_id = str(_uuid.uuid4())
+        now_iso = _dt.utcnow().isoformat()
+        # Find concept stage id (first stage with template_id='concept')
+        concept_stage_id: Optional[str] = None
+        _db2 = AdminDatabase()
+        db_pid = _db2.get_or_create_project_db_id(project.id, request.name, user["id"])
+        with _db2.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM project_stages WHERE project_id = ? AND template_id = 'concept' LIMIT 1",
+                (db_pid,)
+            )
+            row = cursor.fetchone()
+            if row:
+                concept_stage_id = str(row["id"])
+        briefing = f"项目名称：{request.name}"
+        if request.description:
+            briefing += f"\n项目描述：{request.description}"
+        disc = DiscussionState(
+            id=concept_id,
+            topic=f"{request.name} — 概念孵化",
+            rounds=50,
+            auto_pause_interval=1,
+            status=DiscussionStatus.PENDING,
+            created_at=now_iso,
+            project_id=project.id,
+            target_type="stage",
+            target_id=concept_stage_id,
+            agents=["creative_director", "lead_planner", "market_director"],
+            briefing=briefing,
+            moderator_role="creative_director",
+        )
+        save_discussion_state(disc)
+        concept_discussion_id = concept_id
+    except Exception as _exc:
+        logger.warning("Failed to auto-create concept discussion: %s", _exc)
+
     return ProjectResponse(
         id=project.id,
         name=project.name,
         description=project.description,
         created_at=project.created_at.isoformat(),
         updated_at=project.updated_at.isoformat(),
+        concept_discussion_id=concept_discussion_id,
     )
 
 
