@@ -341,7 +341,7 @@ img.chat-avatar {
 
 /* Collapsed message state */
 .chat-bubble.collapsed {
-  max-height: 120px;
+  max-height: 260px;
   overflow: hidden;
   position: relative;
 }
@@ -351,7 +351,7 @@ img.chat-avatar {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 48px;
+  height: 64px;
   background: linear-gradient(to bottom, transparent, var(--chat-card));
   pointer-events: none;
 }
@@ -403,6 +403,7 @@ img.chat-avatar {
 }
 
 
+.chat-group {
   animation: chat-fade-in 200ms ease-out;
 }
 

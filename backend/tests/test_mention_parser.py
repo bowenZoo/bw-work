@@ -266,6 +266,63 @@ class TestGetAllRoles:
         assert set(roles) == expected
 
 
+class TestParseMentionedRolesWithKnownRoles:
+    """Tests for parse_mentioned_roles with known_roles filtering."""
+
+    def test_dynamic_role_matched_by_direct_name(self):
+        """Dynamic role (not in ROLE_PATTERNS) is recognised when it appears by name."""
+        text = "创意总监，请从品牌角度给出你的建议。"
+        result = parse_mentioned_roles(text, known_roles=["创意总监", "市场总监"])
+        assert result == ["创意总监"]
+
+    def test_static_role_not_in_known_roles_is_filtered(self):
+        """Static ROLE_PATTERNS role is suppressed when not in known_roles."""
+        # 系统策划 alias '系统' appears but it's not in known_roles
+        text = "系统策划，请给出技术方案"
+        result = parse_mentioned_roles(text, known_roles=["创意总监", "市场总监"])
+        assert "系统策划" not in result
+
+    def test_static_role_in_known_roles_still_works(self):
+        """Static ROLE_PATTERNS role is matched normally when it IS in known_roles."""
+        text = "请系统策划评估一下实现难度"
+        result = parse_mentioned_roles(text, known_roles=["系统策划", "数值策划"])
+        assert "系统策划" in result
+
+    def test_static_alias_suppressed_when_role_not_in_known_roles(self):
+        """Alias match for a role that's not in known_roles is suppressed."""
+        # '系统' is an alias for 系统策划 but 系统策划 is not in known_roles
+        text = "我们需要一个系统来管理数据"
+        result = parse_mentioned_roles(text, known_roles=["创意总监"])
+        assert "系统策划" not in result
+
+    def test_multiple_dynamic_roles_in_text(self):
+        """Multiple dynamic roles mentioned by name are all returned."""
+        text = "创意总监和市场总监，请从各自角度分析一下市场定位。"
+        result = parse_mentioned_roles(text, known_roles=["创意总监", "市场总监"])
+        assert set(result) == {"创意总监", "市场总监"}
+
+    def test_no_known_roles_uses_original_broad_matching(self):
+        """Without known_roles, original broad alias matching applies."""
+        text = "系统方面有什么问题？"
+        result = parse_mentioned_roles(text, known_roles=None)
+        # '系统' alias matches 系统策划 in the original path
+        assert "系统策划" in result
+
+    def test_parse_next_speakers_fallback_also_filters(self):
+        """parse_next_speakers fallback (no speakers block) respects known_roles."""
+        # Text has no ```speakers block, but mentions 系统策划 by alias
+        text = "系统策划，请给出技术评估"
+        # 系统策划 NOT in known_roles → should be filtered out
+        result = parse_next_speakers(text, known_roles=["创意总监"])
+        assert "系统策划" not in result
+
+    def test_parse_next_speakers_fallback_returns_dynamic_role(self):
+        """parse_next_speakers fallback recognises dynamic roles by direct name."""
+        text = "市场总监，请分析一下竞品情况。"
+        result = parse_next_speakers(text, known_roles=["创意总监", "市场总监"])
+        assert "市场总监" in result
+
+
 class TestParseSpeakerBlockKnownRoles:
     """Tests for parse_speaker_block known_roles filtering feature."""
 

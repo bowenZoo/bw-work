@@ -67,7 +67,10 @@ ROLE_PATTERNS = [
 ]
 
 
-def parse_mentioned_roles(text: str) -> list[str]:
+def parse_mentioned_roles(
+    text: str,
+    known_roles: list[str] | None = None,
+) -> list[str]:
     """Parse text to identify mentioned roles.
 
     The function checks for:
@@ -75,8 +78,14 @@ def parse_mentioned_roles(text: str) -> list[str]:
     2. Role alias mentions
     3. Pattern-based mentions (e.g., "系统策划，你觉得...")
 
+    When known_roles is provided, only those roles (plus static roles that are
+    also in known_roles) will be returned. Dynamic roles are matched by direct
+    name occurrence in the text.
+
     Args:
         text: The text to parse (typically Lead Planner's output).
+        known_roles: Optional list of role display names present in the current
+            discussion. When provided, only these roles are eligible for return.
 
     Returns:
         List of mentioned role names. Returns empty list if no specific
@@ -84,23 +93,44 @@ def parse_mentioned_roles(text: str) -> list[str]:
     """
     mentioned: set[str] = set()
 
-    for pattern in ROLE_PATTERNS:
-        # Check direct name
-        if pattern.role in text:
-            mentioned.add(pattern.role)
-            continue
-
-        # Check aliases
-        for alias in pattern.aliases:
-            if alias in text:
-                mentioned.add(pattern.role)
-                break
-        else:
-            # Check regex patterns only if no alias matched
-            for regex in pattern.patterns:
-                if re.search(regex, text):
+    if known_roles:
+        # Dynamic roles: accept any known_role whose name appears directly in text
+        for role in known_roles:
+            if role in text:
+                mentioned.add(role)
+        # Static alias patterns: only apply for roles that are in known_roles
+        for pattern in ROLE_PATTERNS:
+            if pattern.role not in known_roles:
+                continue
+            if pattern.role in mentioned:
+                continue
+            for alias in pattern.aliases:
+                if alias in text:
                     mentioned.add(pattern.role)
                     break
+            else:
+                for regex in pattern.patterns:
+                    if re.search(regex, text):
+                        mentioned.add(pattern.role)
+                        break
+    else:
+        # Original broad matching (no known_roles filter)
+        for pattern in ROLE_PATTERNS:
+            # Check direct name
+            if pattern.role in text:
+                mentioned.add(pattern.role)
+                continue
+            # Check aliases
+            for alias in pattern.aliases:
+                if alias in text:
+                    mentioned.add(pattern.role)
+                    break
+            else:
+                # Check regex patterns only if no alias matched
+                for regex in pattern.patterns:
+                    if re.search(regex, text):
+                        mentioned.add(pattern.role)
+                        break
 
     return list(mentioned)
 
@@ -186,8 +216,8 @@ def parse_next_speakers(
     if speakers is not None:
         return speakers
 
-    # Fallback to mention-based parsing
-    return parse_mentioned_roles(text)
+    # Fallback to mention-based parsing (also filtered by known_roles)
+    return parse_mentioned_roles(text, known_roles=known_roles)
 
 
 def get_all_roles() -> list[str]:
