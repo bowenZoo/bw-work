@@ -779,12 +779,18 @@ onUnmounted(() => {
 
 
     <!-- Producer turn banner (waiting for producer to speak) -->
-    <div v-if="isProducerTurn && isRunning" class="auto-pause-banner producer-turn-banner">
-      <div class="auto-pause-content">
-        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color:#16a34a">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-        </svg>
-        <span class="auto-pause-text" style="color:#15803d">{{ autoPauseMessage || '轮到您发言了，请在下方输入您的想法' }}</span>
+    <div v-if="isProducerTurn && isRunning" class="producer-turn-banner">
+      <div class="producer-turn-inner">
+        <div class="producer-turn-icon-wrap">
+          <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+        </div>
+        <div class="producer-turn-text-wrap">
+          <strong class="producer-turn-label">轮到您发言</strong>
+          <span class="producer-turn-hint">{{ autoPauseMessage || 'AI 团队在等待您的想法，请在下方输入框中发言' }}</span>
+        </div>
+        <div class="producer-turn-pulse" />
       </div>
     </div>
 
@@ -1298,10 +1304,77 @@ onUnmounted(() => {
   background: #6D28D9;
 }
 
-/* Producer turn banner — green highlight */
+/* Producer turn banner — prominent green call-to-action */
 .producer-turn-banner {
-  background: #F0FDF4;
-  border-bottom: 1px solid #86EFAC;
+  position: relative;
+  background: linear-gradient(135deg, #dcfce7 0%, #d1fae5 100%);
+  border-bottom: 2px solid #16a34a;
+  padding: 14px 20px;
+  overflow: hidden;
+  animation: producer-banner-appear 0.3s ease-out;
+}
+
+@keyframes producer-banner-appear {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.producer-turn-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.producer-turn-icon-wrap {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #16a34a;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  animation: producer-icon-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes producer-icon-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0.5); }
+  50%       { box-shadow: 0 0 0 8px rgba(22,163,74,0); }
+}
+
+.producer-turn-text-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.producer-turn-label {
+  font-size: 15px;
+  font-weight: 700;
+  color: #14532d;
+  letter-spacing: 0.01em;
+}
+
+.producer-turn-hint {
+  font-size: 13px;
+  color: #166534;
+  opacity: 0.85;
+}
+
+.producer-turn-pulse {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(22,163,74,0.06) 50%, transparent 100%);
+  animation: producer-shimmer 2.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes producer-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 /* Main content - Two Column Layout */

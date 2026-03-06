@@ -105,13 +105,21 @@ def parse_mentioned_roles(text: str) -> list[str]:
     return list(mentioned)
 
 
-def parse_speaker_block(text: str) -> list[str] | None:
+def parse_speaker_block(
+    text: str,
+    known_roles: list[str] | None = None,
+) -> list[str] | None:
     """Parse explicit speaker assignment block from Lead Planner output.
 
     Looks for a ```speakers block that lists which roles should speak next.
 
     Args:
         text: The Lead Planner's output text.
+        known_roles: Optional list of role display names actually present in the
+            current discussion. When provided, only these roles (plus 制作人) are
+            accepted — any name not in known_roles and not resolvable via the
+            static alias map is discarded. This prevents the LLM from naming
+            agents that do not exist in the current discussion.
 
     Returns:
         List of role names if block found and valid, None otherwise.
@@ -124,7 +132,7 @@ def parse_speaker_block(text: str) -> list[str] | None:
     # Split by comma, Chinese comma, or newline
     candidates = re.split(r"[,，\n]", raw)
 
-    # Build alias → role mapping
+    # Build alias → role mapping from static patterns
     alias_map: dict[str, str] = {}
     for p in ROLE_PATTERNS:
         alias_map[p.role] = p.role
@@ -133,32 +141,48 @@ def parse_speaker_block(text: str) -> list[str] | None:
     # Producer is a special pass-through role (human turn)
     alias_map[PRODUCER_ROLE] = PRODUCER_ROLE
 
+    # Also register every known_role directly so dynamic roles are recognised
+    if known_roles:
+        for role in known_roles:
+            alias_map[role] = role
+
     result: list[str] = []
     for candidate in candidates:
         candidate = candidate.strip()
         if not candidate:
             continue
-        if candidate in alias_map:
-            role = alias_map[candidate]
-            if role not in result:
-                result.append(role)
+        role = alias_map.get(candidate)
+        if role is None:
+            continue
+        # When known_roles is supplied, drop static-alias roles that are not
+        # actually participating in this discussion (except 制作人).
+        if known_roles and role != PRODUCER_ROLE and role not in known_roles:
+            continue
+        if role not in result:
+            result.append(role)
 
     return result if result else None
 
 
-def parse_next_speakers(text: str) -> list[str]:
+def parse_next_speakers(
+    text: str,
+    known_roles: list[str] | None = None,
+) -> list[str]:
     """Parse who should speak next from Lead Planner's output.
 
     Tries structured ```speakers block first, falls back to mention-based parsing.
 
     Args:
         text: The Lead Planner's output text.
+        known_roles: Optional list of role display names present in the
+            current discussion. Passed through to sub-parsers to limit results
+            to roles that actually exist in the discussion.
 
     Returns:
         List of role names that should respond. Empty list means all respond.
     """
     # Try structured block first
-    speakers = parse_speaker_block(text)
+    speakers = parse_speaker_block(text, known_roles=known_roles)
     if speakers is not None:
         return speakers
 

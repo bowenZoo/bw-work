@@ -130,6 +130,11 @@
   color: var(--chat-muted);
 }
 
+.chat-avatar.lead_planner {
+  background: rgba(99, 102, 241, 0.15);
+  color: #6366f1;
+}
+
 .chat-avatar.system_designer {
   background: rgba(59, 130, 246, 0.15);
   color: #3b82f6;
@@ -148,6 +153,21 @@
 .chat-avatar.operations_analyst {
   background: rgba(139, 92, 246, 0.15);
   color: #8b5cf6;
+}
+
+.chat-avatar.visual_concept {
+  background: rgba(236, 72, 153, 0.15);
+  color: #ec4899;
+}
+
+.chat-avatar.creative_director {
+  background: rgba(6, 182, 212, 0.15);
+  color: #06b6d4;
+}
+
+.chat-avatar.market_director {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
 }
 
 .chat-avatar.other {
@@ -213,6 +233,11 @@ img.chat-avatar {
 }
 
 /* Role-specific bubble colors */
+.chat-group.lead_planner .chat-bubble {
+  background: rgba(99, 102, 241, 0.06);
+  border-color: rgba(99, 102, 241, 0.18);
+}
+
 .chat-group.system_designer .chat-bubble {
   background: rgba(59, 130, 246, 0.08);
   border-color: rgba(59, 130, 246, 0.2);
@@ -231,6 +256,21 @@ img.chat-avatar {
 .chat-group.operations_analyst .chat-bubble {
   background: rgba(139, 92, 246, 0.08);
   border-color: rgba(139, 92, 246, 0.2);
+}
+
+.chat-group.visual_concept .chat-bubble {
+  background: rgba(236, 72, 153, 0.07);
+  border-color: rgba(236, 72, 153, 0.2);
+}
+
+.chat-group.creative_director .chat-bubble {
+  background: rgba(6, 182, 212, 0.07);
+  border-color: rgba(6, 182, 212, 0.2);
+}
+
+.chat-group.market_director .chat-bubble {
+  background: rgba(245, 158, 11, 0.07);
+  border-color: rgba(245, 158, 11, 0.2);
 }
 
 /* Copy button */
@@ -299,8 +339,70 @@ img.chat-avatar {
   }
 }
 
-/* Fade-in animation for new messages */
-.chat-bubble.fade-in {
+/* Collapsed message state */
+.chat-bubble.collapsed {
+  max-height: 120px;
+  overflow: hidden;
+  position: relative;
+}
+
+.chat-collapse-fade {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  background: linear-gradient(to bottom, transparent, var(--chat-card));
+  pointer-events: none;
+}
+
+.chat-group.system_designer .chat-bubble.collapsed .chat-collapse-fade {
+  background: linear-gradient(to bottom, transparent, rgba(239,246,255,0.98));
+}
+.chat-group.number_designer .chat-bubble.collapsed .chat-collapse-fade {
+  background: linear-gradient(to bottom, transparent, rgba(240,253,244,0.98));
+}
+.chat-group.player_advocate .chat-bubble.collapsed .chat-collapse-fade {
+  background: linear-gradient(to bottom, transparent, rgba(255,247,237,0.98));
+}
+.chat-group.operations_analyst .chat-bubble.collapsed .chat-collapse-fade {
+  background: linear-gradient(to bottom, transparent, rgba(245,243,255,0.98));
+}
+.chat-group.visual_concept .chat-bubble.collapsed .chat-collapse-fade {
+  background: linear-gradient(to bottom, transparent, rgba(253,242,248,0.98));
+}
+.chat-group.creative_director .chat-bubble.collapsed .chat-collapse-fade {
+  background: linear-gradient(to bottom, transparent, rgba(236,254,255,0.98));
+}
+.chat-group.market_director .chat-bubble.collapsed .chat-collapse-fade {
+  background: linear-gradient(to bottom, transparent, rgba(255,251,235,0.98));
+}
+.chat-group.lead_planner .chat-bubble.collapsed .chat-collapse-fade {
+  background: linear-gradient(to bottom, transparent, rgba(238,242,255,0.98));
+}
+
+.chat-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--chat-muted);
+  background: transparent;
+  border: 1px solid var(--chat-border);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.chat-collapse-btn:hover {
+  background: var(--chat-bg-hover);
+  color: var(--chat-muted-strong);
+}
+
+
   animation: chat-fade-in 200ms ease-out;
 }
 

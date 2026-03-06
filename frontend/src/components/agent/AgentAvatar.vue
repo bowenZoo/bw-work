@@ -34,6 +34,8 @@ const iconSizeClasses = computed(() => {
 // Background color based on role
 const bgColorClass = computed(() => {
   switch (props.agent.role) {
+    case 'lead_planner':
+      return 'bg-indigo-500';
     case 'system_designer':
       return 'bg-blue-500';
     case 'number_designer':
@@ -42,6 +44,12 @@ const bgColorClass = computed(() => {
       return 'bg-orange-500';
     case 'operations_analyst':
       return 'bg-purple-500';
+    case 'visual_concept':
+      return 'bg-pink-500';
+    case 'creative_director':
+      return 'bg-cyan-500';
+    case 'market_director':
+      return 'bg-amber-500';
     default:
       return 'bg-gray-500';
   }

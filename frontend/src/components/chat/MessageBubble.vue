@@ -13,6 +13,12 @@ const props = defineProps<{
 const agentsStore = useAgentsStore();
 const copied = ref(false);
 
+// Collapse state: messages longer than threshold start collapsed
+const COLLAPSE_THRESHOLD = 600; // characters
+const isCollapsed = ref(
+  !props.isStreaming && (props.message.content?.length ?? 0) > COLLAPSE_THRESHOLD
+);
+
 const normalizedRole = computed(() => normalizeAgentRole(props.message.agentRole));
 
 // Get agent info based on role
@@ -31,6 +37,11 @@ const displayName = computed(() => {
   if (isProducer.value) return '制作人';
   return agent.value?.name ?? props.message.agentRole ?? 'Unknown';
 });
+
+// Only collapse if message is long enough and not currently streaming
+const canCollapse = computed(
+  () => !props.isStreaming && (props.message.content?.length ?? 0) > COLLAPSE_THRESHOLD
+);
 
 // Format timestamp
 const formattedTime = computed(() => {
@@ -92,7 +103,7 @@ async function copyMessage() {
           'chat-bubble',
           'has-copy',
           'fade-in',
-          { streaming: isStreaming },
+          { streaming: isStreaming, collapsed: canCollapse && isCollapsed },
         ]"
       >
         <!-- Copy button -->
@@ -134,7 +145,26 @@ async function copyMessage() {
 
         <!-- Content with markdown -->
         <div class="chat-text" v-html="htmlContent" />
+
+        <!-- Collapse fade overlay -->
+        <div v-if="canCollapse && isCollapsed" class="chat-collapse-fade" />
       </div>
+
+      <!-- Expand/collapse toggle -->
+      <button
+        v-if="canCollapse"
+        class="chat-collapse-btn"
+        @click="isCollapsed = !isCollapsed"
+      >
+        <svg
+          width="12" height="12" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+          :style="{ transform: isCollapsed ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.2s' }"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+        {{ isCollapsed ? '展开全文' : '收起' }}
+      </button>
 
       <!-- Footer -->
       <div class="chat-group-footer">

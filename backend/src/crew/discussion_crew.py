@@ -2294,7 +2294,7 @@ class DiscussionCrew:
 
                     # Determine who speaks this round
                     source_text = opening if round_num == 1 else (last_summary or opening)
-                    next_speakers = parse_next_speakers(source_text)
+                    next_speakers = parse_next_speakers(source_text, known_roles=[a.role for a in self._discussion_agents])
 
                     # Pause if the speakers block requests producer turn
                     if PRODUCER_ROLE in (next_speakers or []):
@@ -2565,7 +2565,7 @@ class DiscussionCrew:
                     else:
                         source_text = opening[-2000:] if opening else topic
 
-                    next_speakers = parse_next_speakers(source_text)
+                    next_speakers = parse_next_speakers(source_text, known_roles=[a.role for a in self._discussion_agents])
 
                     # Pause if the speakers block requests producer turn
                     if PRODUCER_ROLE in (next_speakers or []):
@@ -2797,7 +2797,7 @@ class DiscussionCrew:
                     self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
                     # Determine speakers
-                    next_speakers = parse_next_speakers(opening)
+                    next_speakers = parse_next_speakers(opening, known_roles=[a.role for a in self._discussion_agents])
                     agents_to_call = (
                         [a for a in self._discussion_agents if a.role in next_speakers]
                         if next_speakers else list(self._discussion_agents)
@@ -5137,7 +5137,7 @@ class DiscussionCrew:
                     self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
                     # Determine speakers
-                    next_speakers = parse_next_speakers(opening)
+                    next_speakers = parse_next_speakers(opening, known_roles=[a.role for a in self._discussion_agents])
 
                     # Pause if the speakers block requests producer turn
                     if PRODUCER_ROLE in (next_speakers or []):
@@ -5462,7 +5462,7 @@ class DiscussionCrew:
                                 self._record_message(self._lead_planner.role, opening)
                                 self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
-                                next_speakers = parse_next_speakers(opening)
+                                next_speakers = parse_next_speakers(opening, known_roles=[a.role for a in self._discussion_agents])
 
                                 # Pause if the speakers block requests producer turn
                                 if PRODUCER_ROLE in (next_speakers or []):
