@@ -97,13 +97,21 @@ async function fetchCurrentModel() {
   } catch {}
 }
 
-async function switchModel(profileId: string) {
-  if (switchingModel.value || profileId === currentModel.value.profile_id) return
+// Hardcoded quick-switch model list (ordered cheapest → most capable)
+const QUICK_MODELS = [
+  { id: 'claude-haiku-4-5', label: '最省', desc: 'Haiku 4.5' },
+  { id: 'claude-sonnet-4-6', label: '均衡', desc: 'Sonnet 4.6' },
+  { id: 'claude-opus-4-6', label: '最强', desc: 'Opus 4.6' },
+]
+
+async function switchModel(modelId: string) {
+  if (switchingModel.value || modelId === currentModel.value.model) return
   switchingModel.value = true
   try {
-    const res = await fetch(`/api/admin/config/llm/profiles/${profileId}/activate`, {
+    const res = await fetch('/api/config/model/set', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+      headers: { Authorization: `Bearer ${userStore.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelId }),
     })
     if (res.ok) {
       await fetchCurrentModel()
@@ -733,19 +741,19 @@ onUnmounted(() => {
             {{ currentModel.model }}
           </span>
           <Transition name="dropdown">
-            <div v-if="showModelMenu && currentModel.profiles.length > 1 && userStore.isAdmin" class="model-dropdown">
+            <div v-if="showModelMenu" class="model-dropdown">
               <div class="model-dropdown-title">切换模型</div>
               <button
-                v-for="p in currentModel.profiles"
-                :key="p.id"
+                v-for="m in QUICK_MODELS"
+                :key="m.id"
                 class="model-dropdown-item"
-                :class="{ active: p.is_active }"
+                :class="{ active: currentModel.model === m.id }"
                 :disabled="switchingModel"
-                @click.stop="switchModel(p.id)"
+                @click.stop="switchModel(m.id)"
               >
-                <span class="model-item-name">{{ p.name }}</span>
-                <span class="model-item-model">{{ p.model }}</span>
-                <svg v-if="p.is_active" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                <span class="model-item-name">{{ m.desc }}</span>
+                <span class="model-item-label">{{ m.label }}</span>
+                <svg v-if="currentModel.model === m.id" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
               </button>
             </div>
           </Transition>
@@ -2103,7 +2111,7 @@ onUnmounted(() => {
 .model-dropdown-item.active { background: #eff6ff; color: #2563eb; }
 .model-dropdown-item:disabled { opacity: 0.5; cursor: not-allowed; }
 .model-item-name { font-weight: 500; flex: 1; }
-.model-item-model { font-size: 10px; color: var(--text-weak, #9ca3af); max-width: 80px; overflow: hidden; text-overflow: ellipsis; }
+.model-item-label { font-size: 10px; color: var(--text-weak, #9ca3af); background: #f3f4f6; border-radius: 3px; padding: 1px 4px; }
 .dropdown-enter-active, .dropdown-leave-active { transition: opacity 0.15s, transform 0.15s; }
 .dropdown-enter-from, .dropdown-leave-to { opacity: 0; transform: translateY(-4px); }
 </style>

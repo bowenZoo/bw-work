@@ -160,6 +160,68 @@ async def get_current_model() -> dict:
     }
 
 
+# Allowed models for quick-switch (prevents arbitrary model injection)
+_ALLOWED_QUICK_MODELS = {
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
+    "claude-sonnet-4-5",
+    "claude-opus-4-5",
+}
+
+
+@app.post("/api/config/model/set")
+async def set_current_model(request: Request) -> dict:
+    """Authenticated endpoint: switch the active profile's model.
+
+    Body: {"model": "<model-id>"}
+    Only models in the allowed list are accepted.
+    """
+    from src.api.routes.auth import get_current_user
+    from src.admin.config_store import ConfigStore
+    from fastapi import HTTPException
+
+    # Require authentication
+    try:
+        from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        token = auth_header.split(" ", 1)[1]
+        from src.admin.auth import verify_access_token
+        payload = verify_access_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    if model not in _ALLOWED_QUICK_MODELS:
+        raise HTTPException(status_code=400, detail=f"Model '{model}' is not in the allowed list")
+
+    store = ConfigStore()
+    active = store.get_active_llm_config()
+    if not active:
+        raise HTTPException(status_code=404, detail="No active LLM profile found")
+
+    profile_id = active.get("id") or active.get("profile_id")
+    # Update only the model field; keep name, base_url, api_key intact
+    store.save_llm_profile(
+        profile_id=profile_id,
+        name=active.get("name", profile_id),
+        base_url=active.get("base_url", ""),
+        model=model,
+        api_key=None,  # None = don't update the key
+    )
+    reload_config("llm")
+
+    return {"model": model, "profile_id": profile_id}
+
+
 # Include routers
 app.include_router(checkpoint_router)
 app.include_router(design_docs_router)
