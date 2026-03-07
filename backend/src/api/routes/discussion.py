@@ -119,6 +119,9 @@ class DiscussionState(BaseModel):
     parent_discussion_id: str | None = None  # 父讨论 ID（分支讨论）
     branch_direction: str = ""  # 分支方向说明
     synced_document_id: str | None = None  # 已同步到的文档 ID
+    decisions: list[dict] = Field(default_factory=list)  # 决策日志 [{text, round, timestamp}]
+    tags: list[str] = Field(default_factory=list)  # 自动打标签
+    agenda_progress: list[dict] = Field(default_factory=list)  # 议程进度 [{item, done}]
 
 
 class GetDiscussionResponse(BaseModel):
@@ -154,6 +157,9 @@ class GetDiscussionResponse(BaseModel):
     parent_discussion_id: str | None = None  # 父讨论（分支）
     branch_direction: str = ""  # 分支方向
     synced_document_id: str | None = None  # 已同步到的文档 ID
+    decisions: list[dict] = Field(default_factory=list)  # 决策日志
+    tags: list[str] = Field(default_factory=list)  # 自动标签
+    agenda_progress: list[dict] = Field(default_factory=list)  # 议程进度
 
 
 class StartDiscussionResponse(BaseModel):
@@ -963,6 +969,13 @@ def _run_discussion_sync(discussion_id: str) -> None:
             except Exception as mem_err:
                 logger.warning("Cross-project memory update failed for %s: %s", discussion_id, mem_err)
 
+            # Extract decisions and auto-tag
+            try:
+                _extract_decisions(discussion_id, discussion)
+                _auto_tag_discussion(discussion_id, discussion)
+            except Exception as tag_err:
+                logger.warning("Decision/tag extraction failed for %s: %s", discussion_id, tag_err)
+
             # Auto-organize discussion into design documents
             try:
                 _auto_organize_docs(discussion_id)
@@ -1720,7 +1733,7 @@ async def verify_discussion_password(discussion_id: str, request: VerifyPassword
         raise HTTPException(status_code=403, detail="密码错误")
 
 
-# NOTE: /templates must be registered BEFORE /{discussion_id} to avoid route shadowing
+# NOTE: /templates, /search, /compare, /batch must be registered BEFORE /{discussion_id} to avoid route shadowing
 @router.get("/templates")
 async def get_discussion_templates_early(
     stage: str | None = None,
@@ -1731,6 +1744,60 @@ async def get_discussion_templates_early(
     if stage:
         templates = [t for t in templates if t.get("stage") == stage]
     return {"templates": templates}
+
+
+@router.get("/search")
+async def search_discussions_early(
+    q: str = "",
+    project_id: str = "",
+    limit: int = 20,
+    user=Depends(get_optional_user),
+):
+    """全文搜索讨论（提前注册，防止被 /{discussion_id} 遮盖）。"""
+    if not q.strip():
+        return {"results": [], "total": 0, "query": q}
+    q_lower = q.lower()
+    results = []
+    for disc_id, disc in list(_discussions.items()):
+        if project_id and disc.project_id != project_id:
+            continue
+        matched_topic = q_lower in disc.topic.lower()
+        matched_messages: list[dict] = []
+        try:
+            for msg in _discussion_memory.get_messages(disc_id):
+                content = getattr(msg, "content", "") or ""
+                if q_lower in content.lower():
+                    idx = content.lower().find(q_lower)
+                    start, end = max(0, idx - 40), min(len(content), idx + len(q) + 40)
+                    snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
+                    matched_messages.append({"agent_role": getattr(msg, "agent_role", ""), "snippet": snippet, "timestamp": getattr(msg, "timestamp", "")})
+                    if len(matched_messages) >= 3:
+                        break
+        except Exception:
+            pass
+        if matched_topic or matched_messages:
+            results.append({"discussion_id": disc_id, "topic": disc.topic, "project_id": disc.project_id, "status": disc.status, "created_at": disc.created_at, "tags": disc.tags, "matched_topic": matched_topic, "matched_messages": matched_messages, "match_count": len(matched_messages) + (1 if matched_topic else 0)})
+    results.sort(key=lambda x: x["match_count"], reverse=True)
+    return {"results": results[:limit], "total": len(results[:limit]), "query": q}
+
+
+@router.get("/compare")
+async def compare_discussions_early(
+    id_a: str,
+    id_b: str,
+    user=Depends(get_optional_user),
+):
+    """讨论对比（提前注册）。"""
+    disc_a = _discussions.get(id_a)
+    disc_b = _discussions.get(id_b)
+    if not disc_a or not disc_b:
+        raise HTTPException(status_code=404, detail="One or both discussions not found")
+
+    def _summary(disc: DiscussionState, disc_id: str) -> dict:
+        s = _summaries.get(disc_id)
+        return {"id": disc_id, "topic": disc.topic, "status": disc.status, "tags": disc.tags, "votes": disc.votes, "decisions": disc.decisions[:5], "quality_score": disc.quality_score, "parent_discussion_id": disc.parent_discussion_id, "branch_direction": disc.branch_direction, "summary": s.summary[:300] if s else None, "key_points": s.key_points[:5] if s else [], "agreements": s.agreements[:5] if s else []}
+
+    return {"discussion_a": _summary(disc_a, id_a), "discussion_b": _summary(disc_b, id_b), "shared_tags": list(set(disc_a.tags) & set(disc_b.tags))}
 
 
 @router.get("/{discussion_id}", response_model=GetDiscussionResponse)
@@ -1771,6 +1838,9 @@ async def get_discussion(discussion_id: str) -> GetDiscussionResponse:
         parent_discussion_id=discussion.parent_discussion_id,
         branch_direction=discussion.branch_direction,
         synced_document_id=discussion.synced_document_id,
+        decisions=discussion.decisions,
+        tags=discussion.tags,
+        agenda_progress=discussion.agenda_progress,
     )
 
 
@@ -3602,3 +3672,274 @@ async def project_kickstart_assistant(
     }
 
 
+# ============================================================================
+# 功能 2：Agent 发言统计
+# ============================================================================
+
+_POSITIVE_WORDS = {"同意", "支持", "好的", "赞成", "不错", "可以", "建议采用", "推荐", "认同"}
+_NEGATIVE_WORDS = {"反对", "不同意", "不可行", "有问题", "担忧", "风险", "不建议", "质疑"}
+
+
+@router.get("/{discussion_id}/stats")
+async def get_discussion_stats(
+    discussion_id: str,
+    user=Depends(get_optional_user),
+):
+    """获取讨论中各 Agent 的发言统计（消息数、字数、情感倾向）。"""
+    discussion = _discussions.get(discussion_id)
+    if not discussion:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    messages = _discussion_memory.get_messages(discussion_id)
+    stats: dict[str, dict] = {}
+    for msg in messages:
+        role = getattr(msg, "agent_role", "") or getattr(msg, "agent_id", "unknown")
+        content = getattr(msg, "content", "") or ""
+        if role not in stats:
+            stats[role] = {"messages": 0, "chars": 0, "positive": 0, "negative": 0}
+        stats[role]["messages"] += 1
+        stats[role]["chars"] += len(content)
+        for w in _POSITIVE_WORDS:
+            if w in content:
+                stats[role]["positive"] += 1
+        for w in _NEGATIVE_WORDS:
+            if w in content:
+                stats[role]["negative"] += 1
+
+    # 计算情感倾向 (1=正向, -1=负向, 0=中立)
+    result = []
+    for role, s in stats.items():
+        total = s["positive"] + s["negative"]
+        sentiment = 0.0
+        if total > 0:
+            sentiment = round((s["positive"] - s["negative"]) / total, 2)
+        result.append({
+            "role": role,
+            "messages": s["messages"],
+            "chars": s["chars"],
+            "sentiment": sentiment,
+            "positive_count": s["positive"],
+            "negative_count": s["negative"],
+        })
+    result.sort(key=lambda x: x["messages"], reverse=True)
+    return {"discussion_id": discussion_id, "stats": result, "total_messages": sum(s["messages"] for s in result)}
+
+
+# ============================================================================
+# 功能 6：批量操作
+# ============================================================================
+
+class BatchOperationRequest(BaseModel):
+    """批量操作请求。"""
+    discussion_ids: list[str] = Field(..., description="要操作的讨论 ID 列表")
+    action: str = Field(..., description="操作类型: archive | delete | tag")
+    tag: str = Field(default="", description="打标签时的标签名")
+
+
+@router.post("/batch")
+async def batch_operations(
+    request: BatchOperationRequest,
+    user=Depends(get_auth_user),
+):
+    """批量操作讨论（归档/删除/打标签）。"""
+    results = {"success": [], "failed": []}
+
+    for disc_id in request.discussion_ids:
+        disc = _discussions.get(disc_id)
+        if not disc:
+            results["failed"].append({"id": disc_id, "reason": "not found"})
+            continue
+
+        try:
+            if request.action == "delete":
+                _discussions.pop(disc_id, None)
+                # 删除持久化状态文件
+                state_file = _STATE_DIR / f"{disc_id}.json"
+                if state_file.exists():
+                    state_file.unlink()
+                results["success"].append(disc_id)
+
+            elif request.action == "archive":
+                disc.status = DiscussionStatus.STOPPED
+                save_discussion_state(disc)
+                results["success"].append(disc_id)
+
+            elif request.action == "tag":
+                tag = request.tag.strip()
+                if tag and tag not in disc.tags:
+                    disc.tags.append(tag)
+                    save_discussion_state(disc)
+                results["success"].append(disc_id)
+            else:
+                results["failed"].append({"id": disc_id, "reason": f"unknown action: {request.action}"})
+        except Exception as e:
+            results["failed"].append({"id": disc_id, "reason": str(e)})
+
+    return results
+
+
+# ============================================================================
+# 功能 7：决策日志
+# ============================================================================
+
+_DECISION_KEYWORDS = [
+    "决定", "确定", "最终", "采用", "方案确定", "结论", "定下", "选择",
+    "同意采用", "决议", "拍板", "确认", "方向确定",
+]
+
+
+def _extract_decisions(discussion_id: str, disc_state: DiscussionState) -> None:
+    """从讨论消息中提取决策类语句，写入 disc_state.decisions。"""
+    if disc_state.decisions:
+        return  # 已提取过
+
+    try:
+        messages = _discussion_memory.get_messages(discussion_id)
+        decisions = []
+        for i, msg in enumerate(messages):
+            content = getattr(msg, "content", "") or ""
+            for kw in _DECISION_KEYWORDS:
+                if kw in content:
+                    # 找到包含关键词的句子
+                    sentences = [s.strip() for s in content.replace("。", "。\n").replace("！", "！\n").split("\n") if s.strip()]
+                    for sent in sentences:
+                        if kw in sent and len(sent) > 10:
+                            decisions.append({
+                                "text": sent[:200],
+                                "agent_role": getattr(msg, "agent_role", ""),
+                                "timestamp": getattr(msg, "timestamp", ""),
+                                "message_index": i,
+                                "keyword": kw,
+                            })
+                    break  # 每条消息只取一次
+            if len(decisions) >= 20:
+                break
+
+        disc_state.decisions = decisions
+        save_discussion_state(disc_state)
+    except Exception as e:
+        logger.warning("Decision extraction failed for %s: %s", discussion_id, e)
+
+
+@router.get("/{discussion_id}/decisions")
+async def get_decisions(
+    discussion_id: str,
+    user=Depends(get_optional_user),
+):
+    """获取讨论中自动提取的决策日志。"""
+    disc = _discussions.get(discussion_id)
+    if not disc:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    # 若未提取过，实时提取
+    if not disc.decisions and disc.status in (DiscussionStatus.COMPLETED, DiscussionStatus.STOPPED):
+        _extract_decisions(discussion_id, disc)
+
+    return {"discussion_id": discussion_id, "decisions": disc.decisions}
+
+
+# ============================================================================
+# 功能 9：自动打标签
+# ============================================================================
+
+_TAG_RULES: list[tuple[str, list[str]]] = [
+    ("战斗系统", ["战斗", "技能", "战力", "pvp", "boss", "伤害", "属性"]),
+    ("经济系统", ["经济", "货币", "付费", "抽卡", "商城", "钻石", "金币"]),
+    ("数值设计", ["数值", "成长曲线", "等级", "属性成长", "平衡"]),
+    ("核心玩法", ["核心循环", "玩法", "机制", "操作", "关卡"]),
+    ("社交系统", ["社交", "公会", "联盟", "好友", "组队"]),
+    ("运营策略", ["活动", "运营", "留存", "日活", "召回", "赛季"]),
+    ("视觉风格", ["美术", "视觉", "ui", "ue", "风格", "原画"]),
+    ("世界观", ["世界观", "背景", "故事", "剧情", "ip"]),
+]
+
+
+def _auto_tag_discussion(discussion_id: str, disc_state: DiscussionState) -> None:
+    """基于启发式关键词对讨论自动打标签。"""
+    if disc_state.tags:
+        return  # 已打过标签
+
+    try:
+        messages = _discussion_memory.get_messages(discussion_id)
+        all_text = " ".join(
+            (getattr(m, "content", "") or "").lower() for m in messages
+        ) + " " + disc_state.topic.lower()
+
+        tag_counts: dict[str, int] = {}
+        for tag, keywords in _TAG_RULES:
+            cnt = sum(all_text.count(kw) for kw in keywords)
+            if cnt >= 2:
+                tag_counts[tag] = cnt
+
+        # 按出现频率排序，取前 3 个
+        sorted_tags = sorted(tag_counts, key=lambda t: tag_counts[t], reverse=True)[:3]
+        disc_state.tags = sorted_tags
+        save_discussion_state(disc_state)
+    except Exception as e:
+        logger.warning("Auto-tag failed for %s: %s", discussion_id, e)
+
+
+@router.get("/{discussion_id}/tags")
+async def get_tags(
+    discussion_id: str,
+    user=Depends(get_optional_user),
+):
+    """获取讨论的自动标签。"""
+    disc = _discussions.get(discussion_id)
+    if not disc:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    if not disc.tags and disc.status in (DiscussionStatus.COMPLETED, DiscussionStatus.STOPPED):
+        _auto_tag_discussion(discussion_id, disc)
+
+    return {"discussion_id": discussion_id, "tags": disc.tags}
+
+
+@router.patch("/{discussion_id}/tags")
+async def update_tags(
+    discussion_id: str,
+    tags: list[str],
+    user=Depends(get_auth_user),
+):
+    """手动更新讨论标签。"""
+    disc = _discussions.get(discussion_id)
+    if not disc:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    disc.tags = [t.strip() for t in tags if t.strip()][:8]
+    save_discussion_state(disc)
+    return {"discussion_id": discussion_id, "tags": disc.tags}
+
+
+# ============================================================================
+# 功能 5：讨论进度追踪（议程条目勾选）
+# ============================================================================
+
+class AgendaProgressRequest(BaseModel):
+    """更新议程进度请求。"""
+    item_index: int = Field(..., description="议程条目索引")
+    done: bool = Field(..., description="是否已讨论完成")
+
+
+@router.post("/{discussion_id}/agenda-check")
+async def update_agenda_check(
+    discussion_id: str,
+    request: AgendaProgressRequest,
+    user=Depends(get_auth_user),
+):
+    """勾选/取消议程条目为已讨论。"""
+    disc = _discussions.get(discussion_id)
+    if not disc:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    agenda = disc.agenda_items
+    if request.item_index < 0 or request.item_index >= len(agenda):
+        raise HTTPException(status_code=400, detail="Invalid item_index")
+
+    # 确保 agenda_progress 与 agenda_items 等长
+    if len(disc.agenda_progress) != len(agenda):
+        disc.agenda_progress = [{"item": item, "done": False} for item in agenda]
+
+    disc.agenda_progress[request.item_index]["done"] = request.done
+    save_discussion_state(disc)
+    return {"discussion_id": discussion_id, "agenda_progress": disc.agenda_progress}

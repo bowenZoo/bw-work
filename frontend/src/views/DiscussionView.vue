@@ -209,7 +209,7 @@ const {
 const isRunning = computed(() => discussion.value?.status === 'running' || discussion.value?.status === 'queued' || discussion.value?.status === 'waiting_decision');
 const isFinished = computed(() => discussion.value?.status === 'completed' || discussion.value?.status === 'stopped' || discussion.value?.status === 'failed');
 
-// 讨论完成后自动加载投票、数值校验、分支列表
+// 讨论完成后自动加载投票、数值校验、分支列表（保留基础加载）
 watch(isFinished, (finished) => {
   if (finished) {
     loadVotes()
@@ -903,6 +903,163 @@ function handleAgentClick(agentId: string) {
   agentFilter.value = agentFilter.value === agentId ? null : agentId;
 }
 
+// ============================================================================
+// 功能 1：讨论回放时间轴
+// ============================================================================
+const replayMode = ref(false)
+const replayIndex = ref(0)
+const replayMessages = computed(() => {
+  if (!replayMode.value) return displayMessages.value
+  return displayMessages.value.slice(0, replayIndex.value + 1)
+})
+function toggleReplay() {
+  replayMode.value = !replayMode.value
+  if (replayMode.value) replayIndex.value = Math.max(0, displayMessages.value.length - 1)
+}
+function seekReplay(idx: number) { replayIndex.value = idx }
+
+// ============================================================================
+// 功能 2：Agent 发言统计
+// ============================================================================
+const statsData = ref<any[]>([])
+const showStatsPanel = ref(false)
+async function loadStats() {
+  const id = discussionId.value; if (!id) return
+  try {
+    const res = await fetch(`/api/discussions/${id}/stats`, { headers: { Authorization: `Bearer ${userStore.accessToken}` } })
+    if (res.ok) { const d = await res.json(); statsData.value = d.stats || [] }
+  } catch {}
+}
+const maxChars = computed(() => Math.max(1, ...statsData.value.map(s => s.chars)))
+
+// ============================================================================
+// 功能 3：关键词高亮 & 决策标记
+// ============================================================================
+const markedDecisions = ref<Set<string>>(new Set())
+function toggleMarkDecision(msgId: string) {
+  const s = new Set(markedDecisions.value)
+  if (s.has(msgId)) s.delete(msgId); else s.add(msgId)
+  markedDecisions.value = s
+}
+
+// ============================================================================
+// 功能 4：全文搜索
+// ============================================================================
+const showSearchModal = ref(false)
+const searchQuery = ref('')
+const searchResults = ref<any[]>([])
+const searching = ref(false)
+async function doSearch() {
+  const q = searchQuery.value.trim(); if (!q) { searchResults.value = []; return }
+  searching.value = true
+  try {
+    const res = await fetch(`/api/discussions/search?q=${encodeURIComponent(q)}&project_id=${discussion.value?.project_id || ''}`, { headers: { Authorization: `Bearer ${userStore.accessToken}` } })
+    if (res.ok) { const d = await res.json(); searchResults.value = d.results || [] }
+  } finally { searching.value = false }
+}
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+function onSearchInput() {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(doSearch, 400)
+}
+function goToDiscussion(discId: string) { showSearchModal.value = false; router.push(`/discussion/${discId}`) }
+
+// ============================================================================
+// 功能 5：讨论进度追踪（议程勾选）
+// ============================================================================
+const agendaChecked = ref<boolean[]>([])
+watch(() => (discussion.value as any)?.agenda_items, (items: string[]) => {
+  if (items?.length && agendaChecked.value.length !== items.length) {
+    const progress: {done:boolean}[] = (discussion.value as any)?.agenda_progress || []
+    agendaChecked.value = items.map((_, i) => progress[i]?.done || false)
+  }
+}, { immediate: true })
+async function toggleAgendaCheck(idx: number) {
+  const id = discussionId.value; if (!id) return
+  const newVal = !agendaChecked.value[idx]
+  agendaChecked.value[idx] = newVal
+  try {
+    await fetch(`/api/discussions/${id}/agenda-check`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${userStore.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_index: idx, done: newVal }),
+    })
+  } catch {}
+}
+const agendaProgress = computed(() => {
+  const total = agendaChecked.value.length
+  if (!total) return 0
+  return Math.round(agendaChecked.value.filter(Boolean).length / total * 100)
+})
+
+// ============================================================================
+// 功能 7：决策日志
+// ============================================================================
+const decisionsData = ref<any[]>([])
+const showDecisionsPanel = ref(false)
+async function loadDecisions() {
+  const id = discussionId.value; if (!id) return
+  try {
+    const res = await fetch(`/api/discussions/${id}/decisions`, { headers: { Authorization: `Bearer ${userStore.accessToken}` } })
+    if (res.ok) { const d = await res.json(); decisionsData.value = d.decisions || [] }
+  } catch {}
+}
+
+// ============================================================================
+// 功能 8：讨论对比视图
+// ============================================================================
+const showCompareModal = ref(false)
+const compareTargetId = ref('')
+const compareResult = ref<any>(null)
+const comparing = ref(false)
+async function doCompare() {
+  const id = discussionId.value; if (!id || !compareTargetId.value.trim()) return
+  comparing.value = true
+  try {
+    const res = await fetch(`/api/discussions/compare?id_a=${id}&id_b=${compareTargetId.value.trim()}`, { headers: { Authorization: `Bearer ${userStore.accessToken}` } })
+    if (res.ok) compareResult.value = await res.json()
+    else alert('对比失败，请检查讨论 ID')
+  } finally { comparing.value = false }
+}
+
+// ============================================================================
+// 功能 9：自动打标签
+// ============================================================================
+const discussionTags = computed<string[]>(() => (discussion.value as any)?.tags || [])
+const tagEditMode = ref(false)
+const editingTags = ref<string[]>([])
+const newTagInput = ref('')
+function startTagEdit() { editingTags.value = [...discussionTags.value]; tagEditMode.value = true }
+function addTag() { const t = newTagInput.value.trim(); if (t && !editingTags.value.includes(t)) editingTags.value.push(t); newTagInput.value = '' }
+function removeTag(t: string) { editingTags.value = editingTags.value.filter(x => x !== t) }
+async function saveTags() {
+  const id = discussionId.value; if (!id) return
+  await fetch(`/api/discussions/${id}/tags`, { method: 'PATCH', headers: { Authorization: `Bearer ${userStore.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(editingTags.value) })
+  tagEditMode.value = false
+  await loadLiveDiscussion(id)
+}
+
+// ============================================================================
+// 功能 10：讨论完成通知（覆盖原有的 watch，增加更多完成后钩子）
+// ============================================================================
+watch(isFinished, (finished) => {
+  if (finished) {
+    loadStats(); loadDecisions()
+    // 浏览器通知
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('讨论已完成', {
+        body: `「${discussion.value?.topic || ''}」讨论结束，可查看结果。`,
+        icon: '/favicon.ico',
+      })
+    } else if ('Notification' in window && Notification.permission !== 'denied') {
+      Notification.requestPermission().then(perm => {
+        if (perm === 'granted')
+          new Notification('讨论已完成', { body: `「${discussion.value?.topic || ''}」讨论结束，可查看结果。` })
+      })
+    }
+  }
+}, { immediate: false })
+
 // Cleanup on unmount
 onUnmounted(() => {
   if (!isPlaybackMode.value) {
@@ -994,6 +1151,9 @@ onUnmounted(() => {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
           </svg>
           <span>{{ backLabel }}</span>
+        </button>
+        <button class="search-trigger-btn" @click="showSearchModal = true" title="全文搜索">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </button>
       </template>
     </Header>
@@ -1095,7 +1255,7 @@ onUnmounted(() => {
         <!-- Message Feed -->
         <ChatContainer
           v-else
-          :messages="filteredMessages"
+          :messages="replayMode ? replayMessages : filteredMessages"
           :checkpoints="checkpoints"
           :is-loading="isLoading"
           class="message-feed"
@@ -1363,11 +1523,14 @@ onUnmounted(() => {
       <div class="agenda-bar-header">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
         讨论议程
+        <span v-if="agendaProgress > 0" class="agenda-progress-text">{{ agendaProgress }}%</span>
+        <div v-if="agendaProgress > 0" class="agenda-progress-bar"><div class="agenda-progress-fill" :style="{width: agendaProgress + '%'}"></div></div>
         <button class="agenda-bar-close" @click="showAgendaBar = false">×</button>
       </div>
       <ol class="agenda-list">
-        <li v-for="(item, i) in agendaItems" :key="i" class="agenda-item">
-          <span class="agenda-num">{{ i + 1 }}</span>{{ item }}
+        <li v-for="(item, i) in agendaItems" :key="i" class="agenda-item" :class="{done: agendaChecked[i]}">
+          <input type="checkbox" class="agenda-checkbox" :checked="agendaChecked[i]" @change="toggleAgendaCheck(i)" />
+          <span class="agenda-num" :class="{done: agendaChecked[i]}">{{ i + 1 }}</span>{{ item }}
         </li>
       </ol>
     </div>
@@ -1437,10 +1600,186 @@ onUnmounted(() => {
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
         创建分支
       </button>
+      <button class="disc-action-btn" @click="showDecisionsPanel = !showDecisionsPanel">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></polyline></svg>
+        决策日志<span v-if="decisionsData.length" class="action-badge">{{ decisionsData.length }}</span>
+      </button>
+      <button class="disc-action-btn" @click="showStatsPanel = !showStatsPanel; if(showStatsPanel && !statsData.length) loadStats()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        发言统计
+      </button>
+      <button class="disc-action-btn" @click="showCompareModal = true">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="18"/><rect x="14" y="3" width="7" height="18"/></svg>
+        对比分支
+      </button>
+      <button class="disc-action-btn" @click="toggleReplay">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        {{ replayMode ? '退出回放' : '时间轴回放' }}
+      </button>
       <span v-if="branches.length" class="branch-count-tag">{{ branches.length }} 个分支</span>
     </div>
 
+    <!-- ===================================================================
+         功能 1：时间轴回放控制条
+    =================================================================== -->
+    <div v-if="replayMode && displayMessages.length" class="replay-bar">
+      <span class="replay-label">回放</span>
+      <input type="range" class="replay-slider" min="0" :max="displayMessages.length - 1" :value="replayIndex" @input="seekReplay(+($event.target as HTMLInputElement).value)" />
+      <span class="replay-pos">{{ replayIndex + 1 }} / {{ displayMessages.length }}</span>
+      <span class="replay-time">{{ displayMessages[replayIndex]?.timestamp?.slice(11,19) || '' }}</span>
+    </div>
+
+    <!-- ===================================================================
+         功能 2：Agent 发言统计面板
+    =================================================================== -->
+    <div v-if="showStatsPanel && statsData.length" class="stats-panel">
+      <div class="stats-header">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        Agent 发言统计
+        <button class="stats-close" @click="showStatsPanel = false">×</button>
+      </div>
+      <div class="stats-list">
+        <div v-for="s in statsData" :key="s.role" class="stats-row">
+          <span class="stats-role">{{ AGENT_LABELS[s.role] || s.role }}</span>
+          <div class="stats-bar-wrap">
+            <div class="stats-bar" :style="{width: (s.chars / maxChars * 100) + '%'}" :title="`${s.chars} 字`"></div>
+          </div>
+          <span class="stats-msgs">{{ s.messages }} 条</span>
+          <span class="stats-sentiment" :class="s.sentiment > 0 ? 'pos' : s.sentiment < 0 ? 'neg' : 'neu'">
+            {{ s.sentiment > 0.2 ? '积极' : s.sentiment < -0.2 ? '质疑' : '中性' }}
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================================
+         功能 7：决策日志面板
+    =================================================================== -->
+    <div v-if="showDecisionsPanel" class="decisions-panel">
+      <div class="decisions-header">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        决策日志
+        <button class="decisions-close" @click="showDecisionsPanel = false">×</button>
+      </div>
+      <div v-if="!decisionsData.length" class="decisions-empty">暂未识别到明确决策</div>
+      <div v-else class="decisions-list">
+        <div v-for="(d, i) in decisionsData" :key="i" class="decision-item">
+          <span class="decision-kw">{{ d.keyword }}</span>
+          <span class="decision-role">{{ AGENT_LABELS[d.agent_role] || d.agent_role }}</span>
+          <p class="decision-text">{{ d.text }}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================================
+         功能 9：标签栏
+    =================================================================== -->
+    <div v-if="isFinished && (discussionTags.length || tagEditMode)" class="tags-bar">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+      <template v-if="!tagEditMode">
+        <span v-for="tag in discussionTags" :key="tag" class="tag-chip">{{ tag }}</span>
+        <button class="tag-edit-btn" @click="startTagEdit">编辑标签</button>
+      </template>
+      <template v-else>
+        <span v-for="tag in editingTags" :key="tag" class="tag-chip tag-chip-rm" @click="removeTag(tag)">{{ tag }} ×</span>
+        <input v-model="newTagInput" placeholder="新标签" class="tag-new-input" @keydown.enter="addTag" />
+        <button class="tag-save-btn" @click="saveTags">保存</button>
+        <button class="tag-cancel-btn" @click="tagEditMode = false">取消</button>
+      </template>
+    </div>
+
+    <!-- ===================================================================
+         功能 4：全文搜索弹窗
+    =================================================================== -->
+    <Transition name="fade">
+      <div v-if="showSearchModal" class="dialog-overlay" @click.self="showSearchModal = false">
+        <div class="dialog dialog-search">
+          <h3 class="dialog-title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            全文搜索讨论
+          </h3>
+          <input v-model="searchQuery" placeholder="输入关键词搜索..." class="dialog-input search-input" @input="onSearchInput" autofocus />
+          <div v-if="searching" class="search-loading">搜索中...</div>
+          <div v-else-if="searchResults.length" class="search-results">
+            <div v-for="r in searchResults" :key="r.discussion_id" class="search-result-item" @click="goToDiscussion(r.discussion_id)">
+              <div class="sr-title">{{ r.topic }}</div>
+              <div class="sr-meta">
+                <span class="sr-status">{{ r.status }}</span>
+                <span v-for="t in r.tags" :key="t" class="sr-tag">{{ t }}</span>
+              </div>
+              <div v-for="m in r.matched_messages" :key="m.timestamp" class="sr-snippet">
+                <span class="sr-role">{{ AGENT_LABELS[m.agent_role] || m.agent_role }}</span>：{{ m.snippet }}
+              </div>
+            </div>
+          </div>
+          <div v-else-if="searchQuery" class="search-empty">未找到相关讨论</div>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" @click="showSearchModal = false">关闭</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ===================================================================
+         功能 8：讨论对比弹窗
+    =================================================================== -->
+    <Transition name="fade">
+      <div v-if="showCompareModal" class="dialog-overlay" @click.self="showCompareModal = false; compareResult = null">
+        <div class="dialog dialog-compare">
+          <h3 class="dialog-title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="18"/><rect x="14" y="3" width="7" height="18"/></svg>
+            讨论对比
+          </h3>
+          <div v-if="!compareResult">
+            <p class="branch-hint">输入另一个讨论 ID 进行结论对比（通常用于分支讨论比较）。</p>
+            <input v-model="compareTargetId" placeholder="对比讨论 ID..." class="dialog-input" />
+            <div class="dialog-actions">
+              <button class="btn btn-secondary" @click="showCompareModal = false">取消</button>
+              <button class="btn btn-primary" @click="doCompare" :disabled="!compareTargetId.trim() || comparing">
+                {{ comparing ? '对比中...' : '开始对比' }}
+              </button>
+            </div>
+          </div>
+          <div v-else class="compare-result">
+            <div class="compare-cols">
+              <div class="compare-col">
+                <div class="compare-col-title">当前讨论</div>
+                <div class="compare-topic">{{ compareResult.discussion_a?.topic }}</div>
+                <div v-if="compareResult.discussion_a?.tags?.length" class="compare-tags">
+                  <span v-for="t in compareResult.discussion_a.tags" :key="t" class="tag-chip">{{ t }}</span>
+                </div>
+                <div v-if="compareResult.discussion_a?.summary" class="compare-summary">{{ compareResult.discussion_a.summary }}</div>
+                <div class="compare-points">
+                  <div v-for="p in compareResult.discussion_a?.key_points || []" :key="p" class="compare-point">• {{ p }}</div>
+                </div>
+              </div>
+              <div class="compare-divider"></div>
+              <div class="compare-col">
+                <div class="compare-col-title">对比讨论</div>
+                <div class="compare-topic">{{ compareResult.discussion_b?.topic }}</div>
+                <div v-if="compareResult.discussion_b?.tags?.length" class="compare-tags">
+                  <span v-for="t in compareResult.discussion_b.tags" :key="t" class="tag-chip">{{ t }}</span>
+                </div>
+                <div v-if="compareResult.discussion_b?.summary" class="compare-summary">{{ compareResult.discussion_b.summary }}</div>
+                <div class="compare-points">
+                  <div v-for="p in compareResult.discussion_b?.key_points || []" :key="p" class="compare-point">• {{ p }}</div>
+                </div>
+              </div>
+            </div>
+            <div v-if="compareResult.shared_tags?.length" class="compare-shared">
+              共同标签：<span v-for="t in compareResult.shared_tags" :key="t" class="tag-chip">{{ t }}</span>
+            </div>
+            <div class="dialog-actions">
+              <button class="btn btn-secondary" @click="compareResult = null; compareTargetId = ''">重新对比</button>
+              <button class="btn btn-secondary" @click="showCompareModal = false; compareResult = null">关闭</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
     <!-- 分支创建弹窗 -->
+
     <Transition name="fade">
       <div v-if="showBranchPanel" class="dialog-overlay" @click.self="showBranchPanel = false">
         <div class="dialog dialog-branch">
@@ -2881,5 +3220,89 @@ onUnmounted(() => {
 .sync-note { font-size: 12.5px; color: #6b7280; background: #f9fafb; padding: 8px; border-radius: 6px; }
 .sync-content-preview { background: #f1f5f9; border-radius: 6px; padding: 10px; max-height: 160px; overflow-y: auto; }
 .sync-content-preview pre { font-size: 11.5px; color: #374151; white-space: pre-wrap; margin: 0; font-family: monospace; }
-</style>
+
+/* ---- 功能 1：时间轴回放 ---- */
+.replay-bar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: #1e293b; color: #e2e8f0; flex-shrink: 0; }
+.replay-label { font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+.replay-slider { flex: 1; accent-color: #6366f1; cursor: pointer; }
+.replay-pos { font-size: 11px; color: #94a3b8; white-space: nowrap; }
+.replay-time { font-size: 11px; color: #6366f1; font-variant-numeric: tabular-nums; min-width: 54px; }
+
+/* ---- 功能 2：发言统计面板 ---- */
+.stats-panel { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin: 0 16px 8px; overflow: hidden; }
+.stats-header { display: flex; align-items: center; gap: 6px; padding: 10px 14px; font-size: 12px; font-weight: 600; color: #374151; }
+.stats-close { margin-left: auto; background: none; border: none; cursor: pointer; color: #9ca3af; font-size: 16px; line-height: 1; }
+.stats-list { padding: 8px 14px; display: flex; flex-direction: column; gap: 6px; }
+.stats-row { display: grid; grid-template-columns: 80px 1fr 50px 48px; align-items: center; gap: 8px; }
+.stats-role { font-size: 11.5px; color: #64748b; font-weight: 500; }
+.stats-bar-wrap { background: #e2e8f0; border-radius: 4px; height: 10px; overflow: hidden; }
+.stats-bar { height: 100%; background: linear-gradient(90deg, #6366f1, #8b5cf6); border-radius: 4px; transition: width 0.4s; min-width: 2px; }
+.stats-msgs { font-size: 11px; color: #94a3b8; text-align: right; }
+.stats-sentiment { font-size: 11px; font-weight: 600; text-align: right; }
+.stats-sentiment.pos { color: #16a34a; }
+.stats-sentiment.neg { color: #dc2626; }
+.stats-sentiment.neu { color: #9ca3af; }
+
+/* ---- 功能 4：全文搜索 ---- */
+.dialog-search { max-width: 560px; }
+.search-input { margin-bottom: 12px; }
+.search-loading { text-align: center; color: #9ca3af; font-size: 13px; padding: 16px; }
+.search-results { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; margin-bottom: 12px; }
+.search-result-item { padding: 10px 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; cursor: pointer; transition: all 0.15s; }
+.search-result-item:hover { border-color: #6366f1; background: #eef2ff; }
+.sr-title { font-size: 13px; font-weight: 600; color: #1e293b; margin-bottom: 4px; }
+.sr-meta { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; }
+.sr-status { font-size: 11px; color: #9ca3af; }
+.sr-tag { font-size: 10px; background: #e0e7ff; color: #4f46e5; padding: 1px 6px; border-radius: 999px; }
+.sr-snippet { font-size: 11.5px; color: #6b7280; margin-top: 4px; line-height: 1.4; }
+.sr-role { font-weight: 600; color: #6366f1; }
+.search-empty { text-align: center; color: #9ca3af; font-size: 13px; padding: 20px; }
+.search-trigger-btn { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 6px; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2); cursor: pointer; color: white; transition: background 0.15s; }
+.search-trigger-btn:hover { background: rgba(255,255,255,0.2); }
+
+/* ---- 功能 5：议程进度 ---- */
+.agenda-progress-text { margin-left: auto; font-size: 11px; color: #16a34a; font-weight: 700; }
+.agenda-progress-bar { width: 60px; height: 4px; background: #bbf7d0; border-radius: 2px; overflow: hidden; }
+.agenda-progress-fill { height: 100%; background: #16a34a; border-radius: 2px; transition: width 0.4s; }
+.agenda-item.done { opacity: 0.6; text-decoration: line-through; }
+.agenda-checkbox { width: 14px; height: 14px; cursor: pointer; accent-color: #16a34a; flex-shrink: 0; }
+.agenda-num.done { background: #86efac; }
+
+/* ---- 功能 7：决策日志 ---- */
+.decisions-panel { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; margin: 0 16px 8px; overflow: hidden; }
+.decisions-header { display: flex; align-items: center; gap: 6px; padding: 10px 14px; font-size: 12px; font-weight: 600; color: #9a3412; }
+.decisions-close { margin-left: auto; background: none; border: none; cursor: pointer; color: #9ca3af; font-size: 16px; line-height: 1; }
+.decisions-empty { text-align: center; color: #9ca3af; font-size: 12px; padding: 14px; }
+.decisions-list { padding: 8px 14px; display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; }
+.decision-item { background: white; border: 1px solid #fed7aa; border-radius: 6px; padding: 8px 10px; }
+.decision-kw { font-size: 10px; background: #f97316; color: white; padding: 1px 6px; border-radius: 999px; margin-right: 6px; }
+.decision-role { font-size: 11px; color: #9ca3af; }
+.decision-text { font-size: 12px; color: #374151; margin: 4px 0 0; line-height: 1.5; }
+
+/* ---- 功能 8：讨论对比 ---- */
+.dialog-compare { max-width: 680px; }
+.compare-result { display: flex; flex-direction: column; gap: 12px; }
+.compare-cols { display: flex; gap: 0; }
+.compare-col { flex: 1; padding: 12px; }
+.compare-divider { width: 1px; background: #e5e7eb; }
+.compare-col-title { font-size: 11px; font-weight: 700; color: #6366f1; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+.compare-topic { font-size: 13px; font-weight: 600; color: #1e293b; margin-bottom: 6px; }
+.compare-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.compare-summary { font-size: 12px; color: #6b7280; line-height: 1.5; margin-bottom: 8px; background: #f9fafb; padding: 8px; border-radius: 6px; }
+.compare-points { display: flex; flex-direction: column; gap: 3px; }
+.compare-point { font-size: 12px; color: #374151; }
+.compare-shared { font-size: 12px; color: #6b7280; padding-top: 8px; border-top: 1px solid #e5e7eb; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+
+/* ---- 功能 9：标签栏 ---- */
+.tags-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 16px; border-top: 1px solid #f1f5f9; color: #9ca3af; }
+.tag-chip { font-size: 11px; background: #e0e7ff; color: #4f46e5; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+.tag-chip-rm { cursor: pointer; }
+.tag-chip-rm:hover { background: #fecdd3; color: #be123c; }
+.tag-edit-btn { font-size: 11px; color: #6366f1; background: none; border: 1px dashed #a5b4fc; border-radius: 999px; padding: 2px 8px; cursor: pointer; }
+.tag-edit-btn:hover { background: #eef2ff; }
+.tag-new-input { font-size: 12px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 2px 8px; width: 100px; }
+.tag-save-btn { font-size: 11px; background: #6366f1; color: white; border: none; border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+.tag-cancel-btn { font-size: 11px; background: #f3f4f6; color: #6b7280; border: none; border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+.action-badge { font-size: 10px; background: #f97316; color: white; padding: 1px 5px; border-radius: 999px; margin-left: 2px; }
+
 
