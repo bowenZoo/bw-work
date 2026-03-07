@@ -1601,7 +1601,7 @@ onUnmounted(() => {
         创建分支
       </button>
       <button class="disc-action-btn" @click="showDecisionsPanel = !showDecisionsPanel">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></polyline></svg>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         决策日志<span v-if="decisionsData.length" class="action-badge">{{ decisionsData.length }}</span>
       </button>
       <button class="disc-action-btn" @click="showStatsPanel = !showStatsPanel; if(showStatsPanel && !statsData.length) loadStats()">
