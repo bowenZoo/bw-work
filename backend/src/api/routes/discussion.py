@@ -821,8 +821,9 @@ def _auto_organize_docs(discussion_id: str) -> None:
 def _run_discussion_sync(discussion_id: str) -> None:
     """Run a discussion synchronously (for background task).
 
-    Acquires the concurrency semaphore before running.  While waiting,
-    the discussion is in QUEUED state.
+    Project discussions (with project_id) bypass the global semaphore and run
+    immediately in parallel.  Only standalone lobby discussions are throttled by
+    the concurrency semaphore.
     """
     logger.info("Starting discussion %s in background thread", discussion_id)
     discussion = get_discussion_state(discussion_id)
@@ -830,12 +831,20 @@ def _run_discussion_sync(discussion_id: str) -> None:
         logger.error("Discussion %s not found, aborting", discussion_id)
         return
 
+    # Project discussions run in parallel — skip the global semaphore
+    is_project_discussion = bool(discussion.project_id)
+
+    if is_project_discussion:
+        semaphore = None
+        _do_run_discussion(discussion_id, discussion, semaphore)
+        return
+
+    # Lobby/standalone discussions: throttle via semaphore
     semaphore = _get_discussion_semaphore()
 
     # Mark as queued while waiting for a slot
     discussion.status = DiscussionStatus.QUEUED
     save_discussion_state(discussion)
-    # Update global discussion state if this is the current discussion
     current = get_current_discussion()
     if current and current.id == discussion_id:
         set_current_discussion(discussion)
@@ -854,166 +863,172 @@ def _run_discussion_sync(discussion_id: str) -> None:
         lobby_event=True,
     )
 
-    # Block until a concurrency slot is available
     semaphore.acquire()
     try:
-        # Re-read state in case it was cancelled while queued
-        discussion = get_discussion_state(discussion_id)
-        if discussion is None:
-            return
+        _do_run_discussion(discussion_id, get_discussion_state(discussion_id), semaphore)
+    finally:
+        semaphore.release()
 
-        try:
-            # Transition from queued to running
-            discussion.status = DiscussionStatus.RUNNING
-            if discussion.started_at is None:
-                discussion.started_at = datetime.utcnow().isoformat()
-            save_discussion_state(discussion)
 
-            # Update global + broadcast running status
-            current = get_current_discussion()
-            if current and current.id == discussion_id:
-                set_current_discussion(discussion)
-            broadcast_sync(
-                {
-                    "type": "status",
-                    "data": {
-                        "discussion_id": discussion_id,
-                        "agent_id": "discussion",
-                        "agent_role": "discussion",
-                        "content": "discussion_running",
-                        "status": "running",
-                        "timestamp": datetime.utcnow().isoformat(),
-                    },
+def _do_run_discussion(
+    discussion_id: str,
+    discussion: "DiscussionState | None",
+    semaphore: "threading.Semaphore | None",
+) -> None:
+    """Core discussion runner. Called after semaphore is acquired (or bypassed)."""
+    if discussion is None:
+        return
+
+    try:
+        # Transition to running
+        discussion.status = DiscussionStatus.RUNNING
+        if discussion.started_at is None:
+            discussion.started_at = datetime.utcnow().isoformat()
+        save_discussion_state(discussion)
+
+        current = get_current_discussion()
+        if current and current.id == discussion_id:
+            set_current_discussion(discussion)
+        broadcast_sync(
+            {
+                "type": "status",
+                "data": {
+                    "discussion_id": discussion_id,
+                    "agent_id": "discussion",
+                    "agent_role": "discussion",
+                    "content": "discussion_running",
+                    "status": "running",
+                    "timestamp": datetime.utcnow().isoformat(),
                 },
-                lobby_event=True,
-            )
+            },
+            lobby_event=True,
+        )
 
-            # Get LLM from admin config store
-            llm = _get_llm_from_config()
-            if llm is None:
-                raise RuntimeError("LLM not configured. Please configure OpenAI API key in admin panel.")
+        # Get LLM from admin config store
+        llm = _get_llm_from_config()
+        if llm is None:
+            raise RuntimeError("LLM not configured. Please configure OpenAI API key in admin panel.")
 
-            crew = DiscussionCrew(
+        crew = DiscussionCrew(
+            discussion_id=discussion_id,
+            llm=llm,
+            enable_visual_concept=True,
+            agent_roles=discussion.agents or None,
+            agent_configs=discussion.agent_configs or None,
+            project_id=discussion.project_id,
+            moderator_role=discussion.moderator_role or None,
+        )
+        # Share semaphore with crew so it can release/re-acquire during
+        # WAITING_DECISION, allowing other discussions to run concurrently.
+        crew._concurrency_semaphore = semaphore
+        _running_crews[discussion_id] = crew
+        result = crew.run_document_centric(
+            topic=discussion.topic,
+            max_rounds=discussion.rounds,
+            attachment=discussion.attachment.content if discussion.attachment else None,
+            auto_pause_interval=discussion.auto_pause_interval,
+            briefing=discussion.briefing or "",
+            producer_stance=discussion.producer_stance or "",
+            agenda_items=discussion.agenda_items or [],
+        )
+
+        if result.startswith("STOPPED:"):
+            discussion.result = result[len("STOPPED:"):]
+            discussion.status = DiscussionStatus.STOPPED
+        else:
+            discussion.result = result
+            discussion.status = DiscussionStatus.COMPLETED
+        discussion.completed_at = datetime.utcnow().isoformat()
+        save_discussion_state(discussion)
+
+        # Update global discussion state if this is the current discussion
+        current = get_current_discussion()
+        if current and current.id == discussion_id:
+            set_current_discussion(discussion)
+
+        # Compute quality score
+        try:
+            score = _compute_quality_score(discussion_id)
+            if score:
+                discussion.quality_score = score
+                save_discussion_state(discussion)
+        except Exception as score_err:
+            logger.warning("Quality score failed for %s: %s", discussion_id, score_err)
+
+        # Save agent opinions archive
+        try:
+            _save_agent_opinions(discussion.project_id, discussion_id, discussion)
+        except Exception as op_err:
+            logger.warning("Agent opinions archive failed for %s: %s", discussion_id, op_err)
+
+        # Compute agent votes
+        try:
+            votes = _compute_agent_votes(discussion_id)
+            if votes:
+                discussion.votes = votes
+                save_discussion_state(discussion)
+        except Exception as vote_err:
+            logger.warning("Agent votes failed for %s: %s", discussion_id, vote_err)
+
+        # Number validation
+        try:
+            validation = _validate_numbers(discussion_id)
+            if validation is not None:
+                discussion.number_validation = validation
+                save_discussion_state(discussion)
+        except Exception as num_err:
+            logger.warning("Number validation failed for %s: %s", discussion_id, num_err)
+
+        # Update cross-project agent memory
+        try:
+            _update_agent_cross_memory(discussion_id, discussion)
+        except Exception as mem_err:
+            logger.warning("Cross-project memory update failed for %s: %s", discussion_id, mem_err)
+
+        # Extract decisions and auto-tag
+        try:
+            _extract_decisions(discussion_id, discussion)
+            _auto_tag_discussion(discussion_id, discussion)
+        except Exception as tag_err:
+            logger.warning("Decision/tag extraction failed for %s: %s", discussion_id, tag_err)
+
+        # Auto-organize discussion into design documents
+        try:
+            _auto_organize_docs(discussion_id)
+        except Exception as org_err:
+            logger.warning("Auto-organize failed for %s: %s", discussion_id, org_err)
+
+    except Exception as e:
+        logger.error("Discussion %s failed: %s", discussion_id, e)
+        discussion.status = DiscussionStatus.FAILED
+        discussion.error = str(e)
+        discussion.completed_at = datetime.utcnow().isoformat()
+        save_discussion_state(discussion)
+
+        # Broadcast failure to WebSocket clients
+        try:
+            error_event = create_error_event(
                 discussion_id=discussion_id,
-                llm=llm,
-                enable_visual_concept=True,
-                agent_roles=discussion.agents or None,
-                agent_configs=discussion.agent_configs or None,
-                project_id=discussion.project_id,
-                moderator_role=discussion.moderator_role or None,
+                content=str(e),
             )
-            # Share semaphore with crew so it can release/re-acquire during
-            # WAITING_DECISION, allowing other discussions to run concurrently.
-            crew._concurrency_semaphore = semaphore
-            _running_crews[discussion_id] = crew
-            result = crew.run_document_centric(
-                topic=discussion.topic,
-                max_rounds=discussion.rounds,
-                attachment=discussion.attachment.content if discussion.attachment else None,
-                auto_pause_interval=discussion.auto_pause_interval,
-                briefing=discussion.briefing or "",
-                producer_stance=discussion.producer_stance or "",
-                agenda_items=discussion.agenda_items or [],
+            broadcast_sync(error_event.to_dict(), discussion_id=discussion_id)
+            status_event = create_status_event(
+                discussion_id=discussion_id,
+                agent_id="discussion",
+                agent_role="discussion",
+                status=AgentStatus.IDLE,
+                content="discussion_failed",
             )
+            broadcast_sync(status_event.to_dict(), discussion_id=discussion_id)
+        except Exception:
+            logger.debug("Failed to broadcast discussion failure event")
 
-            if result.startswith("STOPPED:"):
-                discussion.result = result[len("STOPPED:"):]
-                discussion.status = DiscussionStatus.STOPPED
-            else:
-                discussion.result = result
-                discussion.status = DiscussionStatus.COMPLETED
-            discussion.completed_at = datetime.utcnow().isoformat()
-            save_discussion_state(discussion)
-
-            # Update global discussion state if this is the current discussion
-            current = get_current_discussion()
-            if current and current.id == discussion_id:
-                set_current_discussion(discussion)
-
-            # Compute quality score
-            try:
-                score = _compute_quality_score(discussion_id)
-                if score:
-                    discussion.quality_score = score
-                    save_discussion_state(discussion)
-            except Exception as score_err:
-                logger.warning("Quality score failed for %s: %s", discussion_id, score_err)
-
-            # Save agent opinions archive
-            try:
-                _save_agent_opinions(discussion.project_id, discussion_id, discussion)
-            except Exception as op_err:
-                logger.warning("Agent opinions archive failed for %s: %s", discussion_id, op_err)
-
-            # Compute agent votes
-            try:
-                votes = _compute_agent_votes(discussion_id)
-                if votes:
-                    discussion.votes = votes
-                    save_discussion_state(discussion)
-            except Exception as vote_err:
-                logger.warning("Agent votes failed for %s: %s", discussion_id, vote_err)
-
-            # Number validation
-            try:
-                validation = _validate_numbers(discussion_id)
-                if validation is not None:
-                    discussion.number_validation = validation
-                    save_discussion_state(discussion)
-            except Exception as num_err:
-                logger.warning("Number validation failed for %s: %s", discussion_id, num_err)
-
-            # Update cross-project agent memory
-            try:
-                _update_agent_cross_memory(discussion_id, discussion)
-            except Exception as mem_err:
-                logger.warning("Cross-project memory update failed for %s: %s", discussion_id, mem_err)
-
-            # Extract decisions and auto-tag
-            try:
-                _extract_decisions(discussion_id, discussion)
-                _auto_tag_discussion(discussion_id, discussion)
-            except Exception as tag_err:
-                logger.warning("Decision/tag extraction failed for %s: %s", discussion_id, tag_err)
-
-            # Auto-organize discussion into design documents
-            try:
-                _auto_organize_docs(discussion_id)
-            except Exception as org_err:
-                logger.warning("Auto-organize failed for %s: %s", discussion_id, org_err)
-
-        except Exception as e:
-            logger.error("Discussion %s failed: %s", discussion_id, e)
-            discussion.status = DiscussionStatus.FAILED
-            discussion.error = str(e)
-            discussion.completed_at = datetime.utcnow().isoformat()
-            save_discussion_state(discussion)
-
-            # Broadcast failure to WebSocket clients
-            try:
-                error_event = create_error_event(
-                    discussion_id=discussion_id,
-                    content=str(e),
-                )
-                broadcast_sync(error_event.to_dict(), discussion_id=discussion_id)
-                status_event = create_status_event(
-                    discussion_id=discussion_id,
-                    agent_id="discussion",
-                    agent_role="discussion",
-                    status=AgentStatus.IDLE,
-                    content="discussion_failed",
-                )
-                broadcast_sync(status_event.to_dict(), discussion_id=discussion_id)
-            except Exception:
-                logger.debug("Failed to broadcast discussion failure event")
-
-            # Update global discussion state if this is the current discussion
-            current = get_current_discussion()
-            if current and current.id == discussion_id:
-                set_current_discussion(discussion)
+        # Update global discussion state if this is the current discussion
+        current = get_current_discussion()
+        if current and current.id == discussion_id:
+            set_current_discussion(discussion)
     finally:
         _running_crews.pop(discussion_id, None)
-        semaphore.release()
 
 
 async def _run_discussion_async(discussion_id: str) -> None:

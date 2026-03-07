@@ -24,32 +24,26 @@ test.describe('项目详情页', () => {
     await deleteTestProject(request, token, projectId);
   });
 
-  test('页面加载 - 显示项目名和阶段列表', async ({ authedPage: page }) => {
-    await expect(page.locator('.pd-header h1')).toBeVisible();
-    await expect(page.locator('.stages')).toBeVisible();
-    // 至少有一个阶段
-    const stages = page.locator('.stage-section');
+  test('页面加载 - 显示项目名和流程列', async ({ authedPage: page }) => {
+    // 项目名显示在 .header-title 而非 h1
+    await expect(page.locator('.header-title')).toBeVisible();
+    // 流程看板使用 .pipeline 容器
+    await expect(page.locator('.pipeline')).toBeVisible();
+    // 至少有一个阶段列
+    const stages = page.locator('.pipeline-col');
     expect(await stages.count()).toBeGreaterThanOrEqual(1);
   });
 
-  test('阶段折叠/展开', async ({ authedPage: page }) => {
-    const firstStageHeader = page.locator('.stage-header').first();
-    const firstStageBody = page.locator('.stage-body').first();
-
-    // 初始展开
-    await expect(firstStageBody).not.toHaveClass(/stage-body-collapsed/);
-
-    // 点击折叠
-    await firstStageHeader.click();
-    await expect(firstStageBody).toHaveClass(/stage-body-collapsed/, { timeout: 3000 });
-
-    // 再次点击展开
-    await firstStageHeader.click();
-    await expect(firstStageBody).not.toHaveClass(/stage-body-collapsed/, { timeout: 3000 });
+  test('阶段列显示阶段名称', async ({ authedPage: page }) => {
+    const firstCol = page.locator('.pipeline-col').first();
+    await expect(firstCol).toBeVisible();
+    // 阶段名称在 .col-name 里
+    await expect(firstCol.locator('.col-name')).toBeVisible();
   });
 
   test('成员管理弹窗 - 打开与关闭', async ({ authedPage: page }) => {
-    const memberBtn = page.locator('button').filter({ hasText: '成员' }).first();
+    // 成员管理按钮通过 title 属性标识
+    const memberBtn = page.locator('button[title="成员管理"]').first();
     await expect(memberBtn).toBeVisible();
     await memberBtn.click();
 
@@ -63,21 +57,25 @@ test.describe('项目详情页', () => {
   });
 
   test('在活跃阶段新建讨论弹窗', async ({ authedPage: page }) => {
-    // 找"+ 新讨论"按钮（在活跃阶段的 stage-actions 里）
-    const newDiscBtn = page.locator('.stage-actions button').filter({ hasText: '新讨论' }).first();
+    // 直接等待 "新讨论" 按钮出现（依赖 canEdit+stage.status=active 同时为真）
+    await page.waitForSelector('.new-btn', { timeout: 12000 });
+    const newDiscBtn = page.locator('.new-btn').filter({ hasText: '新讨论' }).first();
     await expect(newDiscBtn).toBeVisible({ timeout: 5000 });
     await newDiscBtn.click();
 
     const dialog = page.locator('.dialog-enhanced').first();
     await expect(dialog).toBeVisible({ timeout: 5000 });
-    await expect(dialog.locator('textarea')).toBeVisible();
+    await expect(dialog.locator('textarea').first()).toBeVisible();
 
     await dialog.locator('button').filter({ hasText: /取消|关闭/ }).first().click();
     await expect(dialog).not.toBeVisible({ timeout: 3000 });
   });
 
   test('返回大厅按钮', async ({ authedPage: page }) => {
-    await page.locator('.back-btn').first().click();
+    // 面包屑中的"大厅"链接始终可见
+    const breadcrumbLink = page.locator('.bc-link').filter({ hasText: '大厅' }).first();
+    await expect(breadcrumbLink).toBeVisible();
+    await breadcrumbLink.click();
     // SPA 路由 pushState 不触发 load 事件，直接等待大厅容器出现
     await expect(page.locator('.hall')).toBeVisible({ timeout: 5000 });
   });
