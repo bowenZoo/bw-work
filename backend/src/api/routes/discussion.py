@@ -3943,3 +3943,153 @@ async def update_agenda_check(
     disc.agenda_progress[request.item_index]["done"] = request.done
     save_discussion_state(disc)
     return {"discussion_id": discussion_id, "agenda_progress": disc.agenda_progress}
+
+
+# ============================================================================
+# 超级制作人 AI 助理：producer-assist
+# ============================================================================
+
+_SUPER_PRODUCER_SYSTEM = """你是「超级制作人助手」，专门帮助真实制作人在 AI 策划团队讨论中进行高质量发言。
+
+根据当前讨论背景和最近的对话内容，你需要生成恰好三条发言建议，分别代表：
+1. 【果断推进】明确表态，推动决策落地，口吻果断有力
+2. 【协商共识】寻求平衡，照顾各方观点，口吻温和建设性
+3. 【深度追问】提出关键疑问，挖掘潜在问题，口吻好奇探究
+
+要求：
+- 每条建议 30-80 字，像真实制作人说话，不用"我建议"开头
+- 贴合当前讨论焦点，有实质内容，不泛泛而谈
+- 输出严格 JSON 格式，无多余内容
+
+输出格式：
+{
+  "suggestions": [
+    {"direction": "果断推进", "style": "assertive", "text": "..."},
+    {"direction": "协商共识", "style": "collaborative", "text": "..."},
+    {"direction": "深度追问", "style": "exploratory", "text": "..."}
+  ],
+  "context_summary": "一句话概括当前讨论焦点"
+}"""
+
+
+def _call_llm_for_producer_assist(prompt: str) -> dict | None:
+    """调用 LLM 生成制作人发言建议。失败返回 None。"""
+    try:
+        from src.admin.config_store import ConfigStore
+        cfg = ConfigStore().get_active_llm_config()
+        if not cfg or not cfg.get("api_key"):
+            return None
+
+        import litellm  # type: ignore
+        model = cfg.get("model", "gpt-4o-mini")
+        base_url = cfg.get("base_url") or None
+
+        resp = litellm.completion(
+            model=model,
+            api_key=cfg["api_key"],
+            api_base=base_url or None,
+            messages=[
+                {"role": "system", "content": _SUPER_PRODUCER_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.8,
+            max_tokens=600,
+            timeout=15,
+        )
+        raw = resp.choices[0].message.content or ""
+        # 提取 JSON
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            return json.loads(raw[start:end])
+    except Exception as e:
+        logger.warning("LLM producer-assist failed: %s", e)
+    return None
+
+
+def _heuristic_producer_suggestions(topic: str, recent_context: str, checkpoint_q: str) -> dict:
+    """LLM 不可用时的启发式建议（基于讨论主题关键词）。"""
+    focus = checkpoint_q or recent_context[:60] or topic
+
+    # 根据讨论主题生成通用但有针对性的建议
+    suggestions = [
+        {
+            "direction": "果断推进",
+            "style": "assertive",
+            "text": f"这个方向我认为可以定下来，{focus[:30]}这块优先级更高，我们先锁定核心方案，细节后续迭代。",
+        },
+        {
+            "direction": "协商共识",
+            "style": "collaborative",
+            "text": f"大家对{focus[:20]}的分歧我理解，能不能先对齐一个最小共识，再在此基础上分步推进？",
+        },
+        {
+            "direction": "深度追问",
+            "style": "exploratory",
+            "text": f"我想更深入了解一下：{focus[:20]}这个方案落地后，对玩家留存和付费的具体影响是什么？",
+        },
+    ]
+    return {
+        "suggestions": suggestions,
+        "context_summary": f"当前讨论：{topic[:40]}",
+        "source": "heuristic",
+    }
+
+
+@router.post("/{discussion_id}/producer-assist")
+async def get_producer_suggestions(
+    discussion_id: str,
+    user=Depends(get_optional_user),
+):
+    """获取超级制作人 AI 发言建议（三个方向）。
+
+    在制作人轮到发言时调用，返回果断/协商/追问三种风格建议。
+    """
+    disc = _discussions.get(discussion_id)
+    if not disc:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    # 获取最近 8 条消息作为上下文
+    recent_msgs: list[str] = []
+    checkpoint_q = ""
+    try:
+        msgs = _discussion_memory.get_messages(discussion_id)
+        for m in msgs[-8:]:
+            role = getattr(m, "agent_role", "") or getattr(m, "agent_id", "")
+            content = (getattr(m, "content", "") or "")[:200]
+            recent_msgs.append(f"[{role}] {content}")
+
+        # 若当前有待决策 checkpoint，获取其问题
+        from src.api.routes.checkpoint import _checkpoints  # type: ignore
+        disc_checkpoints = _checkpoints.get(discussion_id, [])
+        for cp in reversed(disc_checkpoints):
+            if getattr(cp, "type", "") == "decision" and not getattr(cp, "responded", False):
+                checkpoint_q = getattr(cp, "question", "") or ""
+                break
+    except Exception:
+        pass
+
+    recent_context = "\n".join(recent_msgs)
+
+    # 构建 prompt
+    prompt = f"""讨论主题：{disc.topic}
+制作人立场：{disc.producer_stance or '（未设定）'}
+当前待决策问题：{checkpoint_q or '（无，制作人自由发言）'}
+
+最近讨论内容：
+{recent_context or '（暂无消息）'}
+
+请根据以上内容生成三条发言建议。"""
+
+    # 尝试调用 LLM
+    result = await asyncio.get_event_loop().run_in_executor(
+        None, _call_llm_for_producer_assist, prompt
+    )
+
+    if not result or "suggestions" not in result:
+        result = _heuristic_producer_suggestions(disc.topic, recent_context, checkpoint_q)
+
+    result["discussion_id"] = discussion_id
+    result["checkpoint_question"] = checkpoint_q
+    return result
+

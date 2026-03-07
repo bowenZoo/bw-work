@@ -21,3 +21,4 @@ export { default as HolisticReviewCard } from './HolisticReviewCard.vue';
 export { default as PasswordVerifyModal } from './PasswordVerifyModal.vue';
 export { default as ProducerInput } from './ProducerInput.vue';
 export { default as DecisionLogPanel } from './DecisionLogPanel.vue';
+export { default as ProducerAssist } from './ProducerAssist.vue';

@@ -82,6 +82,19 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 watch(inputContent, () => { throttleMessage.value = null })
+
+// 供外部填充文本（ProducerAssist 使用）
+function fillText(text: string) {
+  inputContent.value = text
+}
+
+// 供外部直接发送（ProducerAssist 点"发送"按钮）
+function sendText(text: string) {
+  inputContent.value = text
+  handleSend()
+}
+
+defineExpose({ fillText, sendText })
 </script>
 
 <template>

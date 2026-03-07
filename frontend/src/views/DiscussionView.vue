@@ -13,6 +13,7 @@ import {
   HolisticReviewCard,
   PasswordVerifyModal,
   ProducerInput,
+  ProducerAssist,
 } from '@/components/discussion';
 import { usePlayback } from '@/composables/usePlayback';
 import { useDiscussion } from '@/composables/useDiscussion';
@@ -676,6 +677,7 @@ function handleScrollToCheckpoint(checkpointId: string) {
 // ---- Resizable split panel ----
 const splitPercent = ref(65); // left panel percentage (right = ~35%)
 const isDragging = ref(false);
+const producerInputRef = ref<InstanceType<typeof ProducerInput> | null>(null);
 
 const leftPanelStyle = computed(() => ({
   flex: `0 0 ${splitPercent.value}%`,
@@ -1284,8 +1286,17 @@ onUnmounted(() => {
           @focus-section="handleFocusSection"
           @scroll-to-checkpoint="handleScrollToCheckpoint"
         />
+        <!-- Producer Assist — AI 辅助发言（制作人轮次时显示在输入框上方） -->
+        <ProducerAssist
+          v-if="isRunning && discussion?.id && (isProducerTurn || isWaitingDecision)"
+          :discussion-id="discussion.id"
+          :active="isProducerTurn || isWaitingDecision"
+          @fill="(t) => producerInputRef?.fillText(t)"
+          @send="(t) => producerInputRef?.sendText(t)"
+        />
         <!-- Producer input (replaces UserInputBox) -->
         <ProducerInput
+          ref="producerInputRef"
           v-if="isRunning && discussion?.id"
           :discussion-id="discussion.id"
           :disabled="!isRunning"
