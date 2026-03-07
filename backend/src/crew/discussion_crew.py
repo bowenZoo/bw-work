@@ -19,7 +19,12 @@ from crewai.tasks.task_output import TaskOutput
 
 from src.agents import LeadPlanner, NumberDesigner, OperationsAnalyst, PlayerAdvocate, SystemDesigner, VisualConceptAgent
 from src.agents.creative_director import CreativeDirector
+from src.agents.tech_director import TechDirector
 from src.agents.market_director import MarketDirector
+from src.agents.moderators import (
+    SystemDesignerModerator, NumberDesignerModerator, VisualConceptModerator,
+    MarketDirectorModerator, OperationsAnalystModerator, PlayerAdvocateModerator,
+)
 import asyncio
 
 from src.agents.lead_planner import (
@@ -32,7 +37,7 @@ from src.agents.lead_planner import (
     parse_visual_requirements,
 )
 from src.models.agenda import Agenda, AgendaItem, AgendaItemStatus, AgendaSummaryDetails
-from src.crew.mention_parser import parse_mentioned_roles, PRODUCER_ROLE
+from src.crew.mention_parser import parse_mentioned_roles, sanitize_speakers_in_text, PRODUCER_ROLE
 from src.memory.base import Decision
 from src.api.websocket.events import (
     AgentStatus,
@@ -218,12 +223,20 @@ class DiscussionCrew:
         "player_advocate": PlayerAdvocate,
         "operations_analyst": OperationsAnalyst,
         "market_director": MarketDirector,
+        "tech_director": TechDirector,
     }
 
     # Agents that can serve as moderator (replace lead_planner)
     MODERATOR_AGENTS: dict[str, type] = {
         "lead_planner": LeadPlanner,
         "creative_director": CreativeDirector,
+        "system_designer": SystemDesignerModerator,
+        "number_designer": NumberDesignerModerator,
+        "visual_concept": VisualConceptModerator,
+        "market_director": MarketDirectorModerator,
+        "operations_analyst": OperationsAnalystModerator,
+        "player_advocate": PlayerAdvocateModerator,
+        "tech_director": TechDirector,
     }
 
     _TOOL_CALL_RE = re.compile(
@@ -368,6 +381,11 @@ class DiscussionCrew:
         self._pending_producer_messages: list[dict] = []
         self._producer_message_lock = __import__("threading").Lock()
         self._producer_digest_pending: str | None = None  # digest to inject into next round
+
+        # Concurrency semaphore — set by the caller (_run_discussion_sync) so that
+        # the crew can release the slot while waiting for a human decision and
+        # re-acquire it when the discussion resumes.
+        self._concurrency_semaphore: Any | None = None
 
         # Inject context-aware tools into agents
         self._inject_context_tools()
@@ -1457,7 +1475,8 @@ class DiscussionCrew:
             history_section += f"\n\n---\n项目已有文档（参考但不重复）：\n{doc_context}\n---\n"
 
         # Phase 0: Lead Planner Opening
-        opening_description = self._lead_planner.create_opening_prompt(topic, attachment)
+        agent_list = [(a.role, a.goal) for a in self._discussion_agents]
+        opening_description = self._lead_planner.create_opening_prompt(topic, attachment, agent_list=agent_list)
         if history_section:
             opening_description += f"\n{history_section}"
 
@@ -1520,7 +1539,7 @@ class DiscussionCrew:
                 self._task_agent_roles.append(agent.role)
 
             # Lead Planner summarizes this round
-            summary_description = self._lead_planner.create_round_summary_prompt(round_num, topic)
+            summary_description = self._lead_planner.create_round_summary_prompt(round_num, topic, agent_list=agent_list)
             summary_task = Task(
                 name=f"round-{round_num}-summary",
                 description=summary_description,
@@ -1532,7 +1551,7 @@ class DiscussionCrew:
             self._task_agent_roles.append(lead_agent.role)
 
         # Final Phase: Lead Planner makes final decisions
-        final_description = self._lead_planner.create_final_decision_prompt(topic)
+        final_description = self._lead_planner.create_final_decision_prompt(topic, agent_list=agent_list)
         final_task = Task(
             name="final-decision",
             description=final_description,
@@ -1922,7 +1941,7 @@ class DiscussionCrew:
             self._record_message(agent_role, str(task_output))
 
             # Check if this is a lead planner round summary
-            if "summary" in task_name and "主策划" in agent_role:
+            if "summary" in task_name and ("主策划" in agent_role or self._lead_planner.role in agent_role):
                 self._process_round_summary(str(task_output), task_name)
 
             # Check for pause between agent turns (intervention checkpoint)
@@ -2147,7 +2166,8 @@ class DiscussionCrew:
         attachment: str | None = None,
     ) -> str:
         """Generate Lead Planner's opening statement synchronously."""
-        opening_prompt = self._lead_planner.create_opening_prompt(topic, attachment)
+        agent_list = [(a.role, a.goal) for a in self._discussion_agents]
+        opening_prompt = self._lead_planner.create_opening_prompt(topic, attachment, agent_list=agent_list)
         history_context = self._load_history_context(topic)
         if history_context:
             opening_prompt += f"\n\n---\n参考历史信息：\n{history_context}\n---\n"
@@ -2178,7 +2198,9 @@ class DiscussionCrew:
             topic: The discussion topic.
             context: Windowed discussion context (not full history).
         """
-        summary_prompt = self._lead_planner.create_round_summary_prompt(round_num, topic)
+        summary_prompt = self._lead_planner.create_round_summary_prompt(
+            round_num, topic, agent_list=[(a.role, a.goal) for a in self._discussion_agents]
+        )
         full_prompt = f"{summary_prompt}\n\n---\n讨论上下文：\n{context}"
 
         task = Task(
@@ -2206,7 +2228,9 @@ class DiscussionCrew:
             topic: The discussion topic.
             context: Windowed discussion context (not full history).
         """
-        final_prompt = self._lead_planner.create_final_decision_prompt(topic)
+        final_prompt = self._lead_planner.create_final_decision_prompt(
+            topic, agent_list=[(a.role, a.goal) for a in self._discussion_agents]
+        )
         full_prompt = f"{final_prompt}\n\n---\n讨论上下文：\n{context}"
 
         task = Task(
@@ -2272,6 +2296,7 @@ class DiscussionCrew:
                 # --- Phase 0: Lead Planner Opening ---
                 self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
                 opening = self._lead_planner_opening_sync(topic, attachment)
+                opening = sanitize_speakers_in_text(opening, known_roles=[a.role for a in self._discussion_agents])
 
                 self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
                 self._broadcast_message(self._lead_planner.role, opening)
@@ -2516,7 +2541,7 @@ class DiscussionCrew:
         # Reconstruct opening from first lead planner message (if available)
         opening = ""
         for msg in stored.messages:
-            if msg.agent_role in ("主策划", "lead_planner"):
+            if msg.agent_role in ("主策划", "lead_planner", self._lead_planner.role, self._moderator_role):
                 opening = msg.content
                 break
 
@@ -2791,6 +2816,7 @@ class DiscussionCrew:
                     # Lead Planner opens section discussion
                     self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
                     opening = self._lead_planner_section_opening(section, section_content, round_num)
+                    opening = sanitize_speakers_in_text(opening, known_roles=[a.role for a in self._discussion_agents])
                     self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
                     self._broadcast_message(self._lead_planner.role, opening)
                     self._record_message(self._lead_planner.role, opening)
@@ -3060,7 +3086,9 @@ class DiscussionCrew:
         Returns:
             The Lead Planner's opening statement.
         """
-        opening_prompt = self._lead_planner.create_opening_prompt(topic, attachment)
+        opening_prompt = self._lead_planner.create_opening_prompt(
+            topic, attachment, agent_list=[(a.role, a.goal) for a in self._discussion_agents]
+        )
         task = Task(
             description=opening_prompt,
             expected_output="讨论开场：明确目标、关键问题、讨论范围和期望产出",
@@ -3092,7 +3120,9 @@ class DiscussionCrew:
         Returns:
             The Lead Planner's summary for this round.
         """
-        summary_prompt = self._lead_planner.create_round_summary_prompt(round_num, topic)
+        summary_prompt = self._lead_planner.create_round_summary_prompt(
+            round_num, topic, agent_list=[(a.role, a.goal) for a in self._discussion_agents]
+        )
         full_prompt = f"{summary_prompt}\n\n---\n讨论上下文：\n{context}"
 
         task = Task(
@@ -3124,7 +3154,9 @@ class DiscussionCrew:
         Returns:
             The Lead Planner's final decision document.
         """
-        final_prompt = self._lead_planner.create_final_decision_prompt(topic)
+        final_prompt = self._lead_planner.create_final_decision_prompt(
+            topic, agent_list=[(a.role, a.goal) for a in self._discussion_agents]
+        )
         full_prompt = f"{final_prompt}\n\n---\n讨论上下文：\n{context}"
 
         task = Task(
@@ -3183,6 +3215,7 @@ class DiscussionCrew:
                 # Phase 0: Lead Planner opens the discussion
                 self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
                 opening = await self._lead_planner_opening(topic, attachment)
+                opening = sanitize_speakers_in_text(opening, known_roles=[a.role for a in self._discussion_agents])
 
                 self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
                 self._broadcast_message(self._lead_planner.role, opening)
@@ -3488,6 +3521,7 @@ class DiscussionCrew:
             content_for_prompt = section_content
         prompt = self._lead_planner.create_section_discussion_prompt(
             section.title, section.description, content_for_prompt, round_num,
+            agent_list=[(a.role, a.goal) for a in self._discussion_agents],
         )
 
         # Add recent summaries context
@@ -3520,7 +3554,10 @@ class DiscussionCrew:
 
     def _lead_planner_section_summary(self, section_title: str, round_num: int, discussion_content: str) -> str:
         """Generate section discussion summary via Lead Planner."""
-        summary_prompt = self._lead_planner.create_section_summary_prompt(section_title, round_num)
+        summary_prompt = self._lead_planner.create_section_summary_prompt(
+            section_title, round_num,
+            agent_list=[(a.role, a.goal) for a in self._discussion_agents],
+        )
         full_prompt = f"{summary_prompt}\n\n---\n讨论记录：\n{discussion_content}"
 
         task = Task(
@@ -3791,6 +3828,7 @@ class DiscussionCrew:
         """轮询等待用户对 DECISION checkpoint 的回答。
 
         类似 _check_pause_and_wait 的轮询模式。
+        在等待期间释放并发信号量槽，允许其他讨论在此期间启动。
 
         Args:
             checkpoint_id: 等待回答的 checkpoint ID。
@@ -3798,35 +3836,54 @@ class DiscussionCrew:
         Returns:
             响应数据 dict，包含 option_id 和 free_input。
         """
-        # Register as pending
-        with self._checkpoint_lock:
-            cp = self._pending_decision_checkpoints.get(checkpoint_id)
+        # Release the concurrency semaphore while waiting for user input,
+        # so other discussions can start while we're blocked on a human decision.
+        released_semaphore = False
+        if self._concurrency_semaphore is not None:
+            try:
+                self._concurrency_semaphore.release()
+                released_semaphore = True
+                logger.debug(
+                    "Released concurrency slot for discussion %s during WAITING_DECISION",
+                    self._discussion_id,
+                )
+            except Exception as exc:
+                logger.warning("Failed to release concurrency semaphore: %s", exc)
 
         start_time = time.time()
-        while True:
-            # Check if discussion was aborted
-            state_info = get_discussion_state(self._discussion_id)
-            if state_info is not None and state_info.get("state") == DiscussionState.FINISHED:
-                raise DiscussionTimeoutError("Discussion finished while waiting for decision")
+        try:
+            while True:
+                # Check if discussion was aborted
+                state_info = get_discussion_state(self._discussion_id)
+                if state_info is not None and state_info.get("state") == DiscussionState.FINISHED:
+                    raise DiscussionTimeoutError("Discussion finished while waiting for decision")
 
-            # Check if response arrived
-            with self._checkpoint_lock:
-                cp = self._pending_decision_checkpoints.get(checkpoint_id)
-                if cp and cp.response is not None:
-                    return {
-                        "option_id": cp.response,
-                        "free_input": cp.response_text or "",
-                    }
+                # Check if response arrived
+                with self._checkpoint_lock:
+                    cp = self._pending_decision_checkpoints.get(checkpoint_id)
+                    if cp and cp.response is not None:
+                        return {
+                            "option_id": cp.response,
+                            "free_input": cp.response_text or "",
+                        }
 
-            # Timeout check
-            if time.time() - start_time > self._pause_timeout:
-                logger.warning(
-                    "Decision wait timeout for checkpoint %s in discussion %s",
-                    checkpoint_id, self._discussion_id,
+                # Timeout check
+                if time.time() - start_time > self._pause_timeout:
+                    logger.warning(
+                        "Decision wait timeout for checkpoint %s in discussion %s",
+                        checkpoint_id, self._discussion_id,
+                    )
+                    raise DiscussionTimeoutError(f"Decision wait timeout for checkpoint {checkpoint_id}")
+
+                time.sleep(self._pause_check_interval)
+        finally:
+            # Re-acquire the semaphore slot before continuing discussion execution
+            if released_semaphore and self._concurrency_semaphore is not None:
+                self._concurrency_semaphore.acquire()
+                logger.debug(
+                    "Re-acquired concurrency slot for discussion %s after decision response",
+                    self._discussion_id,
                 )
-                raise DiscussionTimeoutError(f"Decision wait timeout for checkpoint {checkpoint_id}")
-
-            time.sleep(self._pause_check_interval)
 
     def _lead_planner_announce_decision(self, checkpoint: Any) -> str:
         """主策划公开宣布决策内容。
@@ -5015,6 +5072,8 @@ class DiscussionCrew:
         attachment: str | None = None,
         auto_pause_interval: int = 5,
         briefing: str = "",
+        producer_stance: str = "",
+        agenda_items: list[str] | None = None,
     ) -> str:
         """Run a document-centric discussion.
 
@@ -5028,10 +5087,45 @@ class DiscussionCrew:
             attachment: Optional attachment content.
             auto_pause_interval: Auto-pause every N rounds (0=disabled).
             briefing: Producer briefing with background, constraints, expected output.
+            producer_stance: 制作人预设立场，优先级高于 briefing，作为讨论方向约束。
 
         Returns:
             Final result string.
         """
+        # 将制作人立场合并到 briefing 开头（高优先级展示）
+        combined_briefing = briefing
+        if producer_stance:
+            stance_block = f"## ⚠️ 制作人立场（所有讨论必须围绕此方向展开）\n{producer_stance}"
+            combined_briefing = f"{stance_block}\n\n{briefing}".strip() if briefing else stance_block
+
+        # 注入预设议程
+        if agenda_items:
+            agenda_block = "## 📋 讨论议程（请按顺序推进）\n" + "\n".join(
+                f"{i}. {item}" for i, item in enumerate(agenda_items, 1)
+            )
+            combined_briefing = f"{combined_briefing}\n\n{agenda_block}".strip() if combined_briefing else agenda_block
+
+        # 注入跨项目 Agent 记忆
+        try:
+            from pathlib import Path as _Path
+            import json as _json
+            _memory_dir = _Path("data/agent_memory")
+            agent_memories: list[str] = []
+            for role in (self._agents or []):
+                mem_file = _memory_dir / f"{role}.json"
+                if mem_file.exists():
+                    try:
+                        mdata = _json.loads(mem_file.read_text(encoding="utf-8"))
+                        recent = mdata.get("memories", [])[-3:]
+                        for m in recent:
+                            agent_memories.append(f"- [{role}] {m.get('insight', '')[:100]}")
+                    except Exception:
+                        pass
+            if agent_memories:
+                mem_block = "## 🧠 Agent 历史经验（来自其他项目）\n" + "\n".join(agent_memories)
+                combined_briefing = f"{combined_briefing}\n\n{mem_block}".strip() if combined_briefing else mem_block
+        except Exception:
+            pass
         from src.models.doc_plan import DocPlan
         from src.agents.doc_writer import DocWriter
         from src.crew.mention_parser import parse_next_speakers
@@ -5039,7 +5133,7 @@ class DiscussionCrew:
         self._init_discussion(topic)
         self._auto_pause_interval = auto_pause_interval
         self._total_rounds = max_rounds
-        self._briefing = briefing
+        self._briefing = combined_briefing
         set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
         self._abort_reason = None
 
@@ -5131,6 +5225,7 @@ class DiscussionCrew:
                     # (_producer_digest_pending is consumed inside if set)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
                     opening = self._lead_planner_section_opening(section, section_content, round_num)
+                    opening = sanitize_speakers_in_text(opening, known_roles=[a.role for a in self._discussion_agents])
                     self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
                     self._broadcast_message(self._lead_planner.role, opening)
                     self._record_message(self._lead_planner.role, opening)
@@ -5457,6 +5552,7 @@ class DiscussionCrew:
                                 sect_content = self._doc_writer.read_section(file_plan.filename, sect.id)
                                 self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
                                 opening = self._lead_planner_section_opening(sect, sect_content, self._current_round)
+                                opening = sanitize_speakers_in_text(opening, known_roles=[a.role for a in self._discussion_agents])
                                 self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
                                 self._broadcast_message(self._lead_planner.role, opening)
                                 self._record_message(self._lead_planner.role, opening)

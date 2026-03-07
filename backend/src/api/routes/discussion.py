@@ -68,6 +68,11 @@ class CreateDiscussionRequest(BaseModel):
     agents: list[str] = Field(default_factory=list, description="Agent role names to participate")
     briefing: str = Field(default="", description="Producer briefing / context for AI agents")
     moderator_role: str = Field(default="", description="Moderator agent role (default: lead_planner)")
+    producer_stance: str = Field(default="", description="制作人预设立场，引导讨论方向")
+    template_id: str = Field(default="", description="讨论模板 ID（可选）")
+    agenda_items: list[str] = Field(default_factory=list, description="预设议程条目列表")
+    parent_discussion_id: str | None = Field(default=None, description="父讨论 ID（分支讨论用）")
+    branch_direction: str = Field(default="", description="分支方向说明")
 
 
 class CreateDiscussionResponse(BaseModel):
@@ -104,6 +109,16 @@ class DiscussionState(BaseModel):
     target_type: str | None = None  # 关联类型（如 "stage"）
     target_id: str | None = None  # 关联 ID（如 stage ID）
     moderator_role: str = ""  # 主持 agent（留空=lead_planner）
+    quality_score: dict | None = None  # 讨论质量评分 {completeness, executability, consensus, overall}
+    dependency_hints: list[str] = Field(default_factory=list)  # 跨阶段依赖提示
+    producer_stance: str = ""  # 制作人预设立场（比 briefing 更聚焦的方向指引）
+    viewer_questions: list[dict] = Field(default_factory=list)  # 观众提问队列
+    agenda_items: list[str] = Field(default_factory=list)  # 预设议程条目
+    votes: dict = Field(default_factory=dict)  # {role: {support/oppose/neutral: count}}
+    number_validation: list[dict] | None = None  # 数值校验结果
+    parent_discussion_id: str | None = None  # 父讨论 ID（分支讨论）
+    branch_direction: str = ""  # 分支方向说明
+    synced_document_id: str | None = None  # 已同步到的文档 ID
 
 
 class GetDiscussionResponse(BaseModel):
@@ -129,6 +144,16 @@ class GetDiscussionResponse(BaseModel):
     target_id: str | None = None  # 关联 ID
     moderator_role: str = ""  # 主持 agent
     agents: list[str] = Field(default_factory=list, description="参与讨论的 agent 角色列表")
+    quality_score: dict | None = None  # 讨论质量评分
+    dependency_hints: list[str] = Field(default_factory=list)  # 跨阶段依赖提示
+    producer_stance: str = ""  # 制作人预设立场
+    viewer_questions: list[dict] = Field(default_factory=list)  # 观众提问
+    agenda_items: list[str] = Field(default_factory=list)  # 预设议程
+    votes: dict = Field(default_factory=dict)  # Agent 投票结果
+    number_validation: list[dict] | None = None  # 数值自动校验结果
+    parent_discussion_id: str | None = None  # 父讨论（分支）
+    branch_direction: str = ""  # 分支方向
+    synced_document_id: str | None = None  # 已同步到的文档 ID
 
 
 class StartDiscussionResponse(BaseModel):
@@ -657,6 +682,109 @@ def _get_llm_from_config() -> Any | None:
         return None
 
 
+def _compute_dependency_hints(project_id: str, current_stage_id: str) -> list[str]:
+    """从已完成的阶段讨论中提取关键决策，作为当前阶段的依赖提示。
+
+    Args:
+        project_id: 项目 ID
+        current_stage_id: 当前阶段 ID（跳过本阶段自身）
+
+    Returns:
+        最多 5 条依赖提示字符串列表
+    """
+    hints: list[str] = []
+    # 从 _discussions 内存字典中找同项目的已完成 stage 讨论
+    for disc_id, disc_state in list(_discussions.items()):
+        if disc_state.project_id != project_id:
+            continue
+        if disc_state.status not in (DiscussionStatus.COMPLETED, DiscussionStatus.STOPPED):
+            continue
+        if disc_state.target_id == current_stage_id:
+            continue  # 跳过本阶段
+        if not disc_state.result:
+            continue
+        # 从结果中提取最重要的一句话（结果前 200 字）
+        snippet = disc_state.result[:200].replace("\n", " ").strip()
+        stage_label = disc_state.target_id or disc_state.topic
+        hint = f"【{stage_label}】{snippet}…"
+        hints.append(hint)
+        if len(hints) >= 5:
+            break
+
+    # 如果内存中没有，从持久化文件中查
+    if not hints:
+        state_dir = _STATE_DIR
+        if state_dir.exists():
+            for state_file in sorted(state_dir.glob("*.json"), reverse=True)[:50]:
+                try:
+                    disc_state = _load_discussion_state(state_file.stem)
+                    if not disc_state:
+                        continue
+                    if disc_state.project_id != project_id:
+                        continue
+                    if disc_state.status not in (DiscussionStatus.COMPLETED, DiscussionStatus.STOPPED):
+                        continue
+                    if disc_state.target_id == current_stage_id:
+                        continue
+                    if not disc_state.result:
+                        continue
+                    snippet = disc_state.result[:200].replace("\n", " ").strip()
+                    stage_label = disc_state.target_id or disc_state.topic
+                    hint = f"【{stage_label}】{snippet}…"
+                    hints.append(hint)
+                    if len(hints) >= 5:
+                        break
+                except Exception:
+                    continue
+    return hints
+
+
+def _compute_quality_score(discussion_id: str) -> dict | None:
+    """根据讨论消息内容计算三维度质量评分。
+
+    三个维度（各 1-10 分）：
+    - completeness（完整性）：话题覆盖率、是否有明确结论
+    - executability（可执行性）：具体决策数量、行动项明确度
+    - consensus（共识度）：团队一致性程度
+
+    Returns:
+        Dict with completeness, executability, consensus, overall (各 1-10)，失败返回 None。
+    """
+    stored = _discussion_memory.load(discussion_id)
+    if stored is None or not stored.messages:
+        return None
+
+    full_text = "\n".join(m.content for m in stored.messages)
+    msg_count = len(stored.messages)
+
+    # --- 完整性：有结论区块、议题数量 ---
+    conclusion_keywords = ["最终决策", "关键决策", "设计概述", "决策点", "结论", "总结", "已确定"]
+    conclusion_hits = sum(1 for kw in conclusion_keywords if kw in full_text)
+    completeness = min(10, max(1, 2 + conclusion_hits * 1.5 + (1 if msg_count >= 10 else 0)))
+
+    # --- 可执行性：行动项、优先级、具体方案 ---
+    action_keywords = ["P0", "P1", "P2", "实现", "方案", "决定", "采用", "具体", "执行", "落地", "负责", "下一步"]
+    action_hits = sum(full_text.count(kw) for kw in action_keywords)
+    executability = min(10, max(1, 1 + action_hits * 0.3))
+
+    # --- 共识度：同意 vs 分歧 ---
+    agree_keywords = ["同意", "支持", "赞同", "确实", "对的", "没问题", "可以", "好的"]
+    disagree_keywords = ["但是", "不同意", "反对", "问题", "风险", "待定", "不确定", "存疑"]
+    agree_count = sum(full_text.count(kw) for kw in agree_keywords)
+    disagree_count = sum(full_text.count(kw) for kw in disagree_keywords)
+    total = agree_count + disagree_count + 1  # 防除零
+    consensus = min(10, max(1, round(1 + 9 * (agree_count / total))))
+
+    overall = round((completeness + executability + consensus) / 3, 1)
+    return {
+        "completeness": round(completeness, 1),
+        "executability": round(executability, 1),
+        "consensus": round(consensus, 1),
+        "overall": overall,
+        "message_count": msg_count,
+    }
+
+
 def _auto_organize_docs(discussion_id: str) -> None:
     """Auto-organize discussion results into design documents.
 
@@ -768,6 +896,9 @@ def _run_discussion_sync(discussion_id: str) -> None:
                 project_id=discussion.project_id,
                 moderator_role=discussion.moderator_role or None,
             )
+            # Share semaphore with crew so it can release/re-acquire during
+            # WAITING_DECISION, allowing other discussions to run concurrently.
+            crew._concurrency_semaphore = semaphore
             _running_crews[discussion_id] = crew
             result = crew.run_document_centric(
                 topic=discussion.topic,
@@ -775,6 +906,8 @@ def _run_discussion_sync(discussion_id: str) -> None:
                 attachment=discussion.attachment.content if discussion.attachment else None,
                 auto_pause_interval=discussion.auto_pause_interval,
                 briefing=discussion.briefing or "",
+                producer_stance=discussion.producer_stance or "",
+                agenda_items=discussion.agenda_items or [],
             )
 
             if result.startswith("STOPPED:"):
@@ -790,6 +923,45 @@ def _run_discussion_sync(discussion_id: str) -> None:
             current = get_current_discussion()
             if current and current.id == discussion_id:
                 set_current_discussion(discussion)
+
+            # Compute quality score
+            try:
+                score = _compute_quality_score(discussion_id)
+                if score:
+                    discussion.quality_score = score
+                    save_discussion_state(discussion)
+            except Exception as score_err:
+                logger.warning("Quality score failed for %s: %s", discussion_id, score_err)
+
+            # Save agent opinions archive
+            try:
+                _save_agent_opinions(discussion.project_id, discussion_id, discussion)
+            except Exception as op_err:
+                logger.warning("Agent opinions archive failed for %s: %s", discussion_id, op_err)
+
+            # Compute agent votes
+            try:
+                votes = _compute_agent_votes(discussion_id)
+                if votes:
+                    discussion.votes = votes
+                    save_discussion_state(discussion)
+            except Exception as vote_err:
+                logger.warning("Agent votes failed for %s: %s", discussion_id, vote_err)
+
+            # Number validation
+            try:
+                validation = _validate_numbers(discussion_id)
+                if validation is not None:
+                    discussion.number_validation = validation
+                    save_discussion_state(discussion)
+            except Exception as num_err:
+                logger.warning("Number validation failed for %s: %s", discussion_id, num_err)
+
+            # Update cross-project agent memory
+            try:
+                _update_agent_cross_memory(discussion_id, discussion)
+            except Exception as mem_err:
+                logger.warning("Cross-project memory update failed for %s: %s", discussion_id, mem_err)
 
             # Auto-organize discussion into design documents
             try:
@@ -931,6 +1103,7 @@ def _run_discussion_extend_sync(
                 agent_configs=discussion.agent_configs or None,
                 project_id=discussion.project_id,
             )
+            crew._concurrency_semaphore = semaphore
             _running_crews[discussion_id] = crew
 
             # Choose extend method based on whether discussion has a doc_plan
@@ -1392,7 +1565,21 @@ async def create_discussion(
         agents=request.agents or [],
         briefing=request.briefing or "",
         moderator_role=request.moderator_role or "",
+        producer_stance=request.producer_stance or "",
+        agenda_items=request.agenda_items or [],
+        parent_discussion_id=request.parent_discussion_id,
+        branch_direction=request.branch_direction or "",
     )
+
+    # 计算跨阶段依赖提示（只有 stage 讨论才触发）
+    if request.target_type == "stage" and request.project_id and request.project_id != "default":
+        try:
+            discussion.dependency_hints = _compute_dependency_hints(
+                request.project_id, request.target_id or ""
+            )
+        except Exception as dep_err:
+            logger.warning("Dependency hints failed: %s", dep_err)
+
     save_discussion_state(discussion)
 
     # Set owner_id if user is authenticated
@@ -1533,6 +1720,19 @@ async def verify_discussion_password(discussion_id: str, request: VerifyPassword
         raise HTTPException(status_code=403, detail="密码错误")
 
 
+# NOTE: /templates must be registered BEFORE /{discussion_id} to avoid route shadowing
+@router.get("/templates")
+async def get_discussion_templates_early(
+    stage: str | None = None,
+    user=Depends(get_optional_user),
+):
+    """获取讨论模板列表。可按 stage 过滤。"""
+    templates = _DISCUSSION_TEMPLATES
+    if stage:
+        templates = [t for t in templates if t.get("stage") == stage]
+    return {"templates": templates}
+
+
 @router.get("/{discussion_id}", response_model=GetDiscussionResponse)
 async def get_discussion(discussion_id: str) -> GetDiscussionResponse:
     """Get the status and result of a discussion."""
@@ -1561,6 +1761,16 @@ async def get_discussion(discussion_id: str) -> GetDiscussionResponse:
         target_id=discussion.target_id,
         moderator_role=discussion.moderator_role or "",
         agents=discussion.agents or [],
+        quality_score=discussion.quality_score,
+        dependency_hints=discussion.dependency_hints,
+        producer_stance=discussion.producer_stance,
+        viewer_questions=discussion.viewer_questions,
+        agenda_items=discussion.agenda_items,
+        votes=discussion.votes,
+        number_validation=discussion.number_validation,
+        parent_discussion_id=discussion.parent_discussion_id,
+        branch_direction=discussion.branch_direction,
+        synced_document_id=discussion.synced_document_id,
     )
 
 
@@ -2460,4 +2670,935 @@ async def stop_discussion(
     save_discussion_state(state)
 
     return {"ok": True, "status": "failed"}
+
+
+
+# ---------------------------------------------------------------------------
+# Public: stage moderator config (read-only, no admin auth needed)
+# ---------------------------------------------------------------------------
+
+@router.get("/stage-moderators")
+async def get_stage_moderators_public(user=Depends(get_optional_user)):
+    """Return stage template → moderator role mapping (public read-only)."""
+    from src.admin.config_store import ConfigStore
+    store = ConfigStore()
+    return {"moderators": store.get_stage_moderators()}
+
+
+# =============================================================================
+# 功能 4：GDD 自动导出
+# =============================================================================
+
+@router.get("/export-gdd/{project_id}")
+async def export_project_gdd(
+    project_id: str,
+    user=Depends(get_optional_user),
+):
+    """将项目所有阶段讨论结果合并为一份完整的 GDD（Markdown 格式）。
+
+    遍历该项目所有已完成的讨论，按阶段顺序排列，输出结构化 Markdown。
+    """
+    from fastapi.responses import Response
+
+    completed = []
+    # 优先从内存字典取，再从文件取
+    seen_ids = set()
+    for disc in list(_discussions.values()):
+        if disc.project_id == project_id and disc.status in (
+            DiscussionStatus.COMPLETED, DiscussionStatus.STOPPED
+        ):
+            completed.append(disc)
+            seen_ids.add(disc.id)
+
+    if _STATE_DIR.exists():
+        for state_file in sorted(_STATE_DIR.glob("*.json")):
+            if state_file.stem in seen_ids:
+                continue
+            try:
+                disc = _load_discussion_state(state_file.stem)
+                if disc and disc.project_id == project_id and disc.status in (
+                    DiscussionStatus.COMPLETED, DiscussionStatus.STOPPED
+                ):
+                    completed.append(disc)
+            except Exception:
+                continue
+
+    if not completed:
+        return {"error": "该项目暂无已完成的讨论", "gdd": ""}
+
+    # 按创建时间排序
+    completed.sort(key=lambda d: d.created_at)
+
+    lines = [f"# 游戏设计文档 (GDD)\n\n> 项目：{project_id}  \n> 生成时间：{datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC\n\n---\n"]
+
+    for i, disc in enumerate(completed, 1):
+        stage_label = disc.target_id or f"讨论 {i}"
+        lines.append(f"## {i}. {disc.topic}")
+        lines.append(f"\n> 阶段：{stage_label} | 状态：{disc.status.value} | 时间：{disc.created_at[:10]}\n")
+        if disc.producer_stance:
+            lines.append(f"> **制作人立场**：{disc.producer_stance}\n")
+        if disc.result:
+            lines.append(disc.result)
+        else:
+            lines.append("_（本阶段无最终结论文本）_")
+        if disc.quality_score:
+            qs = disc.quality_score
+            lines.append(
+                f"\n> **讨论质量**：完整性 {qs.get('completeness', '-')}/10 | "
+                f"可执行性 {qs.get('executability', '-')}/10 | "
+                f"共识度 {qs.get('consensus', '-')}/10 | "
+                f"综合 **{qs.get('overall', '-')}**/10"
+            )
+        lines.append("\n---\n")
+
+    gdd_content = "\n".join(lines)
+    return Response(
+        content=gdd_content,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="gdd-{project_id}.md"'},
+    )
+
+
+# =============================================================================
+# 功能 5：讨论模板库
+# =============================================================================
+
+_DISCUSSION_TEMPLATES: list[dict] = [
+    {
+        "id": "card-game-concept",
+        "name": "卡牌游戏概念孵化",
+        "stage": "concept",
+        "topic_template": "{game_name} — 卡牌游戏概念孵化",
+        "briefing": "聚焦卡牌收集、组合玩法、稀有度体系和 PVP/PVE 平衡设计。",
+        "producer_stance": "我希望玩法简单易上手、但有足够的策略深度让硬核玩家长期留存。",
+        "description": "适用于 TCG / CCG 类卡牌游戏的早期概念阶段讨论",
+    },
+    {
+        "id": "mmo-numbers",
+        "name": "MMO 数值框架",
+        "stage": "numbers",
+        "topic_template": "{game_name} — MMO 核心数值框架",
+        "briefing": "讨论属性体系、成长曲线、战斗数值公式和经济循环。",
+        "producer_stance": "严格控制付费加速幅度，确保免费玩家在 PVE 中不受歧视。",
+        "description": "适用于 MMORPG 类游戏的数值设计阶段",
+    },
+    {
+        "id": "casual-mobile",
+        "name": "休闲手游概念",
+        "stage": "concept",
+        "topic_template": "{game_name} — 休闲手游概念设计",
+        "briefing": "轻度、高频次、低门槛。强调社交分享和短时间内的完整体验。",
+        "producer_stance": "5 分钟内必须让玩家感受到核心乐趣，第一周留存目标 40%+。",
+        "description": "适用于超休闲或休闲类手机游戏",
+    },
+    {
+        "id": "art-style-2d",
+        "name": "2D 美术风格定义",
+        "stage": "art-style",
+        "topic_template": "{game_name} — 2D 美术风格方向",
+        "briefing": "确定整体视觉调性、色彩方案、角色风格和 UI 语言。",
+        "producer_stance": "风格需要有辨识度，在 App Store 截图中能瞬间抓住眼球。",
+        "description": "适用于 2D 手游或端游的美术风格讨论",
+    },
+    {
+        "id": "core-gameplay-loop",
+        "name": "核心玩法循环设计",
+        "stage": "core-gameplay",
+        "topic_template": "{game_name} — 核心玩法循环",
+        "briefing": "定义核心行动、即时反馈、短中长期目标的设计逻辑。",
+        "producer_stance": "核心循环必须在没有任何付费的情况下完整且有趣。",
+        "description": "通用核心玩法设计讨论",
+    },
+    {
+        "id": "tech-prototype-scope",
+        "name": "技术原型范围规划",
+        "stage": "tech-prototype",
+        "topic_template": "{game_name} — 技术原型目标与范围",
+        "briefing": "明确原型需要验证的核心技术风险、选型和可交付物。",
+        "producer_stance": "原型预算 4 周，只验证最高风险的 1-2 个技术点，不追求完整性。",
+        "description": "技术原型阶段规划讨论",
+    },
+]
+
+
+@router.get("/templates")
+async def get_discussion_templates(
+    stage: str | None = None,
+    user=Depends(get_optional_user),
+):
+    """获取讨论模板列表。可按 stage 过滤。"""
+    templates = _DISCUSSION_TEMPLATES
+    if stage:
+        templates = [t for t in templates if t.get("stage") == stage]
+    return {"templates": templates}
+
+
+@router.get("/templates/{template_id}")
+async def get_discussion_template(
+    template_id: str,
+    user=Depends(get_optional_user),
+):
+    """获取单个讨论模板详情。"""
+    for t in _DISCUSSION_TEMPLATES:
+        if t["id"] == template_id:
+            return t
+    from fastapi import HTTPException
+    raise HTTPException(status_code=404, detail="模板不存在")
+
+
+# =============================================================================
+# 功能 6：Agent 专业意见归档
+# =============================================================================
+
+def _extract_agent_opinions(discussion_id: str, disc_state: DiscussionState) -> dict[str, list[str]]:
+    """从讨论消息中提取各 agent 的关键观点。
+
+    Returns:
+        {role_name: [opinion1, opinion2, ...]}
+    """
+    stored = _discussion_memory.load(discussion_id)
+    if stored is None or not stored.messages:
+        return {}
+
+    opinions: dict[str, list[str]] = {}
+    # 对每条非 lead_planner 消息，若包含具体建议/立场，则记录
+    opinion_markers = ["建议", "认为", "应该", "必须", "风险", "问题", "方案", "设计", "优先", "核心"]
+    for msg in stored.messages:
+        role = msg.agent_role or ""
+        if not role or role in ("主策划", "lead_planner", disc_state.moderator_role):
+            continue
+        content = msg.content or ""
+        if len(content) < 20:
+            continue
+        # 判断是否包含有效观点
+        if any(marker in content for marker in opinion_markers):
+            # 取前 150 字作为观点摘要
+            snippet = content[:150].replace("\n", " ").strip()
+            opinions.setdefault(role, []).append(snippet)
+
+    # 每个角色最多取 3 条观点
+    return {role: ops[:3] for role, ops in opinions.items()}
+
+
+def _save_agent_opinions(project_id: str, discussion_id: str, disc_state: DiscussionState) -> None:
+    """将讨论中提取的 agent 观点追加保存到项目级 JSON 文件。"""
+    opinions = _extract_agent_opinions(discussion_id, disc_state)
+    if not opinions:
+        return
+
+    opinions_dir = Path(_STATE_DIR).parent / "agent_opinions"
+    opinions_dir.mkdir(parents=True, exist_ok=True)
+    opinions_file = opinions_dir / f"{project_id}.json"
+
+    existing: dict = {}
+    if opinions_file.exists():
+        try:
+            existing = json.loads(opinions_file.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+
+    now = datetime.utcnow().isoformat()
+    for role, ops in opinions.items():
+        if role not in existing:
+            existing[role] = []
+        for op in ops:
+            existing[role].append({
+                "opinion": op,
+                "discussion_id": discussion_id,
+                "topic": disc_state.topic,
+                "stage": disc_state.target_id or "",
+                "recorded_at": now,
+            })
+        # 最多保留每个角色最近 20 条
+        existing[role] = existing[role][-20:]
+
+    opinions_file.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+@router.get("/{discussion_id}/agent-opinions")
+async def get_discussion_agent_opinions(
+    discussion_id: str,
+    user=Depends(get_optional_user),
+):
+    """获取某次讨论中各 agent 的关键观点摘要。"""
+    disc = _discussions.get(discussion_id) or _load_discussion_state(discussion_id)
+    if disc is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="讨论不存在")
+    opinions = _extract_agent_opinions(discussion_id, disc)
+    return {"discussion_id": discussion_id, "opinions": opinions}
+
+
+@router.get("/project-opinions/{project_id}")
+async def get_project_agent_opinions(
+    project_id: str,
+    role: str | None = None,
+    user=Depends(get_optional_user),
+):
+    """获取项目中某个或所有 agent 的历史观点归档。"""
+    opinions_dir = Path(_STATE_DIR).parent / "agent_opinions"
+    opinions_file = opinions_dir / f"{project_id}.json"
+    if not opinions_file.exists():
+        return {"project_id": project_id, "opinions": {}}
+    try:
+        data = json.loads(opinions_file.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    if role:
+        data = {role: data.get(role, [])}
+    return {"project_id": project_id, "opinions": data}
+
+
+# =============================================================================
+# 功能 7：观战模式增强（观众提问队列）
+# =============================================================================
+
+class ViewerQuestionRequest(BaseModel):
+    """观众提问请求。"""
+    question: str = Field(..., min_length=1, max_length=500, description="问题内容")
+    viewer_name: str = Field(default="匿名观众", max_length=50, description="提问者昵称")
+
+
+@router.post("/{discussion_id}/viewer-question")
+async def submit_viewer_question(
+    discussion_id: str,
+    request: ViewerQuestionRequest,
+    user=Depends(get_optional_user),
+):
+    """观众提交问题到讨论观察队列。"""
+    disc = _discussions.get(discussion_id) or _load_discussion_state(discussion_id)
+    if disc is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="讨论不存在")
+
+    question_entry = {
+        "id": str(uuid.uuid4())[:8],
+        "question": request.question,
+        "viewer_name": request.viewer_name,
+        "likes": 0,
+        "adopted": False,
+        "submitted_at": datetime.utcnow().isoformat(),
+    }
+    disc.viewer_questions.append(question_entry)
+    save_discussion_state(disc)
+
+    # 广播新问题事件给制作人
+    try:
+        broadcast_sync(
+            {
+                "type": "viewer_question",
+                "data": {
+                    "discussion_id": discussion_id,
+                    "question": question_entry,
+                },
+            },
+            discussion_id=discussion_id,
+        )
+    except Exception:
+        pass
+
+    return {"ok": True, "question": question_entry}
+
+
+@router.post("/{discussion_id}/viewer-question/{question_id}/like")
+async def like_viewer_question(
+    discussion_id: str,
+    question_id: str,
+    user=Depends(get_optional_user),
+):
+    """给某个观众问题点赞。"""
+    disc = _discussions.get(discussion_id) or _load_discussion_state(discussion_id)
+    if disc is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="讨论不存在")
+
+    for q in disc.viewer_questions:
+        if q.get("id") == question_id:
+            q["likes"] = q.get("likes", 0) + 1
+            save_discussion_state(disc)
+            return {"ok": True, "likes": q["likes"]}
+
+    from fastapi import HTTPException
+    raise HTTPException(status_code=404, detail="问题不存在")
+
+
+@router.post("/{discussion_id}/viewer-question/{question_id}/adopt")
+async def adopt_viewer_question(
+    discussion_id: str,
+    question_id: str,
+    user=Depends(get_optional_user),
+):
+    """制作人采纳观众问题，将其作为 producer message 注入讨论。"""
+    disc = _discussions.get(discussion_id) or _load_discussion_state(discussion_id)
+    if disc is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="讨论不存在")
+
+    question_text = None
+    for q in disc.viewer_questions:
+        if q.get("id") == question_id:
+            q["adopted"] = True
+            question_text = q["question"]
+            break
+
+    if question_text is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="问题不存在")
+
+    save_discussion_state(disc)
+
+    # 注入为制作人消息（若讨论仍在运行）
+    crew = _running_crews.get(discussion_id)
+    if crew:
+        crew.add_producer_message(f"[观众问题] {question_text}")
+
+    return {"ok": True, "injected": crew is not None}
+
+
+# =============================================================================
+# 功能 2：Agent 投票量化共识
+# =============================================================================
+
+def _compute_agent_votes(discussion_id: str) -> dict:
+    """从讨论消息中解析各 Agent 的立场投票。
+
+    扫描消息文本，检测支持/反对/保留意见的关键词，
+    返回 {role: {support: n, oppose: n, neutral: n}} 结构。
+    """
+    stored = _discussion_memory.load(discussion_id)
+    if stored is None or not stored.messages:
+        return {}
+
+    support_kw = ["支持", "同意", "赞同", "认可", "没问题", "好的", "可以", "确实", "对的", "这个方向"]
+    oppose_kw = ["反对", "不同意", "不赞同", "有问题", "风险很高", "不可行", "难以接受", "存疑"]
+    neutral_kw = ["保留意见", "待定", "需要更多信息", "暂时中立", "两方面都有", "可以讨论"]
+
+    votes: dict[str, dict[str, int]] = {}
+    for msg in stored.messages:
+        role = msg.agent_role or ""
+        if not role:
+            continue
+        content = msg.content or ""
+        support = sum(1 for kw in support_kw if kw in content)
+        oppose = sum(1 for kw in oppose_kw if kw in content)
+        neutral = sum(1 for kw in neutral_kw if kw in content)
+        if support + oppose + neutral == 0:
+            continue
+        if role not in votes:
+            votes[role] = {"support": 0, "oppose": 0, "neutral": 0}
+        votes[role]["support"] += support
+        votes[role]["oppose"] += oppose
+        votes[role]["neutral"] += neutral
+
+    # 归一化：每个 role 取主立场
+    result = {}
+    for role, counts in votes.items():
+        total = counts["support"] + counts["oppose"] + counts["neutral"] or 1
+        result[role] = {
+            "support": round(counts["support"] / total * 100),
+            "oppose": round(counts["oppose"] / total * 100),
+            "neutral": round(counts["neutral"] / total * 100),
+            "raw": counts,
+        }
+    return result
+
+
+@router.get("/{discussion_id}/votes")
+async def get_discussion_votes(
+    discussion_id: str,
+    user=Depends(get_optional_user),
+):
+    """获取讨论中各 Agent 的投票/立场统计。"""
+    disc = _discussions.get(discussion_id) or _load_discussion_state(discussion_id)
+    if disc is None:
+        raise HTTPException(status_code=404, detail="讨论不存在")
+
+    votes = disc.votes
+    if not votes:
+        # 实时计算
+        try:
+            votes = _compute_agent_votes(discussion_id)
+        except Exception:
+            votes = {}
+
+    return {"discussion_id": discussion_id, "votes": votes}
+
+
+# =============================================================================
+# 功能 5：数值自动校验
+# =============================================================================
+
+_GAME_INDUSTRY_BENCHMARKS: list[dict] = [
+    {"category": "付费率", "keywords": ["付费率"], "warn_below": 1, "warn_above": 25, "unit": "%",
+     "reference": "休闲 1-3% | 中核 3-8% | 重度 5-15%"},
+    {"category": "次留存", "keywords": ["D1", "次留", "次日留存"], "warn_below": 20, "warn_above": 60, "unit": "%",
+     "reference": "休闲 40-50% | 中核 30-40% | 重度 25-35%"},
+    {"category": "七日留存", "keywords": ["D7", "七留", "七日留存"], "warn_below": 8, "warn_above": 35, "unit": "%",
+     "reference": "休闲 15-25% | 中核 12-20% | 重度 10-18%"},
+    {"category": "月留存", "keywords": ["D30", "月留", "月留存"], "warn_below": 3, "warn_above": 20, "unit": "%",
+     "reference": "休闲 5-10% | 中核 5-8% | 重度 4-7%"},
+    {"category": "保底次数", "keywords": ["保底", "天井"], "warn_below": 30, "warn_above": 300, "unit": "抽",
+     "reference": "行业主流 50-200 抽"},
+    {"category": "暴击倍率", "keywords": ["暴击倍率", "暴击伤害"], "warn_below": 130, "warn_above": 400, "unit": "%",
+     "reference": "行业基准 150-200%"},
+    {"category": "暴击率", "keywords": ["暴击率", "暴击概率"], "warn_below": 3, "warn_above": 100, "unit": "%",
+     "reference": "基础 5-10% 上限 80-100%"},
+    {"category": "版本周期", "keywords": ["版本周期", "更新周期", "大版本"], "warn_below": 14, "warn_above": 120, "unit": "天",
+     "reference": "大版本 6-8 周 | 赛季 6-12 周"},
+    {"category": "ARPU", "keywords": ["ARPU", "月均收入"], "warn_below": 1, "warn_above": 200, "unit": "元",
+     "reference": "休闲 1-5元 | 中核 10-30元 | 重度 30-80元"},
+]
+
+
+def _validate_numbers(discussion_id: str) -> list[dict]:
+    """从讨论消息中提取数值，与行业基准对比，返回校验结果。"""
+    import re
+    stored = _discussion_memory.load(discussion_id)
+    if stored is None or not stored.messages:
+        return []
+
+    full_text = "\n".join(m.content or "" for m in stored.messages)
+    results = []
+
+    for bench in _GAME_INDUSTRY_BENCHMARKS:
+        for kw in bench["keywords"]:
+            # 匹配数字（带 % 或不带）
+            pattern = rf"{re.escape(kw)}\s*[：:为是约]?\s*(\d+(?:\.\d+)?)\s*(%|抽|次|元|天|倍)?"
+            matches = re.findall(pattern, full_text, re.IGNORECASE)
+            for match in matches:
+                try:
+                    value = float(match[0])
+                except (ValueError, IndexError):
+                    continue
+                status = "normal"
+                message = f"符合行业基准（{bench['reference']}）"
+                if value < bench["warn_below"]:
+                    status = "low"
+                    message = f"低于行业基准下限 {bench['warn_below']}{bench['unit']}（{bench['reference']}）"
+                elif value > bench["warn_above"]:
+                    status = "high"
+                    message = f"高于行业基准上限 {bench['warn_above']}{bench['unit']}（{bench['reference']}）"
+
+                results.append({
+                    "category": bench["category"],
+                    "keyword": kw,
+                    "value": value,
+                    "unit": bench["unit"],
+                    "status": status,
+                    "message": message,
+                    "reference": bench["reference"],
+                })
+
+    # 去重（同 category 只保留第一个）
+    seen = set()
+    deduped = []
+    for r in results:
+        key = (r["category"], r["value"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(r)
+
+    return deduped
+
+
+@router.get("/{discussion_id}/number-validation")
+async def get_number_validation(
+    discussion_id: str,
+    user=Depends(get_optional_user),
+):
+    """获取讨论中数值与行业基准的校验报告。"""
+    disc = _discussions.get(discussion_id) or _load_discussion_state(discussion_id)
+    if disc is None:
+        raise HTTPException(status_code=404, detail="讨论不存在")
+
+    validation = disc.number_validation
+    if validation is None:
+        try:
+            validation = _validate_numbers(discussion_id)
+        except Exception:
+            validation = []
+
+    warnings = [v for v in validation if v["status"] != "normal"]
+    return {
+        "discussion_id": discussion_id,
+        "validation": validation,
+        "warnings_count": len(warnings),
+        "has_issues": len(warnings) > 0,
+    }
+
+
+# =============================================================================
+# 功能 8：跨项目 Agent 记忆
+# =============================================================================
+
+_AGENT_MEMORY_DIR = Path("data/agent_memory")
+
+
+def _load_agent_cross_memory(role: str, limit: int = 5) -> list[dict]:
+    """加载某 Agent 的跨项目记忆（最近 N 条）。"""
+    _AGENT_MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    mem_file = _AGENT_MEMORY_DIR / f"{role}.json"
+    if not mem_file.exists():
+        return []
+    try:
+        data = json.loads(mem_file.read_text(encoding="utf-8"))
+        memories = data.get("memories", [])
+        return memories[-limit:]
+    except Exception:
+        return []
+
+
+def _update_agent_cross_memory(discussion_id: str, disc_state: DiscussionState) -> None:
+    """讨论完成后，将各 Agent 的关键观点写入跨项目记忆。"""
+    opinions = _extract_agent_opinions(discussion_id, disc_state)
+    if not opinions:
+        return
+
+    _AGENT_MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    now = datetime.utcnow().isoformat()
+
+    for role, snippets in opinions.items():
+        mem_file = _AGENT_MEMORY_DIR / f"{role}.json"
+        existing: dict = {"memories": []}
+        if mem_file.exists():
+            try:
+                existing = json.loads(mem_file.read_text(encoding="utf-8"))
+            except Exception:
+                existing = {"memories": []}
+
+        for snippet in snippets:
+            existing["memories"].append({
+                "insight": snippet,
+                "project_id": disc_state.project_id,
+                "topic": disc_state.topic,
+                "discussion_id": discussion_id,
+                "recorded_at": now,
+            })
+
+        # 最多保留 50 条
+        existing["memories"] = existing["memories"][-50:]
+        mem_file.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+@router.get("/agent-memory/{role}")
+async def get_agent_memory(
+    role: str,
+    limit: int = 10,
+    user=Depends(get_optional_user),
+):
+    """获取某 Agent 的跨项目记忆。"""
+    memories = _load_agent_cross_memory(role, limit=limit)
+    return {"role": role, "memories": memories, "count": len(memories)}
+
+
+# =============================================================================
+# 功能 9：讨论摘要自动同步文档
+# =============================================================================
+
+@router.post("/{discussion_id}/sync-to-document")
+async def sync_discussion_to_document(
+    discussion_id: str,
+    user=Depends(get_optional_user),
+):
+    """将讨论摘要/决策自动同步到阶段文档。
+
+    - 若该阶段已有对应文档，追加本次讨论摘要
+    - 若无，则创建新文档
+    返回同步结果。
+    """
+    disc = _discussions.get(discussion_id) or _load_discussion_state(discussion_id)
+    if disc is None:
+        raise HTTPException(status_code=404, detail="讨论不存在")
+
+    if disc.status not in (DiscussionStatus.COMPLETED, DiscussionStatus.STOPPED):
+        raise HTTPException(status_code=400, detail="讨论尚未完成，无法同步")
+
+    # 构建同步内容
+    now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    lines = [
+        f"## 📋 讨论摘要：{disc.topic}",
+        f"\n> 时间：{now_str} | 状态：{disc.status.value}",
+    ]
+    if disc.producer_stance:
+        lines.append(f"> **制作人立场**：{disc.producer_stance}")
+    if disc.agenda_items:
+        lines.append("\n**讨论议程：**")
+        for i, item in enumerate(disc.agenda_items, 1):
+            lines.append(f"{i}. {item}")
+    if disc.result:
+        lines.append(f"\n### 讨论结论\n{disc.result[:2000]}")
+    if disc.quality_score:
+        qs = disc.quality_score
+        lines.append(
+            f"\n> 质量评分：完整性 {qs.get('completeness')}/10 | "
+            f"可执行性 {qs.get('executability')}/10 | "
+            f"共识度 {qs.get('consensus')}/10"
+        )
+
+    content = "\n".join(lines)
+
+    # 尝试查找项目文档系统（通过 project routes）
+    try:
+        from src.project.storage import ProjectStorage
+        storage = ProjectStorage()
+        project_id = disc.project_id
+        stage_id = disc.target_id
+
+        doc_id = None
+        # 若已有同步记录，追加到原文档
+        if disc.synced_document_id:
+            existing = storage.get_document(project_id, disc.synced_document_id)
+            if existing:
+                new_content = (existing.get("content") or "") + f"\n\n---\n\n{content}"
+                storage.update_document(project_id, disc.synced_document_id, {"content": new_content})
+                doc_id = disc.synced_document_id
+            else:
+                disc.synced_document_id = None
+
+        if not doc_id:
+            # 创建新文档
+            doc = storage.create_document(
+                project_id=project_id,
+                stage_id=stage_id,
+                title=f"讨论记录：{disc.topic[:40]}",
+                content=content,
+            )
+            doc_id = doc.get("id") if isinstance(doc, dict) else getattr(doc, "id", None)
+
+        disc.synced_document_id = doc_id
+        save_discussion_state(disc)
+
+        return {"ok": True, "document_id": doc_id, "synced_at": now_str}
+
+    except ImportError:
+        # ProjectStorage 不可用时，返回内容供前端处理
+        return {
+            "ok": True,
+            "document_id": None,
+            "content": content,
+            "synced_at": now_str,
+            "note": "文档系统不可用，请手动复制内容",
+        }
+    except Exception as e:
+        logger.warning("Sync to document failed: %s", e)
+        return {
+            "ok": False,
+            "error": str(e),
+            "content": content,
+            "synced_at": now_str,
+        }
+
+
+# =============================================================================
+# 功能 1：讨论分支探索
+# =============================================================================
+
+@router.post("/{discussion_id}/branch")
+async def create_discussion_branch(
+    discussion_id: str,
+    branch_direction: str = "",
+    rounds: int = 10,
+    producer_stance: str = "",
+    user=Depends(get_optional_user),
+):
+    """从某个讨论创建分支，探索不同设计方向。
+
+    分支继承父讨论的 topic、agents、project_id 和 briefing，
+    但使用不同的 producer_stance / branch_direction 引导讨论走向不同路径。
+    """
+    parent = _discussions.get(discussion_id) or _load_discussion_state(discussion_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="父讨论不存在")
+
+    branch_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    direction_label = branch_direction or f"分支方向 {branch_id[:6]}"
+
+    branch = DiscussionState(
+        id=branch_id,
+        topic=f"[分支] {parent.topic} — {direction_label}",
+        rounds=rounds,
+        auto_pause_interval=parent.auto_pause_interval,
+        status=DiscussionStatus.PENDING,
+        created_at=now,
+        project_id=parent.project_id,
+        target_type=parent.target_type,
+        target_id=parent.target_id,
+        agents=parent.agents or [],
+        briefing=parent.briefing or "",
+        moderator_role=parent.moderator_role or "",
+        producer_stance=producer_stance or parent.producer_stance,
+        agenda_items=parent.agenda_items or [],
+        parent_discussion_id=discussion_id,
+        branch_direction=direction_label,
+        dependency_hints=parent.dependency_hints or [],
+    )
+    _discussions[branch_id] = branch
+    save_discussion_state(branch)
+
+    if user:
+        _discussion_memory.set_owner_id(branch_id, user["id"])
+
+    return {
+        "branch_id": branch_id,
+        "parent_id": discussion_id,
+        "topic": branch.topic,
+        "status": branch.status,
+        "direction": direction_label,
+    }
+
+
+@router.get("/{discussion_id}/branches")
+async def list_discussion_branches(
+    discussion_id: str,
+    user=Depends(get_optional_user),
+):
+    """列出某讨论的所有分支。"""
+    branches = []
+    for disc in list(_discussions.values()):
+        if disc.parent_discussion_id == discussion_id:
+            branches.append({
+                "id": disc.id,
+                "topic": disc.topic,
+                "direction": disc.branch_direction,
+                "status": disc.status,
+                "created_at": disc.created_at,
+                "quality_score": disc.quality_score,
+            })
+
+    # 也从磁盘扫描
+    if _STATE_DIR.exists():
+        seen = {b["id"] for b in branches}
+        for state_file in _STATE_DIR.glob("*.json"):
+            if state_file.stem in seen:
+                continue
+            try:
+                data = json.loads(state_file.read_text(encoding="utf-8"))
+                if data.get("parent_discussion_id") == discussion_id:
+                    branches.append({
+                        "id": data["id"],
+                        "topic": data.get("topic", ""),
+                        "direction": data.get("branch_direction", ""),
+                        "status": data.get("status", ""),
+                        "created_at": data.get("created_at", ""),
+                        "quality_score": data.get("quality_score"),
+                    })
+            except Exception:
+                continue
+
+    return {"discussion_id": discussion_id, "branches": branches}
+
+
+# =============================================================================
+# 功能 10：制作人 AI 助理
+# =============================================================================
+
+_GAME_TYPE_STAGE_MAP: dict[str, list[dict]] = {
+    "卡牌": [
+        {"stage": "concept", "name": "概念阶段", "agenda": ["核心收集与组合玩法", "稀有度与抽卡体系", "PVP/PVE 平衡策略"]},
+        {"stage": "core-gameplay", "name": "核心玩法", "agenda": ["卡牌机制设计", "战斗系统", "手牌上限与费用"]},
+        {"stage": "numbers", "name": "数值设计", "agenda": ["抽卡概率与保底", "卡牌属性平衡", "赛季经济节奏"]},
+        {"stage": "system-design", "name": "系统设计", "agenda": ["组牌系统", "天梯赛季", "公会/好友功能"]},
+    ],
+    "MMO": [
+        {"stage": "concept", "name": "概念阶段", "agenda": ["世界观与背景故事", "核心差异化卖点", "目标玩家群体"]},
+        {"stage": "core-gameplay", "name": "核心玩法", "agenda": ["职业与技能体系", "战斗机制", "社交互动设计"]},
+        {"stage": "numbers", "name": "数值设计", "agenda": ["等级成长曲线", "装备属性体系", "经济系统设计"]},
+        {"stage": "system-design", "name": "系统设计", "agenda": ["副本与世界Boss", "PVP系统", "工会系统"]},
+    ],
+    "休闲": [
+        {"stage": "concept", "name": "概念阶段", "agenda": ["核心操作与爽感", "关卡结构", "社交传播点"]},
+        {"stage": "core-gameplay", "name": "核心玩法", "agenda": ["核心循环设计", "难度曲线", "进度感与成就感"]},
+        {"stage": "numbers", "name": "数值设计", "agenda": ["关卡难度参数", "道具价值", "付费门槛"]},
+        {"stage": "art-style", "name": "美术风格", "agenda": ["视觉风格定义", "UI/UX 原则", "角色设计方向"]},
+    ],
+    "SLG": [
+        {"stage": "concept", "name": "概念阶段", "agenda": ["战略深度与受众定位", "世界地图设计", "联盟与外交"]},
+        {"stage": "core-gameplay", "name": "核心玩法", "agenda": ["城池建设与科技树", "战争机制", "资源争夺"]},
+        {"stage": "numbers", "name": "数值设计", "agenda": ["战力成长速度", "付费加速平衡", "服务器生命周期"]},
+        {"stage": "system-design", "name": "系统设计", "agenda": ["联盟系统", "赛季合服机制", "活动频率"]},
+    ],
+}
+
+_AUDIENCE_STANCE_MAP: dict[str, str] = {
+    "硬核": "核心深度优先，允许较高学习曲线，PVP 竞技性强，付费主要解锁内容深度而非战力差距。",
+    "中核": "玩法深度与休闲兼顾，日活时间 30-60 分钟，活动节奏规律，付费体验公平。",
+    "休闲": "5 分钟内必须感受到核心乐趣，操作简单，社交传播性强，低付费门槛（首充 6 元体验）。",
+    "女性": "美术品质优先，情感连接与故事性，收集养成为主，避免强 PVP 压迫感。",
+    "海外": "本地化文化适配，合规（部分地区抽卡规范），多语言，付费习惯差异需针对性设计。",
+}
+
+
+@router.post("/ai-assistant/project-kickstart")
+async def project_kickstart_assistant(
+    game_concept: str = "",
+    game_type: str = "",
+    target_audience: str = "",
+    game_name: str = "未命名游戏",
+    user=Depends(get_optional_user),
+):
+    """制作人 AI 助理：根据游戏概念快速生成项目讨论框架。
+
+    输入简单描述，返回：
+    - 推荐讨论阶段顺序
+    - 每阶段预设议程
+    - 制作人立场建议
+    - 初步 GDD 框架大纲
+    """
+    # 识别游戏类型关键词
+    detected_type = game_type
+    if not detected_type:
+        concept_lower = game_concept.lower()
+        if any(kw in concept_lower for kw in ["卡牌", "tcg", "ccg", "deck"]):
+            detected_type = "卡牌"
+        elif any(kw in concept_lower for kw in ["mmo", "mmorpg", "大世界", "开放世界"]):
+            detected_type = "MMO"
+        elif any(kw in concept_lower for kw in ["slg", "策略", "城池", "战争"]):
+            detected_type = "SLG"
+        else:
+            detected_type = "休闲"
+
+    stages = _GAME_TYPE_STAGE_MAP.get(detected_type, _GAME_TYPE_STAGE_MAP["休闲"])
+
+    # 生成制作人立场
+    audience_stance = ""
+    for audience_kw, stance in _AUDIENCE_STANCE_MAP.items():
+        if audience_kw in target_audience:
+            audience_stance = stance
+            break
+
+    # 生成 GDD 大纲
+    gdd_outline = f"""# {game_name} — 游戏设计文档大纲
+
+## 一、项目概述
+- **游戏类型**：{detected_type}
+- **目标受众**：{target_audience or '待定'}
+- **核心概念**：{game_concept[:200] if game_concept else '待完善'}
+
+## 二、核心体验目标
+- [ ] 核心循环设计
+- [ ] 差异化卖点
+- [ ] 目标数据（留存/付费）
+
+## 三、阶段产出计划
+{"".join(f"- **{s['name']}**：{', '.join(s['agenda'][:2])}" + chr(10) for s in stages)}
+## 四、风险与挑战（待讨论）
+- 数值平衡
+- 付费模型
+- 上线时机
+"""
+
+    return {
+        "game_type": detected_type,
+        "recommended_stages": stages,
+        "producer_stance_suggestion": audience_stance,
+        "gdd_outline": gdd_outline,
+        "discussion_order": [s["stage"] for s in stages],
+        "tips": [
+            f"建议先从「{stages[0]['name']}」阶段开始讨论",
+            "制作人立场越明确，Agent 讨论方向越聚焦",
+            "每个阶段完成后及时导出 GDD，保持文档同步",
+        ],
+    }
+
 
