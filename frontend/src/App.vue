@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watchEffect } from 'vue'
 import { useUserStore } from '@/stores/user'
 import UserManagePanel from '@/components/admin/UserManagePanel.vue'
 import ProfilePanel from '@/components/settings/ProfilePanel.vue'
@@ -8,11 +8,12 @@ import AuditLogPanel from '@/components/settings/AuditLogPanel.vue'
 import LlmConfigPanel from '@/components/settings/LlmConfigPanel.vue'
 import LangfuseConfigPanel from '@/components/settings/LangfuseConfigPanel.vue'
 import ImageConfigPanel from '@/components/settings/ImageConfigPanel.vue'
+import DataManagePanel from '@/components/settings/DataManagePanel.vue'
 
 const userStore = useUserStore()
 const activeSection = ref('')
 
-const settingSections = ['profile', 'my-discussions', 'system-settings', 'llm-config', 'langfuse-config', 'image-config', 'audit-logs', 'user-manage']
+const settingSections = ['profile', 'my-discussions', 'system-settings', 'llm-config', 'langfuse-config', 'image-config', 'audit-logs', 'user-manage', 'data-manage']
 const drawerOpen = computed(() => settingSections.includes(activeSection.value))
 
 const drawerTitle = computed(() => {
@@ -25,6 +26,7 @@ const drawerTitle = computed(() => {
     'image-config': '图片模型',
     'audit-logs': '审计日志',
     'user-manage': '用户管理',
+    'data-manage': '数据管理',
   }
   return map[activeSection.value] || ''
 })
@@ -37,6 +39,11 @@ function closeDrawer() {
   activeSection.value = ''
 }
 
+// Lock body scroll when drawer is open to prevent background scroll-through
+watchEffect(() => {
+  document.body.style.overflow = drawerOpen.value ? 'hidden' : ''
+})
+
 onMounted(() => {
   userStore.init()
 })
@@ -47,7 +54,7 @@ onMounted(() => {
     <router-view @open-panel="onOpenPanel" />
     <!-- Settings Drawer Overlay -->
     <Transition name="drawer">
-      <div v-if="drawerOpen" class="drawer-overlay" @click.self="closeDrawer">
+      <div v-if="drawerOpen" class="drawer-overlay" @click.self="closeDrawer" @wheel.stop @touchmove.stop>
         <div class="drawer-panel">
           <div class="drawer-header">
             <h2>{{ drawerTitle }}</h2>
@@ -61,6 +68,7 @@ onMounted(() => {
             <LangfuseConfigPanel v-else-if="activeSection === 'langfuse-config'" />
             <ImageConfigPanel v-else-if="activeSection === 'image-config'" />
             <AuditLogPanel v-else-if="activeSection === 'audit-logs'" />
+            <DataManagePanel v-else-if="activeSection === 'data-manage'" />
           </div>
         </div>
       </div>
@@ -121,6 +129,7 @@ onMounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: 20px;
+  overscroll-behavior: contain;
 }
 
 /* Transition */

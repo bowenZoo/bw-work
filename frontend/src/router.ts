@@ -37,6 +37,11 @@ const router = createRouter({
       name: 'discussion',
       component: DiscussionView,
     },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('@/views/SettingsView.vue'),
+    },
     // Admin routes kept for backward compat
     {
       path: '/admin/login',
@@ -72,7 +77,7 @@ const router = createRouter({
 })
 
 // Auth guard
-const deepRoutes = ['project-detail', 'document', 'discussion', 'session']
+const deepRoutes = ['project-detail', 'document', 'discussion', 'session', 'settings']
 
 router.beforeEach(async (to, from) => {
   if (to.meta.isAdminRoute) return true

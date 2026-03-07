@@ -6,6 +6,7 @@ import { useUserStore } from '@/stores/user'
 import UserMenu from '@/components/layout/UserMenu.vue'
 import LoginModal from '@/components/auth/LoginModal.vue'
 import AgentConfigEditor from '@/components/discussion/AgentConfigEditor.vue'
+import AnnouncementBanner from '@/components/layout/AnnouncementBanner.vue'
 import type { DiscussionStyleFull, DiscussionStyleOverrides } from '@/types'
 
 const router = useRouter()
@@ -278,6 +279,7 @@ onMounted(async () => {
   } else {
     showLoginModal.value = true
   }
+  window.addEventListener('bw:hall-refresh', refresh)
 })
 
 watch(() => userStore.isAuthenticated, (val) => {
@@ -431,13 +433,19 @@ const hallExpose = {
   doCreateProject,
 }
 ;(window as any).__bwHall = hallExpose
-onUnmounted(() => { delete (window as any).__bwHall })
+onUnmounted(() => {
+  delete (window as any).__bwHall
+  window.removeEventListener('bw:hall-refresh', refresh)
+})
 </script>
 
 <template>
   <div class="hall">
     <header class="hall-header">
-      <h1 class="hall-title">🎮 BW-Work</h1>
+      <div class="hall-header-left">
+        <h1 class="hall-title">🎮 BW-Work</h1>
+        <AnnouncementBanner />
+      </div>
       <div class="hall-actions" v-if="userStore.isAuthenticated">
         <button class="btn btn-secondary" @click="showNewDiscussion = true">+ 新讨论</button>
         <button class="btn btn-secondary" @click="showNewProject = true">+ 新项目</button>
@@ -887,6 +895,13 @@ onUnmounted(() => { delete (window as any).__bwHall })
   top: 0;
   z-index: 10;
   gap: 16px;
+}
+.hall-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
 }
 .hall-title {
   font-family: Outfit, sans-serif;

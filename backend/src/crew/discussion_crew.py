@@ -720,6 +720,16 @@ class DiscussionCrew:
         # --- Layer 1: Meeting meta ---
         parts.append(f"## 议题\n{topic}")
 
+        # Producer role clarification (always injected)
+        parts.append(
+            "\n## 重要：关于制作人\n"
+            "**制作人是发起本次讨论的人类用户，也是这个游戏项目的创建者和最终决策者。**\n"
+            "- 项目的初心、创意来源、目标受众等第一手想法，来自制作人本人，不是由任何 AI 角色预设的\n"
+            "- 当你需要了解「项目为什么做」「创作初心是什么」「目标玩家是谁」等制作人视角的信息时，"
+            "必须在 ```speakers``` 块中加入 `制作人`，邀请其亲自分享，而不是让主策划或其他 AI 角色代为回答\n"
+            "- 主策划（AI）的职责是主持和引导讨论，不能替代制作人回答项目起源类问题"
+        )
+
         # Briefing (if available)
         if self._briefing:
             parts.append(f"\n## 项目简报\n{self._briefing[:1000]}")
