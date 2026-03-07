@@ -515,7 +515,7 @@ class TestContinueDiscussionAPI:
         assert resp.status_code == 400
 
     def test_continue_validation(self, client):
-        """空的 follow_up 返回验证错误。"""
+        """空的 follow_up 被接受（follow_up 为可选项）。"""
         disc = _make_discussion(id="test-cont-val", status=DiscussionStatus.COMPLETED)
         save_discussion_state(disc)
 
@@ -523,7 +523,7 @@ class TestContinueDiscussionAPI:
             "/api/discussions/test-cont-val/continue",
             json={"follow_up": ""},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 200
 
 
 # ==============================================================================

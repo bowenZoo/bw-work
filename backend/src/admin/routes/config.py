@@ -705,3 +705,46 @@ async def _test_llm_profile_config(
             message="连接超时",
             latency_ms=latency,
         )
+
+
+# ===========================================================================
+# Stage moderator config
+# ===========================================================================
+
+VALID_MODERATOR_ROLES = {
+    "lead_planner", "creative_director", "system_designer", "number_designer",
+    "visual_concept", "market_director", "operations_analyst", "player_advocate",
+    "tech_director",
+}
+
+
+class StageModeratorsResponse(BaseModel):
+    moderators: dict  # template_id -> role_name
+
+
+class SetStageModeratorRequest(BaseModel):
+    role: str
+
+
+@router.get("/stage-moderators", response_model=StageModeratorsResponse)
+async def get_stage_moderators(
+    config_store: ConfigStore = Depends(get_config_store),
+    user: dict = Depends(get_current_user),
+):
+    """Get moderator role for each stage template."""
+    return StageModeratorsResponse(moderators=config_store.get_stage_moderators())
+
+
+@router.put("/stage-moderators/{template_id}")
+async def set_stage_moderator(
+    template_id: str,
+    body: SetStageModeratorRequest,
+    request: Request,
+    config_store: ConfigStore = Depends(get_config_store),
+    user: dict = Depends(get_current_user),
+):
+    """Set moderator role for a stage template."""
+    if body.role not in VALID_MODERATOR_ROLES:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Valid: {sorted(VALID_MODERATOR_ROLES)}")
+    config_store.set_stage_moderator(template_id, body.role)
+    return {"ok": True, "template_id": template_id, "role": body.role}

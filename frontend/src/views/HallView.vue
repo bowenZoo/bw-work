@@ -492,8 +492,9 @@ onUnmounted(() => { delete (window as any).__bwHall })
               <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
             </span>
             <span class="card-type-badge" :class="item.type">{{ item.type === 'discussion' ? '讨论' : '项目' }}</span>
+            <!-- Status badge only for discussions (projects have progress bar below) -->
             <span
-              v-if="statusMap[itemStatus(item)]"
+              v-if="item.type === 'discussion' && statusMap[itemStatus(item)]"
               class="card-status-badge"
               :class="statusMap[itemStatus(item)].cls"
             >{{ statusMap[itemStatus(item)].label }}</span>
@@ -506,8 +507,13 @@ onUnmounted(() => { delete (window as any).__bwHall })
           </h3>
           <p class="card-desc" v-if="item.description">{{ item.description }}</p>
           <div class="card-footer">
-            <span v-if="item.type === 'discussion' && item.extra?.owner_name" class="card-meta">
-              {{ item.extra.owner_name }}
+            <!-- Creator avatar + name -->
+            <span v-if="item.extra?.owner_name" class="card-creator">
+              <span class="creator-avatar" :title="item.extra.owner_name">
+                <img v-if="item.extra?.owner_avatar" :src="item.extra.owner_avatar" :alt="item.extra.owner_name" class="creator-avatar-img" />
+                <span v-else class="creator-avatar-fallback">{{ item.extra.owner_name.charAt(0) }}</span>
+              </span>
+              <span class="creator-name">{{ item.extra.owner_name }}</span>
             </span>
             <span v-if="item.type === 'discussion' && item.extra?.participants_count != null" class="card-meta">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -808,29 +814,48 @@ onUnmounted(() => { delete (window as any).__bwHall })
     <!-- Access Request Modal -->
     <Transition name="fade">
       <div v-if="showAccessModal" class="dialog-overlay" @click.self="showAccessModal = false">
-        <div class="dialog dialog-enhanced">
-          <h3 class="dialog-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            这是私密项目
-          </h3>
-          <div v-if="!accessRequestDone" class="access-modal-body">
-            <p class="access-project-name">{{ accessModalProject?.name }}</p>
-            <p class="access-hint">你没有访问权限，可以申请加入</p>
-            <div class="access-actions">
-              <button class="btn btn-primary" @click="requestAccess('viewer')" :disabled="accessRequesting">申请查看权限</button>
-              <button class="btn btn-primary" @click="requestAccess('editor')" :disabled="accessRequesting">申请编辑权限</button>
-              <button class="btn btn-secondary" @click="showAccessModal = false">取消</button>
-            </div>
+        <div class="access-modal">
+          <div class="access-modal-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           </div>
-          <div v-else class="access-modal-body">
-            <p class="access-done-icon">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-            </p>
-            <p class="access-done-text">已提交申请，等待管理员审批</p>
-            <p class="access-done-hint">申请角色：{{ accessPendingRole === 'viewer' ? '查看者' : '编辑者' }}</p>
-            <div class="access-actions">
-              <button class="btn btn-secondary" @click="showAccessModal = false">关闭</button>
+
+          <div v-if="!accessRequestDone">
+            <h3 class="access-modal-title">私密项目</h3>
+            <p class="access-modal-name">{{ accessModalProject?.name }}</p>
+            <p class="access-modal-hint">你没有访问此项目的权限，请选择要申请的角色：</p>
+            <div class="access-role-cards">
+              <button class="access-role-card" @click="requestAccess('viewer')" :disabled="accessRequesting">
+                <div class="access-role-icon">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </div>
+                <div class="access-role-info">
+                  <span class="access-role-name">查看者</span>
+                  <span class="access-role-desc">仅可查看项目内容</span>
+                </div>
+                <svg class="access-role-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+              <button class="access-role-card" @click="requestAccess('editor')" :disabled="accessRequesting">
+                <div class="access-role-icon editor">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </div>
+                <div class="access-role-info">
+                  <span class="access-role-name">编辑者</span>
+                  <span class="access-role-desc">可参与讨论并编辑文档</span>
+                </div>
+                <svg class="access-role-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
             </div>
+            <button class="access-cancel-btn" @click="showAccessModal = false">取消</button>
+          </div>
+
+          <div v-else class="access-done">
+            <div class="access-done-check">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <h3 class="access-modal-title">申请已提交</h3>
+            <p class="access-modal-hint">等待项目管理员审批</p>
+            <div class="access-done-role">申请角色：<strong>{{ accessPendingRole === 'viewer' ? '查看者' : '编辑者' }}</strong></div>
+            <button class="btn btn-primary" style="margin-top:16px;width:100%" @click="showAccessModal = false">知道了</button>
           </div>
         </div>
       </div>
@@ -951,8 +976,8 @@ onUnmounted(() => { delete (window as any).__bwHall })
 /* === Grid === */
 .hall-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
   padding: 24px;
 }
 
@@ -960,7 +985,8 @@ onUnmounted(() => { delete (window as any).__bwHall })
 .hall-card {
   background: #FFFFFF;
   border-radius: 16px;
-  padding: 18px;
+  padding: 20px;
+  min-height: 160px;
   box-shadow: 0 2px 12px #0000000D;
   cursor: pointer;
   transition: box-shadow 0.15s, transform 0.15s;
@@ -1009,6 +1035,32 @@ onUnmounted(() => { delete (window as any).__bwHall })
 .card-footer { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .card-meta  { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: #9CA3AF; }
 .card-time  { font-size: 12px; color: #9CA3AF; margin-left: auto; }
+
+/* === Creator avatar === */
+.card-creator { display: inline-flex; align-items: center; gap: 5px; }
+.creator-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.creator-avatar-img { width: 100%; height: 100%; object-fit: cover; }
+.creator-avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: #EDE9FE;
+  color: #7C3AED;
+  font-size: 10px;
+  font-weight: 700;
+}
+.creator-name { font-size: 12px; color: #9CA3AF; }
 .card-last-active {
   font-size: 11px;
   color: #A1A1AA;
@@ -1123,7 +1175,122 @@ onUnmounted(() => { delete (window as any).__bwHall })
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
+/* === Access Request Modal (redesigned) === */
+.access-modal {
+  background: #FFFFFF;
+  border-radius: 20px;
+  padding: 28px 28px 24px;
+  width: min(380px, 92vw);
+  box-shadow: 0 12px 40px #00000022;
+  text-align: center;
+}
+.access-modal-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: #FEF3C7;
+  color: #D97706;
+  margin: 0 auto 16px;
+}
+.access-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #18181B;
+  margin: 0 0 4px;
+}
+.access-modal-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #7C3AED;
+  margin: 0 0 12px;
+}
+.access-modal-hint {
+  font-size: 13px;
+  color: #6B7280;
+  margin: 0 0 16px;
+}
+.access-role-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.access-role-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #F9F8FF;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+  font-family: inherit;
+}
+.access-role-card:hover:not(:disabled) {
+  border-color: #7C3AED;
+  background: #F5F3FF;
+}
+.access-role-card:disabled { opacity: 0.5; cursor: not-allowed; }
+.access-role-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #EDE9FE;
+  color: #7C3AED;
+  flex-shrink: 0;
+}
+.access-role-icon.editor { background: #DCFCE7; color: #16A34A; }
+.access-role-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.access-role-name { font-size: 14px; font-weight: 600; color: #18181B; }
+.access-role-desc { font-size: 12px; color: #6B7280; }
+.access-role-arrow { color: #9CA3AF; flex-shrink: 0; }
+.access-cancel-btn {
+  width: 100%;
+  padding: 8px;
+  border: none;
+  background: none;
+  color: #9CA3AF;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  border-radius: 8px;
+  transition: color 0.15s, background 0.15s;
+}
+.access-cancel-btn:hover { color: #374151; background: #F5F3F0; }
+.access-done { display: flex; flex-direction: column; align-items: center; }
+.access-done-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: #DCFCE7;
+  margin: 0 auto 16px;
+}
+.access-done-role { font-size: 13px; color: #6B7280; margin-top: 8px; }
+.access-done-role strong { color: #374151; }
+
 /* === Responsive === */
+@media (max-width: 1400px) {
+  .hall-grid { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 1100px) {
+  .hall-grid { grid-template-columns: repeat(3, 1fr); }
+}
 @media (max-width: 768px) {
   .hall-header { padding: 0 16px; }
   .hall-title  { font-size: 17px; }
@@ -1140,10 +1307,13 @@ onUnmounted(() => { delete (window as any).__bwHall })
   }
   .hall-tabs::-webkit-scrollbar { display: none; }
   .tab-btn { flex-shrink: 0; }
-  .hall-grid { grid-template-columns: 1fr; padding: 16px; }
+  .hall-grid { grid-template-columns: repeat(2, 1fr); padding: 16px; gap: 12px; }
   .card-title { font-size: 15px; }
   .dialog-enhanced { width: calc(100vw - 32px); padding: 20px; }
   .dialog-title { font-size: 17px; }
+}
+@media (max-width: 480px) {
+  .hall-grid { grid-template-columns: 1fr; }
 }
 
 /* === 新建讨论弹窗样式 === */

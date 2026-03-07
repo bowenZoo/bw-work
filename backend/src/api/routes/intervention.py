@@ -75,7 +75,7 @@ async def pause_discussion(discussion_id: str) -> PauseResponse:
     if discussion is None:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
-    if discussion.status != DiscussionStatus.RUNNING:
+    if discussion.status not in (DiscussionStatus.RUNNING, DiscussionStatus.WAITING_DECISION):
         raise HTTPException(
             status_code=400,
             detail=f"Discussion cannot be paused: current status is {discussion.status}",

@@ -62,6 +62,7 @@ const router = createRouter({
         { path: 'langfuse', name: 'admin-langfuse', component: () => import('@/views/admin/LangfuseConfigView.vue') },
         { path: 'image', name: 'admin-image', component: () => import('@/views/admin/ImageConfigView.vue') },
         { path: 'discussion', name: 'admin-discussion', component: () => import('@/views/admin/DiscussionConfigView.vue') },
+        { path: 'data', name: 'admin-data', component: () => import('@/views/admin/DataManageView.vue') },
         { path: 'logs', name: 'admin-logs', component: () => import('@/views/admin/AuditLogView.vue') },
       ],
     },

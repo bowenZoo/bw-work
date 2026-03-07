@@ -275,22 +275,69 @@ class LeadPlanner(BaseAgent):
             return False
         return "## 前序讨论上下文" in attachment
 
-    def create_opening_prompt(self, topic: str, attachment: str | None = None) -> str:
+    def _format_agent_list(
+        self,
+        agent_list: list[tuple[str, str]] | None,
+    ) -> str:
+        """Format agent list for inclusion in prompts.
+
+        Args:
+            agent_list: List of (role_name, description) tuples, or None.
+
+        Returns:
+            Formatted string listing team members.
+        """
+        if agent_list:
+            lines = [f"- {role}：{desc}" for role, desc in agent_list]
+            return "\n".join(lines)
+        # Fallback to default list (should not happen in normal usage)
+        return (
+            "- 系统策划：负责系统设计、技术架构、功能逻辑、客户端/服务器实现方案\n"
+            "- 数值策划：负责数值设计、经济系统、平衡性、数据分析\n"
+            "- 玩家代言人：负责玩家体验、用户反馈、市场角度、可玩性评估\n"
+            "- 市场运营：负责运营可行性、MVP 判断、付费健康度、留存设计、上线节奏"
+        )
+
+    def _format_agent_names(
+        self,
+        agent_list: list[tuple[str, str]] | None,
+    ) -> str:
+        """Format agent names as a slash-separated list for role reminders.
+
+        Args:
+            agent_list: List of (role_name, description) tuples, or None.
+
+        Returns:
+            Slash-separated role name string.
+        """
+        if agent_list:
+            return "、".join(role for role, _ in agent_list)
+        return "系统策划、数值策划、玩家代言人、市场运营"
+
+    def create_opening_prompt(
+        self,
+        topic: str,
+        attachment: str | None = None,
+        agent_list: list[tuple[str, str]] | None = None,
+    ) -> str:
         """Create the opening prompt for a discussion.
 
         Args:
             topic: The discussion topic.
             attachment: Optional attachment content.
+            agent_list: List of (role_name, description) tuples for actual
+                participants. When provided, replaces the hardcoded default list.
 
         Returns:
             Opening prompt for the Lead Planner.
         """
         # 检测是否是续前讨论
         is_continuation = self._is_continuation_attachment(attachment)
+        agent_block = self._format_agent_list(agent_list)
 
         if is_continuation:
             # 续前讨论的开场 prompt
-            return f"""作为主策划，这是一次**续前讨论**。
+            return f"""作为{self.role}，这是一次**续前讨论**。
 
 议题：{topic}
 
@@ -303,11 +350,8 @@ class LeadPlanner(BaseAgent):
 角色名1, 角色名2
 ```
 
-**你的团队成员**（只有以下角色参与讨论，请只向他们提问）：
-- 系统策划：负责系统设计、技术架构、功能逻辑、客户端/服务器实现方案
-- 数值策划：负责数值设计、经济系统、平衡性、数据分析
-- 玩家代言人：负责玩家体验、用户反馈、市场角度、可玩性评估
-- 市场运营：负责运营可行性、MVP 判断、付费健康度、留存设计、上线节奏
+**你的团队成员（⚠️ 严格限制：speakers 块中只能填写以下角色名，完全匹配，使用其他任何名字将导致错误）**：
+{agent_block}
 
 ---
 前序讨论上下文：
@@ -321,16 +365,13 @@ class LeadPlanner(BaseAgent):
         if attachment:
             attachment_section = f"\n\n---\n附件内容：\n{attachment}\n---\n"
 
-        return f"""作为主策划，请为以下话题主持讨论的开场：
+        return f"""作为{self.role}，请为以下话题主持讨论的开场：
 
 话题：{topic}
 {attachment_section}
 
-**你的团队成员**（只有以下角色参与讨论，请只向他们提问）：
-- 系统策划：负责系统设计、技术架构、功能逻辑、客户端/服务器实现方案
-- 数值策划：负责数值设计、经济系统、平衡性、数据分析
-- 玩家代言人：负责玩家体验、用户反馈、市场角度、可玩性评估
-- 市场运营：负责运营可行性、MVP 判断、付费健康度、留存设计、上线节奏
+**你的团队成员（⚠️ 严格限制：speakers 块中只能填写以下角色名，完全匹配，使用其他任何名字将导致错误）**：
+{agent_block}
 
 请完成以下任务：
 1. 【讨论目标】明确本次讨论要达成什么目标
@@ -348,21 +389,25 @@ class LeadPlanner(BaseAgent):
         self,
         round_num: int,
         topic: str,
+        agent_list: list[tuple[str, str]] | None = None,
     ) -> str:
         """Create prompt for round summary.
 
         Args:
             round_num: Current round number.
             topic: The discussion topic.
+            agent_list: List of (role_name, description) tuples for actual
+                participants. When provided, replaces the hardcoded default list.
 
         Returns:
             Summary prompt for the Lead Planner.
         """
-        return f"""作为主策划，请对第{round_num}轮讨论进行总结：
+        agent_names = self._format_agent_names(agent_list)
+        return f"""作为{self.role}，请对第{round_num}轮讨论进行总结：
 
 话题：{topic}
 
-**提醒**：你的团队只有系统策划、数值策划、玩家代言人、市场运营四个角色。
+**提醒**：你的团队只有 {agent_names}，不要提及其他角色。
 
 请按以下格式输出：
 
@@ -378,7 +423,7 @@ class LeadPlanner(BaseAgent):
 
 ### 【需要深入】
 - 对于需要进一步讨论的点，提出具体问题
-- 只能指定以下角色回答：系统策划 / 数值策划 / 玩家代言人 / 市场运营
+- 只能指定以下角色回答：{agent_names}
 - 格式：[问题]? → @角色
 
 ### 【临时决策】（如有）
@@ -395,7 +440,7 @@ class LeadPlanner(BaseAgent):
 ```speakers
 角色名1, 角色名2
 ```
-可选角色：系统策划、数值策划、玩家代言人、市场运营"""
+⚠️ 可选角色（只能使用这些名字，完全匹配）：{agent_names}"""
 
     def create_targeted_question_prompt(
         self,
@@ -415,7 +460,7 @@ class LeadPlanner(BaseAgent):
         """
         return f"""作为{target_role}，请回答主策划的问题：
 
-**主策划的问题**：
+**{self.role}的问题**：
 {question}
 
 **讨论背景**：
@@ -427,18 +472,26 @@ class LeadPlanner(BaseAgent):
 2. 给出具体的建议或方案
 3. 说明你的理由或依据"""
 
-    def create_final_decision_prompt(self, topic: str) -> str:
+    def create_final_decision_prompt(
+        self,
+        topic: str,
+        agent_list: list[tuple[str, str]] | None = None,
+    ) -> str:
         """Create prompt for final decision and document generation.
 
         Args:
             topic: The discussion topic.
+            agent_list: List of (role_name, description) tuples for actual
+                participants. When provided, replaces the hardcoded default list.
 
         Returns:
             Final decision prompt.
         """
-        return f"""作为主策划，请对话题"{topic}"的讨论做最终总结和决策。
+        agent_names = self._format_agent_names(agent_list)
+        all_roles = f"{self.role}/{agent_names}"
+        return f"""作为{self.role}，请对话题"{topic}"的讨论做最终总结和决策。
 
-**提醒**：参与本次讨论的角色只有：系统策划、数值策划、玩家代言人、市场运营。
+**提醒**：参与本次讨论的角色只有：{agent_names}，不要提及其他角色。
 
 请按以下格式输出：
 
@@ -490,7 +543,7 @@ class LeadPlanner(BaseAgent):
 
 ## 6. 下一步行动
 - [ ] 列出具体的执行任务
-- [ ] 指定责任人（只能是：主策划/系统策划/数值策划/玩家代言人/市场运营）
+- [ ] 指定责任人（只能是：{all_roles}）
 - [ ] 标明优先级（P0/P1/P2）
 
 ## 7. 需要的视觉概念
@@ -504,7 +557,7 @@ class LeadPlanner(BaseAgent):
             truncated = attachment[:3000] if len(attachment) > 3000 else attachment
             attachment_section = f"\n\n参考资料:\n{truncated}"
 
-        return f"""作为主策划，请为以下话题规划策划文档结构：
+        return f"""作为{self.role}，请为以下话题规划策划文档结构：
 
 话题：{topic}
 {attachment_section}
@@ -532,28 +585,41 @@ class LeadPlanner(BaseAgent):
 }}}}
 ```"""
 
-    def create_section_discussion_prompt(self, section_title: str, section_description: str,
-                                          current_content: str, round_num: int) -> str:
+    def create_section_discussion_prompt(
+        self,
+        section_title: str,
+        section_description: str,
+        current_content: str,
+        round_num: int,
+        agent_list: list[tuple[str, str]] | None = None,
+    ) -> str:
         content_section = ""
         if current_content and current_content.strip():
             content_section = f"\n\n当前章节已有内容：\n{current_content}"
 
-        return f"""作为主策划，本轮（第{round_num}轮）聚焦讨论以下章节：
+        agent_names = self._format_agent_names(agent_list)
+        return f"""作为{self.role}，本轮（第{round_num}轮）聚焦讨论以下章节：
 
 **章节**: {section_title}
 **章节目标**: {section_description}
 {content_section}
 
 请引导团队讨论这个章节的内容，提出 2-3 个具体问题。
-指定谁来回答（只能指定：系统策划、数值策划、玩家代言人、市场运营）。
+⚠️ 指定发言人时只能从以下角色中选择（严禁使用其他名字）：{agent_names}
 
 用以下格式指定发言人：
 ```speakers
 角色名1, 角色名2
 ```"""
 
-    def create_section_summary_prompt(self, section_title: str, round_num: int) -> str:
-        return f"""作为主策划，请对第{round_num}轮关于"{section_title}"章节的讨论进行总结：
+    def create_section_summary_prompt(
+        self,
+        section_title: str,
+        round_num: int,
+        agent_list: list[tuple[str, str]] | None = None,
+    ) -> str:
+        agent_names = self._format_agent_names(agent_list)
+        return f"""作为{self.role}，请对第{round_num}轮关于"{section_title}"章节的讨论进行总结：
 
 请按以下格式输出：
 ### 本轮讨论要点
@@ -566,6 +632,7 @@ class LeadPlanner(BaseAgent):
 - **需要继续**：该章节还需要更多讨论
 
 ### 下一轮发言人
+⚠️ 可选角色（只能使用这些名字，完全匹配）：{agent_names}
 ```speakers
 角色名1, 角色名2
 ```
@@ -633,7 +700,7 @@ replan: <重规划原因>
             truncated = attachment[:2000] if len(attachment) > 2000 else attachment
             attachment_section = f"\n\n参考资料：\n{truncated}..."
 
-        return f"""作为主策划，请为以下议题规划讨论议程：
+        return f"""作为{self.role}，请为以下议题规划讨论议程：
 
 议题：{topic}
 {attachment_section}
@@ -675,7 +742,7 @@ replan: <重规划原因>
             f"- 观众消息 {i+1}: {msg}" for i, msg in enumerate(user_messages)
         )
 
-        return f"""作为主策划，你收到了观众（用户）的实时反馈。请独立消化这些意见，不要直接转发给团队。
+        return f"""作为{self.role}，你收到了观众（用户）的实时反馈。请独立消化这些意见，不要直接转发给团队。
 
 **当前讨论章节**: {current_section}
 
@@ -727,7 +794,7 @@ replan: <重规划原因>
             for s in completed_sections
         ) if completed_sections else "(暂无已完成章节)"
 
-        return f"""作为主策划，请根据你对观众意见的消化分析，评估其对讨论的影响范围。
+        return f"""作为{self.role}，请根据你对观众意见的消化分析，评估其对讨论的影响范围。
 
 **你的消化分析**:
 {digest_summary}
@@ -791,7 +858,7 @@ new_topics:
             f"- {item}" for item in pending_agenda_items
         ) if pending_agenda_items else "(无待定议题)"
 
-        return f"""作为主策划，所有章节讨论已完成。请对全部产出文档进行整体审视。
+        return f"""作为{self.role}，所有章节讨论已完成。请对全部产出文档进行整体审视。
 
 **文档规划概览**:
 {doc_plan_summary}
@@ -889,7 +956,7 @@ new_topics:
                 content_preview = info.get("content", "")[:500]
                 files_block += f"- [{sid}] {info.get('title', '')}: {content_preview}\n"
 
-        return f"""作为主策划，当前文档结构需要重新规划。
+        return f"""作为{self.role}，当前文档结构需要重新规划。
 
 **话题**: {topic}
 
@@ -1003,7 +1070,7 @@ new_topics:
 
         briefing_block = f"\n**制作人简报**: {briefing}" if briefing else ""
 
-        return f"""作为主策划，第{round_num}轮关于「{section_title}」的讨论刚刚结束。请判断是否需要通知制作人。
+        return f"""作为{self.role}，第{round_num}轮关于「{section_title}」的讨论刚刚结束。请判断是否需要通知制作人。
 {briefing_block}
 
 **章节目标**: {section_description}
@@ -1085,7 +1152,7 @@ allow_free_input: true
         if user_response_text:
             response_block += f"\n补充说明: {user_response_text}"
 
-        return f"""作为主策划，制作人已经对以下问题做出了决策。请向团队公开宣布并引导后续讨论。
+        return f"""作为{self.role}，制作人已经对以下问题做出了决策。请向团队公开宣布并引导后续讨论。
 
 **决策问题**: {question}
 
@@ -1121,7 +1188,7 @@ allow_free_input: true
             f"- 制作人消息 {i+1}: {msg}" for i, msg in enumerate(user_messages)
         )
 
-        return f"""作为主策划，你收到了制作人（用户）的实时消息。请消化并给出后续引导。
+        return f"""作为{self.role}，你收到了制作人（用户）的实时消息。请消化并给出后续引导。
 
 **当前讨论章节**: {current_section}
 

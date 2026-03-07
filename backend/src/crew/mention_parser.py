@@ -220,6 +220,67 @@ def parse_next_speakers(
     return parse_mentioned_roles(text, known_roles=known_roles)
 
 
+def sanitize_speakers_in_text(
+    text: str,
+    known_roles: list[str] | None = None,
+) -> str:
+    """Rewrite the ```speakers block to only contain valid known roles.
+
+    Prevents hallucinated role names from appearing in the displayed text
+    while leaving the block parseable for routing. If no valid roles survive
+    the filter, the block is removed so mention-based fallback can take over.
+
+    Args:
+        text: The Lead Planner's output text.
+        known_roles: List of role display names actually present in the
+            current discussion. Roles not in this list are removed.
+
+    Returns:
+        Text with the speakers block sanitized to only valid roles.
+    """
+    if not known_roles:
+        return text
+
+    pattern = re.compile(r"(```speakers\s*\n)(.+?)(\n```)", re.DOTALL)
+    match = pattern.search(text)
+    if not match:
+        return text
+
+    raw = match.group(2).strip()
+    candidates = re.split(r"[,，\n]", raw)
+
+    # Build alias → role mapping (same logic as parse_speaker_block)
+    alias_map: dict[str, str] = {}
+    for p in ROLE_PATTERNS:
+        alias_map[p.role] = p.role
+        for alias in p.aliases:
+            alias_map[alias] = p.role
+    alias_map[PRODUCER_ROLE] = PRODUCER_ROLE
+    for role in known_roles:
+        alias_map[role] = role
+
+    valid_roles: list[str] = []
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        role = alias_map.get(candidate)
+        if role is None:
+            continue
+        if role != PRODUCER_ROLE and role not in known_roles:
+            continue
+        if role not in valid_roles:
+            valid_roles.append(role)
+
+    if not valid_roles:
+        # Remove the invalid block; parse_next_speakers falls back to mention parsing
+        return pattern.sub("", text).strip()
+
+    new_content = ", ".join(valid_roles)
+    replacement = f"{match.group(1)}{new_content}{match.group(3)}"
+    return text[: match.start()] + replacement + text[match.end() :]
+
+
 def get_all_roles() -> list[str]:
     """Get all defined role names.
 

@@ -254,7 +254,7 @@ class BatchDiscussionRunner:
                 self._skip_requested = False
 
             # All modules completed
-            if not self._pause_requested:
+            if self.state not in (BatchRunnerState.PAUSED, BatchRunnerState.FAILED):
                 self.state = BatchRunnerState.COMPLETED
                 self.end_time = datetime.utcnow()
 

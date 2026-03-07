@@ -46,7 +46,7 @@ class TestDiscussionEndpoints:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["rounds"] == 3  # Default
+        assert data["rounds"] == 10  # Default
 
     def test_create_discussion_invalid_topic(self, client):
         """Creating a discussion with empty topic fails."""

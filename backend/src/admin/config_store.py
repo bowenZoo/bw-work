@@ -420,3 +420,57 @@ class ConfigStore:
             return None
 
         return self.get_llm_profile(active_id)
+
+    # =========================================================================
+    # Stage moderator config
+    # =========================================================================
+
+    # Default leader for each stage template
+    STAGE_MODERATOR_DEFAULTS: dict = {
+        "concept":        "creative_director",
+        "core-gameplay":  "lead_planner",
+        "art-style":      "visual_concept",
+        "tech-prototype": "tech_director",
+        "system-design":  "system_designer",
+        "numbers":        "number_designer",
+        "ui-ux":          "visual_concept",
+        "level-content":  "lead_planner",
+        "art-assets":     "visual_concept",
+        "default":        "lead_planner",
+    }
+
+    def get_stage_moderators(self) -> dict:
+        """Get moderator role for each stage template.
+
+        Returns default if not configured.
+        """
+        result = dict(self.STAGE_MODERATOR_DEFAULTS)
+        # Override with admin-configured values
+        for template_id in list(result.keys()):
+            stored = self.get("discussion", f"stage_moderator_{template_id}")
+            if stored:
+                result[template_id] = stored
+        return result
+
+    def set_stage_moderator(self, template_id: str, role: str) -> None:
+        """Set moderator role for a stage template.
+
+        Args:
+            template_id: Stage template ID (e.g. 'concept', 'system-design').
+            role: Agent role name (e.g. 'creative_director').
+        """
+        self.set("discussion", f"stage_moderator_{template_id}", role)
+
+    def get_stage_moderator(self, template_id: str) -> str:
+        """Get moderator role for a stage template.
+
+        Args:
+            template_id: Stage template ID.
+
+        Returns:
+            Role name string.
+        """
+        stored = self.get("discussion", f"stage_moderator_{template_id}")
+        if stored:
+            return stored
+        return self.STAGE_MODERATOR_DEFAULTS.get(template_id, "lead_planner")

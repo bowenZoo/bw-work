@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 import type { Message } from '@/types';
 import { useAgentsStore } from '@/stores';
 import { normalizeAgentRole } from '@/utils/agents';
@@ -13,21 +13,9 @@ const props = defineProps<{
 const agentsStore = useAgentsStore();
 const copied = ref(false);
 
-// Collapse state: messages longer than threshold start collapsed
-const COLLAPSE_THRESHOLD = 800; // characters
-const isCollapsed = ref(
-  !props.isStreaming && (props.message.content?.length ?? 0) > COLLAPSE_THRESHOLD
-);
-
-// When streaming ends, check if the final content is long enough to collapse
-watch(
-  () => props.isStreaming,
-  (streaming) => {
-    if (!streaming && (props.message.content?.length ?? 0) > COLLAPSE_THRESHOLD) {
-      isCollapsed.value = true;
-    }
-  }
-);
+// Collapse state: user can manually collapse, but messages don't auto-collapse
+const COLLAPSE_THRESHOLD = 800; // characters — minimum length to show collapse button
+const isCollapsed = ref(false);
 
 const normalizedRole = computed(() => normalizeAgentRole(props.message.agentRole));
 

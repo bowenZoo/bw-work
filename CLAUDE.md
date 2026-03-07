@@ -115,7 +115,7 @@ docker-compose up -d --build
 
 | 层 | 位置 | 用途 |
 |---|------|------|
-| 开发 Agents | `.claude/agents/` | 辅助开发本项目（spec、plan、code review） |
+| 开发 Agents | `.claude/agents/` | 辅助开发本项目（slash 命令调用） |
 | 策划 Agents | `backend/src/agents/` | 业务运行时的 AI 策划角色 |
 
 策划 Agent 列表：LeadPlanner（主持）、SystemDesigner、NumberDesigner、PlayerAdvocate、OperationsAnalyst、VisualConceptAgent、DocumentGenerator、Summarizer
@@ -249,6 +249,52 @@ FastAPI 中 `/ws/{discussion_id}` 会吞掉 `/ws/discussion`。**固定路径路
 ```
 
 Plan 中验证命令必须使用 settings.local.json 中已授权的格式（`python -m pytest`、`ruff check`、`tsc --noEmit` 等）。
+
+## 开发 Agent 调用指南
+
+> **重要**：`.claude/agents/` 下的自定义 Agent 只能通过 `/agent-name` **斜杠命令**调用，**不能**通过 `Agent` 工具的 `subagent_type` 参数调用。
+
+### Agent 列表
+
+| 斜杠命令 | 触发时机 |
+|---------|---------|
+| `/spec-writer` | 收到新功能需求，开发开始**之前**，将需求转化为 `docs/spec.md` |
+| `/backend-dev` | 实现 FastAPI 路由、CrewAI 逻辑、WebSocket、数据库操作 |
+| `/frontend-dev` | 实现 Vue 3 组件、Pinia store、实时 UI 交互 |
+| `/test-engineer` | 新功能开发完成后补充测试；Bug 修复后写回归测试 |
+| `/code-reviewer` | PR 合并前、大型功能开发完成后做质量/安全审查 |
+| `/prompt-engineer` | 调整策划 Agent 角色配置、优化讨论质量、新增讨论风格 |
+
+### 标准开发流程
+
+```
+需求 → /spec-writer (生成 spec.md)
+     → /backend-dev (后端实现)
+     → /frontend-dev (前端实现)   ← 可与后端并行
+     → /test-engineer (补充测试)
+     → /code-reviewer (审查)
+     → git commit
+```
+
+### 测试工作流
+
+每次新功能或 Bug 修复完成后，调用 `/test-engineer`：
+
+```bash
+# 后端单元/集成测试
+cd backend && .venv/bin/python -m pytest tests/ -v
+
+# E2E 测试（需要前后端已启动：后端 18000，前端 18001）
+cd frontend && pnpm test:e2e e2e/<对应spec文件>.spec.ts
+
+# 全部 E2E
+cd frontend && pnpm test:e2e
+```
+
+`/test-engineer` 会根据变更类型自动判断：
+- 新增 API 端点 → 写 pytest 测试
+- 新增页面/组件 → 写 Playwright E2E 测试
+- Bug 修复 → 写回归测试防止复现
 
 ## 配置说明
 

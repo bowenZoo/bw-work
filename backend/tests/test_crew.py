@@ -34,8 +34,8 @@ class TestDiscussionCrew:
         crew = DiscussionCrew()
         tasks = crew.create_discussion_tasks("测试话题", rounds=1)
 
-        # Should have 3 agents * 1 round + 1 summary = 4 tasks
-        assert len(tasks) == 4
+        # 1 opening + 6 agents * 1 round + 1 round summary + 1 final = 9 tasks
+        assert len(tasks) == 9
 
     @pytest.mark.skipif(not HAS_OPENAI_KEY, reason="OPENAI_API_KEY not configured")
     def test_create_discussion_tasks_multiple_rounds(self):
@@ -43,8 +43,8 @@ class TestDiscussionCrew:
         crew = DiscussionCrew()
         tasks = crew.create_discussion_tasks("测试话题", rounds=2)
 
-        # Should have 3 agents * 2 rounds + 1 summary = 7 tasks
-        assert len(tasks) == 7
+        # 1 opening + 6 agents * 2 rounds + 2 round summaries + 1 final = 16 tasks
+        assert len(tasks) == 16
 
     @pytest.mark.skipif(not HAS_OPENAI_KEY, reason="OPENAI_API_KEY not configured")
     def test_create_discussion_tasks_has_correct_topic(self):
@@ -87,7 +87,7 @@ class TestDiscussionCrewTaskContent:
         tasks = crew.create_discussion_tasks("测试", rounds=1)
 
         first_task = tasks[0]
-        assert "初步看法" in first_task.description or "设计建议" in first_task.description
+        assert "讨论目标" in first_task.description or "开场" in first_task.description
 
     @pytest.mark.skipif(not HAS_OPENAI_KEY, reason="OPENAI_API_KEY not configured")
     def test_subsequent_tasks_respond_to_previous(self):

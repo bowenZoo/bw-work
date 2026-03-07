@@ -201,6 +201,8 @@ class TestWebSocketEndpoint:
     def test_websocket_ping_pong(self, client):
         """WebSocket responds to ping with pong."""
         with client.websocket_connect("/ws/test-discussion") as websocket:
+            # Consume initial sync message sent upon connection
+            websocket.receive_json()
             # Send ping
             websocket.send_json({"type": "ping"})
             # Receive pong
@@ -211,6 +213,8 @@ class TestWebSocketEndpoint:
     def test_websocket_invalid_json(self, client):
         """WebSocket handles invalid JSON gracefully."""
         with client.websocket_connect("/ws/test-discussion") as websocket:
+            # Consume initial sync message
+            websocket.receive_json()
             # Send invalid JSON
             websocket.send_text("not valid json")
             # Connection should still be alive - send a ping
@@ -221,6 +225,8 @@ class TestWebSocketEndpoint:
     def test_websocket_unknown_message_type(self, client):
         """WebSocket handles unknown message types gracefully."""
         with client.websocket_connect("/ws/test-discussion") as websocket:
+            # Consume initial sync message
+            websocket.receive_json()
             # Send unknown message type
             websocket.send_json({"type": "unknown"})
             # Connection should still be alive - send a ping
@@ -236,7 +242,9 @@ class TestMultipleClients:
         """Multiple clients can connect to the same discussion."""
         with client.websocket_connect("/ws/test-discussion") as ws1:
             with client.websocket_connect("/ws/test-discussion") as ws2:
-                # Both connections established
+                # Both connections established; consume initial sync messages
+                ws1.receive_json()
+                ws2.receive_json()
                 ws1.send_json({"type": "ping"})
                 response1 = ws1.receive_json()
                 assert response1["type"] == "pong"
@@ -249,7 +257,9 @@ class TestMultipleClients:
         """Clients can connect to different discussions."""
         with client.websocket_connect("/ws/discussion-1") as ws1:
             with client.websocket_connect("/ws/discussion-2") as ws2:
-                # Both connections established
+                # Both connections established; consume initial sync messages
+                ws1.receive_json()
+                ws2.receive_json()
                 ws1.send_json({"type": "ping"})
                 response1 = ws1.receive_json()
                 assert response1["type"] == "pong"

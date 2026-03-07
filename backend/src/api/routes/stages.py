@@ -174,6 +174,22 @@ async def get_hall(user: dict = Depends(get_current_user)):
         proj_extra: dict = {"stage_progress": f"{completed}/{total}", "total_stages": total, "completed_stages": completed}
         if proj_status:
             proj_extra["status"] = proj_status
+        # Look up the first admin member as project creator
+        try:
+            with db.get_cursor() as _cur:
+                _cur.execute(
+                    "SELECT u.username, u.display_name, u.avatar "
+                    "FROM project_members pm JOIN users u ON pm.user_id = u.id "
+                    "WHERE pm.project_id = ? AND pm.role IN ('admin','editor','viewer') "
+                    "ORDER BY pm.joined_at ASC LIMIT 1",
+                    (slug,)
+                )
+                crow = _cur.fetchone()
+                if crow:
+                    proj_extra["owner_name"] = crow["display_name"] or crow["username"]
+                    proj_extra["owner_avatar"] = crow["avatar"]
+        except Exception:
+            pass
         items.append(HallItemResponse(
             type="project",
             id=slug,
@@ -202,13 +218,33 @@ async def get_hall(user: dict = Depends(get_current_user)):
                 disc_status = _mem_discussions[disc_id].status.value
             else:
                 disc_status = "completed"
+            # Look up owner info from admin.db
+            owner_id = r.get("owner_id")
+            owner_name = None
+            owner_avatar = None
+            if owner_id:
+                try:
+                    with db.get_cursor() as _cur:
+                        _cur.execute("SELECT username, display_name, avatar FROM users WHERE id = ?", (owner_id,))
+                        urow = _cur.fetchone()
+                        if urow:
+                            owner_name = urow["display_name"] or urow["username"]
+                            owner_avatar = urow["avatar"]
+                except Exception:
+                    pass
             items.append(HallItemResponse(
                 type="discussion",
                 id=disc_id,
                 name=r["topic"],
                 description=r.get("summary", "") or "",
                 updated_at=r.get("updated_at", ""),
-                extra={"message_count": r.get("message_count", 0), "owner_id": r.get("owner_id"), "status": disc_status},
+                extra={
+                    "message_count": r.get("message_count", 0),
+                    "owner_id": owner_id,
+                    "owner_name": owner_name,
+                    "owner_avatar": owner_avatar,
+                    "status": disc_status,
+                },
             ))
         idx_db.close()
     except Exception as e:

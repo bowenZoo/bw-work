@@ -60,6 +60,7 @@ class TestBatchDiscussionRunner:
             config=BatchDiscussionConfig(
                 max_rounds_per_module=3,
                 checkpoint_interval_seconds=1,
+                ws_throttle_ms=0,
             ),
         )
 
@@ -78,13 +79,15 @@ class TestBatchDiscussionRunner:
         """Test pause and resume functionality."""
         runner = self._create_runner()
 
-        # Run for a bit then pause
+        # Run for a bit then pause - use gather for reliable interleaving
         async def pause_after_delay():
             await asyncio.sleep(0.05)
             runner.request_pause()
 
-        asyncio.create_task(pause_after_delay())
-        results = await runner.run()
+        results, _ = await asyncio.gather(
+            runner.run(),
+            pause_after_delay(),
+        )
 
         # Should be paused with some modules done
         assert runner.state == BatchRunnerState.PAUSED

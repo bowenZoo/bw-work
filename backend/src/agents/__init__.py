@@ -11,6 +11,7 @@ from src.agents.operations_analyst import OperationsAnalyst
 from src.agents.player_advocate import PlayerAdvocate
 from src.agents.summarizer import DiscussionSummary, Summarizer
 from src.agents.system_designer import SystemDesigner
+from src.agents.tech_director import TechDirector
 from src.agents.visual_concept import VisualConceptAgent, create_visual_concept_agent
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "OrganizeResult",
     "DocumentGenerator",
     "PlanningDocument",
+    "TechDirector",
     "VisualConceptAgent",
     "create_visual_concept_agent",
 ]

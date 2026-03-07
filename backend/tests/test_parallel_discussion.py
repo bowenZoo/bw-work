@@ -89,10 +89,10 @@ class TestDiscussionCrewParallel:
 
         crew = DiscussionCrew(discussion_id="test-agents")
 
-        # Should have 3 discussion agents (excluding lead planner)
-        assert len(crew._discussion_agents) == 3
+        # Should have 6 discussion agents (excluding lead planner)
+        assert len(crew._discussion_agents) == 6
 
-        # Check agent roles
+        # Check core agent roles are present
         roles = [agent.role for agent in crew._discussion_agents]
         assert "系统策划" in roles
         assert "数值策划" in roles
@@ -159,7 +159,7 @@ class TestParallelResponses:
         if not agents_to_call:
             agents_to_call = crew._discussion_agents
 
-        assert len(agents_to_call) == 3
+        assert len(agents_to_call) == 6
 
 
 class TestEventSequencing:

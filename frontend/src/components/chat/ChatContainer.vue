@@ -58,9 +58,18 @@ const hiddenCount = computed(() =>
 );
 
 // Merged timeline: messages + non-silent checkpoints, sorted by time
+// Pending decision checkpoints are excluded and shown at bottom
 type TimelineItem =
   | { kind: 'message'; data: Message }
   | { kind: 'checkpoint'; data: Checkpoint }
+
+// Pending decisions (not yet responded) shown at the bottom
+const pendingDecisions = computed<Checkpoint[]>(() => {
+  if (!props.checkpoints) return []
+  return props.checkpoints.filter(
+    cp => cp.type === 'decision' && cp.response === null
+  )
+})
 
 const timelineItems = computed<TimelineItem[]>(() => {
   const items: TimelineItem[] = []
@@ -72,6 +81,8 @@ const timelineItems = computed<TimelineItem[]>(() => {
   if (props.checkpoints) {
     for (const cp of props.checkpoints) {
       if (cp.type === 'silent') continue
+      // Skip pending decisions — they appear at the bottom instead
+      if (cp.type === 'decision' && cp.response === null) continue
       items.push({ kind: 'checkpoint', data: cp })
     }
   }
@@ -116,97 +127,120 @@ const showScrollBtn = computed(() => !isNearBottom.value && renderedMessages.val
 </script>
 
 <template>
-  <div
-    ref="containerRef"
-    class="flex-1 overflow-y-auto bg-white chat-container-wrapper"
-    @scroll="handleScroll"
-  >
-    <!-- Loading state -->
-    <div v-if="isLoading && messages.length === 0" class="flex items-center justify-center h-full">
-      <div class="text-center">
-        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-        <p class="text-gray-500">加载讨论中...</p>
-      </div>
-    </div>
-
-    <!-- Empty state -->
-    <div v-else-if="isEmpty" class="flex items-center justify-center h-full">
-      <div class="text-center text-gray-500">
-        <svg
-          class="w-16 h-16 mx-auto mb-4 text-gray-300"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-          />
-        </svg>
-        <p class="text-lg font-medium">暂无消息</p>
-        <p class="text-sm">开始讨论以查看对话内容</p>
-      </div>
-    </div>
-
-    <!-- Messages + Checkpoints timeline -->
-    <div v-else class="divide-y divide-gray-100">
-      <div
-        v-if="hiddenCount > 0"
-        class="p-3 text-center text-xs text-gray-500 bg-gray-50 border-b border-gray-100"
-      >
-        为提升性能，已隐藏 {{ hiddenCount }} 条早期消息。
-        <button
-          class="ml-2 text-blue-600 hover:text-blue-700 underline"
-          @click="showAll = true"
-        >
-          显示全部
-        </button>
-      </div>
-      <template v-for="item in timelineItems" :key="item.kind === 'message' ? item.data.id : item.data.id">
-        <MessageBubble
-          v-if="item.kind === 'message'"
-          :message="item.data"
-        />
-        <div v-else-if="item.kind === 'checkpoint' && item.data.type === 'decision'" class="checkpoint-item" :data-checkpoint-id="item.data.id">
-          <DecisionCard
-            :checkpoint="item.data"
-            :discussion-id="item.data.discussion_id"
-            @respond="handleRespondCheckpoint"
-          />
-        </div>
-        <div v-else-if="item.kind === 'checkpoint' && item.data.type === 'progress'" class="checkpoint-item">
-          <ProgressNotice :checkpoint="item.data" />
-        </div>
-      </template>
-    </div>
-
-    <!-- Loading indicator at bottom -->
-    <div v-if="isLoading && messages.length > 0" class="p-4 text-center">
-      <div class="inline-flex items-center gap-2 text-gray-500">
-        <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-        <span>智能体思考中...</span>
-      </div>
-    </div>
-
-    <!-- Scroll to bottom button -->
-    <button
-      v-if="showScrollBtn"
-      class="scroll-bottom-btn"
-      @click="scrollToBottom"
-      title="滚动到底部"
+  <div class="chat-outer-wrapper">
+    <div
+      ref="containerRef"
+      class="flex-1 overflow-y-auto bg-white chat-container-wrapper"
+      @scroll="handleScroll"
     >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="6 9 12 15 18 9" />
-      </svg>
-    </button>
+      <!-- Loading state -->
+      <div v-if="isLoading && messages.length === 0" class="flex items-center justify-center h-full">
+        <div class="text-center">
+          <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p class="text-gray-500">加载讨论中...</p>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div v-else-if="isEmpty" class="flex items-center justify-center h-full">
+        <div class="text-center text-gray-500">
+          <svg
+            class="w-16 h-16 mx-auto mb-4 text-gray-300"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+            />
+          </svg>
+          <p class="text-lg font-medium">暂无消息</p>
+          <p class="text-sm">开始讨论以查看对话内容</p>
+        </div>
+      </div>
+
+      <!-- Messages + Checkpoints timeline -->
+      <div v-else class="divide-y divide-gray-100">
+        <div
+          v-if="hiddenCount > 0"
+          class="p-3 text-center text-xs text-gray-500 bg-gray-50 border-b border-gray-100"
+        >
+          为提升性能，已隐藏 {{ hiddenCount }} 条早期消息。
+          <button
+            class="ml-2 text-blue-600 hover:text-blue-700 underline"
+            @click="showAll = true"
+          >
+            显示全部
+          </button>
+        </div>
+        <template v-for="item in timelineItems" :key="item.kind === 'message' ? item.data.id : item.data.id">
+          <MessageBubble
+            v-if="item.kind === 'message'"
+            :message="item.data"
+          />
+          <div v-else-if="item.kind === 'checkpoint' && item.data.type === 'decision'" class="checkpoint-item" :data-checkpoint-id="item.data.id">
+            <DecisionCard
+              :checkpoint="item.data"
+              :discussion-id="item.data.discussion_id"
+              @respond="handleRespondCheckpoint"
+            />
+          </div>
+          <div v-else-if="item.kind === 'checkpoint' && item.data.type === 'progress'" class="checkpoint-item">
+            <ProgressNotice :checkpoint="item.data" />
+          </div>
+        </template>
+      </div>
+
+      <!-- Loading indicator at bottom -->
+      <div v-if="isLoading && messages.length > 0" class="p-4 text-center">
+        <div class="inline-flex items-center gap-2 text-gray-500">
+          <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+          <span>智能体思考中...</span>
+        </div>
+      </div>
+
+      <!-- Scroll to bottom button -->
+      <button
+        v-if="showScrollBtn"
+        class="scroll-bottom-btn"
+        @click="scrollToBottom"
+        title="滚动到底部"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+    </div>
+
+    <!-- Pending decisions pinned to the bottom -->
+    <div v-if="pendingDecisions.length > 0" class="pending-decisions-bar">
+      <DecisionCard
+        v-for="cp in pendingDecisions"
+        :key="cp.id"
+        :checkpoint="cp"
+        :discussion-id="cp.discussion_id"
+        @respond="handleRespondCheckpoint"
+      />
+    </div>
   </div>
 </template>
 
 <style scoped>
+.chat-outer-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
 .chat-container-wrapper {
   position: relative;
+  flex: 1;
+  min-height: 0;
 }
 
 .scroll-bottom-btn {
@@ -237,5 +271,16 @@ const showScrollBtn = computed(() => !isNearBottom.value && renderedMessages.val
 .checkpoint-item {
   padding: 8px 16px;
   margin: 4px 0;
+}
+
+/* Pending decisions bar pinned to the bottom */
+.pending-decisions-bar {
+  flex-shrink: 0;
+  border-top: 2px solid #f59e0b;
+  background: #fffbeb;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 </style>

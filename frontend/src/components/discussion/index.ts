@@ -17,7 +17,6 @@ export { default as RightPanel } from './RightPanel.vue';
 export { default as InlineDesignDocs } from './InlineDesignDocs.vue';
 export { default as DocOutline } from './DocOutline.vue';
 export { default as AgentConfigEditor } from './AgentConfigEditor.vue';
-export { default as InterventionDigestCard } from './InterventionDigestCard.vue';
 export { default as HolisticReviewCard } from './HolisticReviewCard.vue';
 export { default as PasswordVerifyModal } from './PasswordVerifyModal.vue';
 export { default as ProducerInput } from './ProducerInput.vue';

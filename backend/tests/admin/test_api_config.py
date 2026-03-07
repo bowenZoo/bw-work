@@ -176,4 +176,4 @@ class TestConfigByCategory:
         assert response.status_code == 200
         data = response.json()
         assert "default_provider" in data
-        assert "providers" in data
+        assert "openai" in data or "mj" in data

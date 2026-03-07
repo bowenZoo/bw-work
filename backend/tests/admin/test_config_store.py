@@ -137,11 +137,11 @@ class TestCategoryHelpers:
 
     def test_get_image_config(self, test_store):
         """Test getting image service config."""
-        test_store.set("image", "default_provider", "dall_e")
-        test_store.set("image", "dall_e_api_key", "key", encrypted=True)
-        test_store.set("image", "dall_e_enabled", "true")
+        test_store.set("image", "default_provider", "openai")
+        test_store.set("image", "openai_api_key", "key", encrypted=True)
+        test_store.set("image", "openai_enabled", "true")
 
         config = test_store.get_image_config()
-        assert config["default_provider"] == "dall_e"
-        assert "dall_e" in config["providers"]
-        assert config["providers"]["dall_e"]["enabled"] is True
+        assert config["default_provider"] == "openai"
+        assert "openai" in config
+        assert config["openai"]["enabled"] is True
