@@ -13,8 +13,8 @@ import {
   HolisticReviewCard,
   PasswordVerifyModal,
   ProducerInput,
-  ProducerAssist,
 } from '@/components/discussion';
+import ProducerDecisionStack from '@/components/discussion/ProducerDecisionStack.vue';
 import { usePlayback } from '@/composables/usePlayback';
 import { useDiscussion } from '@/composables/useDiscussion';
 import { useAgentsStore } from '@/stores/agents';
@@ -209,6 +209,15 @@ const {
 
 const isRunning = computed(() => discussion.value?.status === 'running' || discussion.value?.status === 'queued' || discussion.value?.status === 'waiting_decision');
 const isFinished = computed(() => discussion.value?.status === 'completed' || discussion.value?.status === 'stopped' || discussion.value?.status === 'failed');
+
+// First unanswered decision checkpoint — passed to ProducerDecisionStack
+const pendingCheckpoint = computed(() => {
+  const cp = checkpoints.value.find(c => c.type === 'decision' && c.response === null)
+  if (!cp) return null
+  return { id: cp.id, question: cp.question }
+})
+
+const isProducerActive = computed(() => isRunning.value && (isProducerTurn.value || isWaitingDecision.value))
 
 // 讨论完成后自动加载投票、数值校验、分支列表（保留基础加载）
 watch(isFinished, (finished) => {
@@ -648,6 +657,12 @@ async function handleRespondCheckpoint(checkpointId: string, optionId: string | 
   if (!success) {
     setError('提交决策失败，请重试');
   }
+}
+
+// Handler for ProducerDecisionStack — responds to checkpoint or sends message
+async function handleStackRespondCheckpoint(id: string, text: string) {
+  const success = await respondToCheckpoint(id, null, text)
+  if (!success) setError('提交决策失败，请重试')
 }
 
 async function handleProducerSend(content: string) {
@@ -1273,8 +1288,19 @@ onUnmounted(() => {
         <div class="divider-handle" />
       </div>
 
-      <!-- Right Panel: Tabs (Round Summaries / Design Docs) + Input -->
+      <!-- Right Panel -->
       <section class="right-panel" :style="rightPanelStyle">
+        <!-- Decision Card Stack — primary action when waiting for producer -->
+        <ProducerDecisionStack
+          v-if="discussion?.id && isProducerActive"
+          :discussion-id="discussion.id"
+          :active="isProducerActive"
+          :pending-checkpoint="pendingCheckpoint"
+          @send="handleProducerSend"
+          @respond-checkpoint="handleStackRespondCheckpoint"
+        />
+
+        <!-- Info panel (文档大纲 / 决策日志 / 轮次总结) — collapsible -->
         <RightPanel
           :round-summaries="roundSummaries"
           :discussion-id="discussion?.id ?? ''"
@@ -1283,16 +1309,9 @@ onUnmounted(() => {
           :doc-contents="docContents"
           :current-section-id="currentSectionId"
           :checkpoints="checkpoints"
+          :is-producer-active="isProducerActive"
           @focus-section="handleFocusSection"
           @scroll-to-checkpoint="handleScrollToCheckpoint"
-        />
-        <!-- Producer Assist — AI 辅助发言（制作人轮次时显示在输入框上方） -->
-        <ProducerAssist
-          v-if="isRunning && discussion?.id && (isProducerTurn || isWaitingDecision)"
-          :discussion-id="discussion.id"
-          :active="isProducerTurn || isWaitingDecision"
-          @fill="(t) => producerInputRef?.fillText(t)"
-          @send="(t) => producerInputRef?.sendText(t)"
         />
         <!-- Producer input (replaces UserInputBox) -->
         <ProducerInput
@@ -2280,6 +2299,17 @@ onUnmounted(() => {
   border-radius: 12px;
   box-shadow: 0 1px 3px #0000000A;
   border: 1px solid #F0EBE4;
+}
+
+/* ProducerDecisionStack takes available space; RightPanel shrinks to fit or just shows header */
+.right-panel :deep(.pds-wrap) {
+  flex: 1;
+  min-height: 0;
+  border-bottom: 1px solid #f0ebe4;
+}
+
+.right-panel :deep(.right-panel-container) {
+  flex-shrink: 0;
 }
 
 /* Fallback layout for non-running or playback mode */

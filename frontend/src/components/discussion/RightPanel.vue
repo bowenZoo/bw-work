@@ -14,6 +14,7 @@ const props = defineProps<{
   docContents: Map<string, string>
   currentSectionId: string | null
   checkpoints?: Checkpoint[]
+  isProducerActive?: boolean  // when true, collapse tabs by default
 }>()
 
 const emit = defineEmits<{
@@ -23,6 +24,12 @@ const emit = defineEmits<{
 
 type TabKey = 'outline' | 'decisions' | 'summaries'
 const activeTab = ref<TabKey>('outline')
+// Collapsed when producer is active (decision cards take priority)
+const panelCollapsed = ref(false)
+
+watch(() => props.isProducerActive, (val) => {
+  panelCollapsed.value = !!val
+}, { immediate: true })
 
 // Doc preview modal state
 const showDocPreview = ref(false)
@@ -114,23 +121,28 @@ function triggerDownload(filename: string, content: string) {
 </script>
 
 <template>
-  <div class="right-panel-container">
-    <div class="tab-bar">
-      <button class="tab-btn" :class="{ active: activeTab === 'outline' }" @click="switchTab('outline')">
+  <div class="right-panel-container" :class="{ 'rp-collapsed': panelCollapsed }">
+    <div class="tab-bar" @click="panelCollapsed && (panelCollapsed = false)">
+      <button class="tab-btn" :class="{ active: activeTab === 'outline' && !panelCollapsed }" @click.stop="switchTab('outline'); panelCollapsed = false">
         <span>文档大纲</span>
         <span v-if="hasNewOutline" class="new-dot"></span>
       </button>
-      <button class="tab-btn" :class="{ active: activeTab === 'decisions' }" @click="switchTab('decisions')">
+      <button class="tab-btn" :class="{ active: activeTab === 'decisions' && !panelCollapsed }" @click.stop="switchTab('decisions'); panelCollapsed = false">
         <span>决策日志</span>
         <span v-if="hasNewDecision" class="new-dot"></span>
       </button>
-      <button class="tab-btn" :class="{ active: activeTab === 'summaries' }" @click="switchTab('summaries')">
+      <button class="tab-btn" :class="{ active: activeTab === 'summaries' && !panelCollapsed }" @click.stop="switchTab('summaries'); panelCollapsed = false">
         <span>轮次总结</span>
         <span v-if="hasNewSummary" class="new-dot"></span>
       </button>
+      <button class="tab-collapse-btn" @click.stop="panelCollapsed = !panelCollapsed" :title="panelCollapsed ? '展开' : '收起'">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline :points="panelCollapsed ? '6 9 12 15 18 9' : '18 15 12 9 6 15'" />
+        </svg>
+      </button>
     </div>
 
-    <div class="tab-content">
+    <div v-show="!panelCollapsed" class="tab-content">
       <DocOutline
         v-show="activeTab === 'outline'"
         :doc-plan="props.docPlan"
@@ -198,7 +210,21 @@ function triggerDownload(filename: string, content: string) {
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-primary);
   flex-shrink: 0;
+  cursor: pointer;
 }
+
+.rp-collapsed .tab-bar {
+  border-bottom: none;
+}
+
+.tab-collapse-btn {
+  flex-shrink: 0;
+  width: 30px;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; cursor: pointer;
+  color: var(--text-secondary); transition: color 0.15s;
+}
+.tab-collapse-btn:hover { color: var(--text-primary); }
 
 .tab-btn {
   flex: 1;

@@ -63,13 +63,8 @@ type TimelineItem =
   | { kind: 'message'; data: Message }
   | { kind: 'checkpoint'; data: Checkpoint }
 
-// Pending decisions (not yet responded) shown at the bottom
-const pendingDecisions = computed<Checkpoint[]>(() => {
-  if (!props.checkpoints) return []
-  return props.checkpoints.filter(
-    cp => cp.type === 'decision' && cp.response === null
-  )
-})
+// Decision cards are shown in the right panel (ProducerDecisionStack), not in chat
+const pendingDecisions = computed<Checkpoint[]>(() => [])
 
 const timelineItems = computed<TimelineItem[]>(() => {
   const items: TimelineItem[] = []
@@ -81,8 +76,9 @@ const timelineItems = computed<TimelineItem[]>(() => {
   if (props.checkpoints) {
     for (const cp of props.checkpoints) {
       if (cp.type === 'silent') continue
-      // Skip pending decisions — they appear at the bottom instead
+      // Decision cards are handled in the right panel; only show responded ones here as log
       if (cp.type === 'decision' && cp.response === null) continue
+      if (cp.type === 'decision' && cp.response !== null) continue  // also hide from chat
       items.push({ kind: 'checkpoint', data: cp })
     }
   }
