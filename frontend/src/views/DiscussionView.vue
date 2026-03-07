@@ -3306,3 +3306,4 @@ onUnmounted(() => {
 .action-badge { font-size: 10px; background: #f97316; color: white; padding: 1px 5px; border-radius: 999px; margin-left: 2px; }
 
 
+</style>
