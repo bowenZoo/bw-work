@@ -29,12 +29,28 @@ const showNewDiscDialog = ref<string | null>(null)
 const newDiscTopic = ref('')
 const creatingDisc = ref(false)
 
+// Stage moderator config loaded from API
+const stageModerators = ref<Record<string, string>>({})
+
+async function loadStageModerators() {
+  try {
+    const base = import.meta.env.VITE_API_BASE || ''
+    const res = await fetch(`${base}/api/discussions/stage-moderators`, {
+      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    })
+    if (res.ok) {
+      const data = await res.json()
+      stageModerators.value = data.moderators || {}
+    }
+  } catch {}
+}
+
 // Stage → pre-configured agents mapping
 const STAGE_AGENTS: Record<string, string[]> = {
   'concept':        ['creative_director', 'lead_planner', 'market_director'],
   'core-gameplay':  ['lead_planner', 'system_designer', 'number_designer'],
   'art-style':      ['lead_planner', 'visual_concept', 'system_designer'],
-  'tech-prototype': ['lead_planner', 'system_designer'],
+  'tech-prototype': ['tech_director', 'system_designer', 'lead_planner'],
   'system-design':  ['system_designer', 'number_designer', 'lead_planner'],
   'numbers':        ['number_designer', 'system_designer', 'lead_planner'],
   'ui-ux':          ['lead_planner', 'visual_concept', 'system_designer'],
@@ -65,10 +81,21 @@ const AGENT_LABELS: Record<string, string> = {
   'visual_concept':     '视觉概念设计师',
   'creative_director':  '创意总监',
   'market_director':    '市场总监',
+  'tech_director':      '技术总监',
+}
+
+function stageModeratorRole(stage: any): string {
+  const tid = stage.template_id || 'default'
+  return stageModerators.value[tid] || (STAGE_AGENTS[tid]?.[0] ?? 'lead_planner')
 }
 
 function stageAgents(stage: any): string[] {
-  return STAGE_AGENTS[stage.template_id] || STAGE_AGENTS['default']
+  const tid = stage.template_id || 'default'
+  const moderator = stageModeratorRole(stage)
+  const baseList = STAGE_AGENTS[tid] || STAGE_AGENTS['default']
+  // Ensure moderator is first; deduplicate
+  const rest = baseList.filter(a => a !== moderator)
+  return [moderator, ...rest]
 }
 
 // Member management
@@ -322,19 +349,6 @@ function openAdopt(output: any, stageDocs: any[]) {
   adoptTargetDoc.value = stageDocs.length ? stageDocs[0].id : ''
 }
 
-onMounted(async () => {
-  await refresh()
-  // Check access denied after load
-  if (project.value?.access_denied) {
-    showAccessModal.value = true
-  }
-  await loadPendingRequests()
-  // Default: locked stages are collapsed
-  stages.value.forEach((s: any) => {
-    if (s.status === 'locked') collapsedStages.value.add(s.id)
-  })
-})
-
 function toggleStage(stageId: string) {
   if (collapsedStages.value.has(stageId)) {
     collapsedStages.value.delete(stageId)
@@ -452,14 +466,21 @@ async function createStageDiscussion(stageId: string) {
         target_type: 'stage',
         target_id: stageId,
         agents,
+        moderator_role: stageModeratorRole(stage || {}),
         rounds: 50,
         auto_pause_interval: 1,
+        producer_stance: newDiscStance.value.trim(),
+        agenda_items: newDiscAgenda.value.trim()
+          ? newDiscAgenda.value.split('\n').map((s: string) => s.replace(/^\d+\.\s*/, '').trim()).filter(Boolean)
+          : [],
       }),
     })
     if (!res.ok) throw new Error('Failed')
     const data = await res.json()
     showNewDiscDialog.value = null
     newDiscTopic.value = ''
+    newDiscStance.value = ''
+    newDiscAgenda.value = ''
     router.push(`/discussion/${data.id}`)
   } catch {
     alert('创建讨论失败')
@@ -467,6 +488,116 @@ async function createStageDiscussion(stageId: string) {
     creatingDisc.value = false
   }
 }
+
+// ============================================================================
+// 功能 3：制作人立场
+// ============================================================================
+const newDiscStance = ref('')
+const newDiscAgenda = ref('')
+
+// ============================================================================
+// 功能 4：GDD 自动导出
+// ============================================================================
+const exportingGdd = ref(false)
+
+async function exportGdd() {
+  if (exportingGdd.value) return
+  exportingGdd.value = true
+  try {
+    const pid = projectId()
+    const res = await fetch(`/api/discussions/export-gdd/${pid}`, {
+      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    })
+    if (!res.ok) { alert('导出失败'); return }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `gdd-${pid}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch { alert('导出失败') }
+  finally { exportingGdd.value = false }
+}
+
+// ============================================================================
+// 功能 5：讨论模板库
+// ============================================================================
+const allTemplates = ref<any[]>([])
+
+async function loadDiscussionTemplates() {
+  try {
+    const res = await fetch('/api/discussions/templates')
+    if (res.ok) {
+      const data = await res.json()
+      allTemplates.value = data.templates || []
+    }
+  } catch {}
+}
+
+function stageTemplates(stageId: string) {
+  const stage = stages.value.find((s: any) => s.id === stageId)
+  const templateId = stage?.template_id || ''
+  return allTemplates.value.filter(t => !templateId || t.stage === templateId)
+}
+
+function applyTemplate(t: any) {
+  if (t.topic_template) {
+    newDiscTopic.value = t.topic_template.replace('{game_name}', project.value?.name || '游戏')
+  }
+  if (t.producer_stance) newDiscStance.value = t.producer_stance
+}
+
+// ============================================================================
+// 功能 10：制作人 AI 助理
+// ============================================================================
+const showAiAssist = ref(false)
+const aiConcept = ref('')
+const aiAudience = ref('')
+const aiRunning = ref(false)
+const aiResult = ref<any>(null)
+
+async function runAiAssist() {
+  if (!aiConcept.value.trim() || aiRunning.value) return
+  aiRunning.value = true
+  try {
+    const params = new URLSearchParams({
+      game_concept: aiConcept.value.trim(),
+      target_audience: aiAudience.value.trim(),
+      game_name: project.value?.name || '游戏',
+    })
+    const res = await fetch(`/api/discussions/ai-assistant/project-kickstart?${params}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    })
+    if (res.ok) {
+      aiResult.value = await res.json()
+    } else {
+      alert('AI 助理分析失败')
+    }
+  } finally { aiRunning.value = false }
+}
+
+function applyAiAgenda(stage: any) {
+  // 将 AI 建议的议程填入新建讨论弹窗
+  const stageId = stages.value.find((s: any) => s.template_id === stage.stage || s.slug === stage.stage)?.id
+  if (stageId) showNewDiscDialog.value = stageId
+  newDiscTopic.value = `${stage.name}：${stage.agenda.join(' / ')}`
+  showAiAssist.value = false
+}
+
+onMounted(async () => {
+  await refresh()
+  if (project.value?.access_denied) {
+    showAccessModal.value = true
+  }
+  await loadPendingRequests()
+  stages.value.forEach((s: any) => {
+    if (s.status === 'locked') collapsedStages.value.add(s.id)
+  })
+  loadStageModerators()
+  loadDiscussionTemplates()
+})
 </script>
 
 <template>
@@ -499,6 +630,14 @@ async function createStageDiscussion(stageId: string) {
         <button v-if="userStore.role === 'superadmin'" class="gear-btn gear-btn-danger" @click="showDeleteConfirm = true" title="删除项目">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
         </button>
+        <button class="export-gdd-btn" @click="exportGdd" :disabled="exportingGdd" title="导出完整 GDD">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          {{ exportingGdd ? '导出中...' : '导出 GDD' }}
+        </button>
+        <button class="ai-assist-btn" @click="showAiAssist = true" title="AI 助理快速规划">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          AI 助理
+        </button>
       </div>
     </div>
 
@@ -526,6 +665,10 @@ async function createStageDiscussion(stageId: string) {
           <div class="col-title-row">
             <span class="col-name">{{ stage.name }}</span>
             <span class="col-count">{{ stageItemCount(stage) }}</span>
+          </div>
+          <div class="col-leader">
+            <span class="leader-icon">★</span>
+            <span class="leader-name">{{ AGENT_LABELS[stageModeratorRole(stage)] || stageModeratorRole(stage) }}</span>
           </div>
         </div>
         <div class="col-body">
@@ -701,10 +844,13 @@ async function createStageDiscussion(stageId: string) {
             <span class="participants-label">参与者：</span>
             <span class="participants-tags">
               <span
-                v-for="agent in stageAgents(stages.find((s: any) => s.id === showNewDiscDialog) || {})"
+                v-for="(agent, idx) in stageAgents(stages.find((s: any) => s.id === showNewDiscDialog) || {})"
                 :key="agent"
                 class="participant-tag"
-              >{{ AGENT_LABELS[agent] || agent }}</span>
+                :class="{ 'participant-leader': idx === 0 }"
+              >
+                <span v-if="idx === 0" class="leader-crown">★</span>{{ AGENT_LABELS[agent] || agent }}
+              </span>
             </span>
           </div>
           <div class="dialog-field">
@@ -717,6 +863,49 @@ async function createStageDiscussion(stageId: string) {
               @keydown.meta.enter="createStageDiscussion(showNewDiscDialog!)"
               @keydown.ctrl.enter="createStageDiscussion(showNewDiscDialog!)"
               autofocus
+            />
+          </div>
+          <!-- 功能 5：模板快速填入 -->
+          <div class="dialog-field">
+            <label class="dialog-label">
+              快速模板
+              <span class="optional-tag">可选</span>
+            </label>
+            <div class="template-chips">
+              <button
+                v-for="t in stageTemplates(showNewDiscDialog!)"
+                :key="t.id"
+                class="template-chip"
+                @click="applyTemplate(t)"
+                :title="t.description"
+              >{{ t.name }}</button>
+              <span v-if="!stageTemplates(showNewDiscDialog!).length" class="no-templates">无可用模板</span>
+            </div>
+          </div>
+          <!-- 功能 3：制作人预设立场 -->
+          <div class="dialog-field">
+            <label class="dialog-label">
+              制作人立场
+              <span class="optional-tag">可选，引导讨论方向</span>
+            </label>
+            <textarea
+              v-model="newDiscStance"
+              placeholder="例：我希望低付费门槛，核心玩法免费可体验..."
+              class="dialog-textarea"
+              rows="2"
+            />
+          </div>
+          <!-- 预设议程 -->
+          <div class="dialog-field">
+            <label class="dialog-label">
+              预设议程
+              <span class="optional-tag">可选，用换行分隔多条</span>
+            </label>
+            <textarea
+              v-model="newDiscAgenda"
+              placeholder="例：&#10;1. 核心机制定义&#10;2. 竞品参考&#10;3. 数值边界"
+              class="dialog-textarea"
+              rows="3"
             />
           </div>
           <div class="dialog-actions">
@@ -830,6 +1019,70 @@ async function createStageDiscussion(stageId: string) {
             </button>
           </div>
           <button class="btn-ghost" @click="goBackToHall">← 返回大厅</button>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- AI 助理弹窗 -->
+    <Transition name="fade">
+      <div v-if="showAiAssist" class="dialog-overlay" @click.self="showAiAssist = false">
+        <div class="dialog dialog-wide ai-assist-dialog">
+          <h3 class="dialog-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            制作人 AI 助理 — 快速规划
+          </h3>
+          <p class="ai-assist-desc">输入游戏概念，AI 自动生成讨论阶段、议程和 GDD 框架。</p>
+
+          <div v-if="!aiResult">
+            <div class="dialog-field">
+              <label class="dialog-label">游戏概念 <span style="color:#ef4444">*</span></label>
+              <textarea v-model="aiConcept" placeholder="例：一款轻度卡牌对战游戏，主打简单策略和丰富的收集养成..." class="dialog-textarea" rows="3" />
+            </div>
+            <div class="dialog-field">
+              <label class="dialog-label">目标受众 <span class="optional-tag">可选</span></label>
+              <input v-model="aiAudience" placeholder="例：休闲玩家 / 女性用户 / 硬核玩家 / 海外市场..." class="dialog-input" />
+            </div>
+            <div class="dialog-actions">
+              <button class="btn btn-secondary" @click="showAiAssist = false">取消</button>
+              <button class="btn btn-primary" @click="runAiAssist" :disabled="!aiConcept.trim() || aiRunning">
+                {{ aiRunning ? '分析中...' : '🤖 生成规划' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-else class="ai-result">
+            <div class="ai-result-header">
+              <span class="ai-type-badge">{{ aiResult.game_type }}</span>
+              <button class="btn-ghost" @click="aiResult = null">← 重新规划</button>
+            </div>
+
+            <!-- 推荐阶段 -->
+            <div class="ai-stages">
+              <div class="ai-section-title">📋 推荐讨论阶段</div>
+              <div v-for="stage in aiResult.recommended_stages" :key="stage.stage" class="ai-stage-card">
+                <div class="ai-stage-name">{{ stage.name }}</div>
+                <div class="ai-stage-agenda">
+                  <span v-for="a in stage.agenda" :key="a" class="ai-agenda-chip">{{ a }}</span>
+                </div>
+                <button class="ai-stage-start-btn" @click="applyAiAgenda(stage)">开始讨论 →</button>
+              </div>
+            </div>
+
+            <!-- 制作人立场建议 -->
+            <div v-if="aiResult.producer_stance_suggestion" class="ai-stance-suggest">
+              <div class="ai-section-title">💡 制作人立场建议</div>
+              <p class="ai-stance-text">{{ aiResult.producer_stance_suggestion }}</p>
+            </div>
+
+            <!-- 提示 -->
+            <div v-if="aiResult.tips?.length" class="ai-tips">
+              <div v-for="(tip, i) in aiResult.tips" :key="i" class="ai-tip-item">💡 {{ tip }}</div>
+            </div>
+
+            <div class="dialog-actions">
+              <button class="btn btn-secondary" @click="showAiAssist = false">关闭</button>
+            </div>
+          </div>
         </div>
       </div>
     </Transition>
@@ -1247,6 +1500,11 @@ async function createStageDiscussion(stageId: string) {
 .participants-label { font-size: 12px; font-weight: 600; color: #7C3AED; white-space: nowrap; padding-top: 3px; }
 .participants-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .participant-tag { font-size: 12px; padding: 2px 10px; background: #EDE9FE; color: #5B21B6; border-radius: 20px; font-weight: 500; }
+.participant-leader { background: #FEF3C7; color: #92400E; font-weight: 600; }
+.leader-crown { margin-right: 3px; }
+.col-leader { display: flex; align-items: center; gap: 4px; padding: 2px 0 4px; }
+.leader-icon { color: #F59E0B; font-size: 11px; }
+.leader-name { font-size: 11px; color: #6B7280; }
 .dialog-enhanced { border-radius: 16px; padding: 28px; width: min(440px, 90vw); box-shadow: 0 8px 32px -4px #00000020; }
 .dialog-title { margin: 0 0 20px; font-size: 19px; font-weight: 700; color: #18181B; }
 .dialog-field { margin-bottom: 14px; }
@@ -1298,4 +1556,82 @@ async function createStageDiscussion(stageId: string) {
   .invite-input { flex: 1 1 100%; }
   .invite-role { width: auto; flex: 1; }
 }
+
+/* ---- GDD Export Button ---- */
+.export-gdd-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1.5px solid #7C3AED;
+  background: transparent;
+  color: #7C3AED;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.export-gdd-btn:hover:not(:disabled) { background: #7C3AED; color: #fff; }
+.export-gdd-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---- Template chips ---- */
+.template-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.template-chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1.5px solid #7C3AED;
+  background: transparent;
+  color: #7C3AED;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.template-chip:hover { background: #7C3AED; color: #fff; }
+.no-templates { font-size: 12px; color: #A1A1AA; }
+
+/* ---- Optional tag ---- */
+.optional-tag {
+  font-size: 11px;
+  font-weight: 400;
+  color: #9CA3AF;
+  margin-left: 6px;
+  background: #F4F4F5;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* ---- AI 助理按钮 ---- */
+.ai-assist-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 8px;
+  border: 1.5px solid #10b981; background: transparent;
+  color: #10b981; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.ai-assist-btn:hover { background: #10b981; color: #fff; }
+
+/* ---- AI 助理弹窗 ---- */
+.ai-assist-dialog { max-width: 560px; }
+.ai-assist-desc { font-size: 13px; color: #6b7280; margin-bottom: 14px; }
+.ai-result-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.ai-type-badge { background: #7c3aed; color: white; padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.ai-section-title { font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 8px; }
+.ai-stages { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.ai-stage-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.ai-stage-name { font-size: 13px; font-weight: 600; color: #374151; }
+.ai-stage-agenda { display: flex; flex-wrap: wrap; gap: 4px; }
+.ai-agenda-chip { font-size: 11px; background: #ede9fe; color: #6d28d9; padding: 2px 8px; border-radius: 999px; }
+.ai-stage-start-btn { align-self: flex-end; font-size: 11px; color: #7c3aed; border: none; background: none; cursor: pointer; font-weight: 600; padding: 0; }
+.ai-stage-start-btn:hover { text-decoration: underline; }
+.ai-stance-suggest { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.ai-stance-text { font-size: 12.5px; color: #92400e; margin: 4px 0 0; }
+.ai-tips { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.ai-tip-item { font-size: 12px; color: #6b7280; background: #f9fafb; padding: 5px 10px; border-radius: 6px; }
 </style>

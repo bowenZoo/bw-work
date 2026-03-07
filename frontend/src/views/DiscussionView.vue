@@ -10,7 +10,6 @@ import {
   CompactAgentBar,
   AgendaSummaryModal,
   RightPanel,
-  InterventionDigestCard,
   HolisticReviewCard,
   PasswordVerifyModal,
   ProducerInput,
@@ -210,6 +209,15 @@ const {
 const isRunning = computed(() => discussion.value?.status === 'running' || discussion.value?.status === 'queued' || discussion.value?.status === 'waiting_decision');
 const isFinished = computed(() => discussion.value?.status === 'completed' || discussion.value?.status === 'stopped' || discussion.value?.status === 'failed');
 
+// 讨论完成后自动加载投票、数值校验、分支列表
+watch(isFinished, (finished) => {
+  if (finished) {
+    loadVotes()
+    loadNumberValidation()
+    loadBranches()
+  }
+}, { immediate: false })
+
 // Show round table layout when discussion has messages (running, queued, completed, or failed)
 const showRoundTableLayout = computed(() => {
   if (!discussion.value) return false;
@@ -359,7 +367,220 @@ onMounted(async () => {
   // Fetch current model info
   fetchCurrentModel();
   document.addEventListener('click', onDocClickModelMenu);
+  // Load discussion templates
+  loadTemplates();
 });
+
+// ============================================================================
+// 功能 1：讨论质量评分
+// ============================================================================
+const qualityScore = computed(() => (discussion.value as any)?.quality_score || null)
+const qualityScoreLabel = (score: number) => {
+  if (score >= 8) return { text: '优秀', cls: 'qs-excellent' }
+  if (score >= 6) return { text: '良好', cls: 'qs-good' }
+  if (score >= 4) return { text: '一般', cls: 'qs-fair' }
+  return { text: '待改进', cls: 'qs-poor' }
+}
+
+// ============================================================================
+// 功能 2：跨阶段依赖提示
+// ============================================================================
+const dependencyHints = computed(() => (discussion.value as any)?.dependency_hints || [])
+const showDependencyHints = ref(true)
+
+// ============================================================================
+// 功能 3：制作人预设立场
+// ============================================================================
+const producerStance = computed(() => (discussion.value as any)?.producer_stance || '')
+const showStance = ref(true)
+
+// ============================================================================
+// 功能 5：讨论模板
+// ============================================================================
+const discussionTemplates = ref<any[]>([])
+async function loadTemplates() {
+  try {
+    const res = await fetch('/api/discussions/templates')
+    if (res.ok) {
+      const data = await res.json()
+      discussionTemplates.value = data.templates || []
+    }
+  } catch {}
+}
+
+// ============================================================================
+// 功能 7：观战模式增强
+// ============================================================================
+const showViewerPanel = ref(false)
+const viewerQuestions = computed(() => (discussion.value as any)?.viewer_questions || [])
+const viewerQuestionText = ref('')
+const viewerName = ref('匿名观众')
+const submittingQuestion = ref(false)
+
+async function submitViewerQuestion() {
+  const id = discussionId.value
+  if (!id || !viewerQuestionText.value.trim() || submittingQuestion.value) return
+  submittingQuestion.value = true
+  try {
+    const res = await fetch(`/api/discussions/${id}/viewer-question`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: viewerQuestionText.value.trim(), viewer_name: viewerName.value }),
+    })
+    if (res.ok) {
+      viewerQuestionText.value = ''
+      await loadLiveDiscussion(id)
+    }
+  } finally { submittingQuestion.value = false }
+}
+
+async function likeViewerQuestion(questionId: string) {
+  const id = discussionId.value
+  if (!id) return
+  await fetch(`/api/discussions/${id}/viewer-question/${questionId}/like`, { method: 'POST' })
+  await loadLiveDiscussion(id)
+}
+
+async function adoptViewerQuestion(questionId: string) {
+  const id = discussionId.value
+  if (!id) return
+  await fetch(`/api/discussions/${id}/viewer-question/${questionId}/adopt`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${userStore.accessToken}` },
+  })
+  await loadLiveDiscussion(id)
+}
+
+// ============================================================================
+// 功能 7（新）：预设议程 显示
+// ============================================================================
+const agendaItems = computed(() => (discussion.value as any)?.agenda_items || [])
+const showAgendaBar = ref(true)
+
+// ============================================================================
+// 功能 2（新）：Agent 投票量化共识
+// ============================================================================
+const votesData = ref<Record<string, {support:number,oppose:number,neutral:number}>>({})
+const showVotesPanel = ref(false)
+
+async function loadVotes() {
+  const id = discussionId.value
+  if (!id) return
+  try {
+    const res = await fetch(`/api/discussions/${id}/votes`, {
+      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    })
+    if (res.ok) {
+      const data = await res.json()
+      votesData.value = data.votes || {}
+    }
+  } catch {}
+}
+
+const AGENT_LABELS: Record<string, string> = {
+  lead_planner: '主策划', system_designer: '系统策划', number_designer: '数值策划',
+  player_advocate: '玩家代言人', operations_analyst: '市场运营',
+  visual_concept: '视觉概念', creative_director: '创意总监', market_director: '市场总监',
+}
+
+// ============================================================================
+// 功能 5（新）：数值自动校验
+// ============================================================================
+const numberValidation = ref<any[] | null>(null)
+const showValidationPanel = ref(false)
+
+async function loadNumberValidation() {
+  const id = discussionId.value
+  if (!id) return
+  try {
+    const res = await fetch(`/api/discussions/${id}/number-validation`, {
+      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    })
+    if (res.ok) {
+      const data = await res.json()
+      numberValidation.value = data.validation || []
+    }
+  } catch {}
+}
+
+const validationWarnings = computed(() =>
+  (numberValidation.value || []).filter((v: any) => v.status !== 'normal')
+)
+
+// ============================================================================
+// 功能 9（新）：讨论摘要自动同步文档
+// ============================================================================
+const syncingDoc = ref(false)
+const syncResult = ref<{ok:boolean,document_id?:string,content?:string,note?:string} | null>(null)
+const showSyncResult = ref(false)
+
+async function syncToDocument() {
+  const id = discussionId.value
+  if (!id || syncingDoc.value) return
+  syncingDoc.value = true
+  try {
+    const res = await fetch(`/api/discussions/${id}/sync-to-document`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    })
+    if (res.ok) {
+      syncResult.value = await res.json()
+      showSyncResult.value = true
+    } else {
+      alert('同步失败')
+    }
+  } finally { syncingDoc.value = false }
+}
+
+// ============================================================================
+// 功能 1（新）：讨论分支探索
+// ============================================================================
+const showBranchPanel = ref(false)
+const branchDirection = ref('')
+const branchStance = ref('')
+const branchRounds = ref(10)
+const creatingBranch = ref(false)
+const branches = ref<any[]>([])
+
+async function loadBranches() {
+  const id = discussionId.value
+  if (!id) return
+  try {
+    const res = await fetch(`/api/discussions/${id}/branches`, {
+      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    })
+    if (res.ok) {
+      const data = await res.json()
+      branches.value = data.branches || []
+    }
+  } catch {}
+}
+
+async function createBranch() {
+  const id = discussionId.value
+  if (!id || !branchDirection.value.trim() || creatingBranch.value) return
+  creatingBranch.value = true
+  try {
+    const params = new URLSearchParams({
+      branch_direction: branchDirection.value.trim(),
+      rounds: String(branchRounds.value),
+      producer_stance: branchStance.value.trim(),
+    })
+    const res = await fetch(`/api/discussions/${id}/branch?${params}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+    })
+    if (res.ok) {
+      const data = await res.json()
+      showBranchPanel.value = false
+      branchDirection.value = ''
+      branchStance.value = ''
+      router.push(`/discussion/${data.branch_id}`)
+    } else {
+      alert('创建分支失败')
+    }
+  } finally { creatingBranch.value = false }
+}
 
 function onPasswordVerified() {
   needsPassword.value = false;
@@ -841,12 +1062,6 @@ onUnmounted(() => {
           @add-item="handleAddAgendaItem"
         />
 
-        <!-- Lead Planner Digest Card -->
-        <InterventionDigestCard
-          v-if="leadPlannerDigests.length > 0 || interventionAssessments.length > 0"
-          :digests="leadPlannerDigests"
-          :assessments="interventionAssessments"
-        />
 
         <!-- Holistic Review Card -->
         <HolisticReviewCard
@@ -1081,6 +1296,248 @@ onUnmounted(() => {
         class="flex-1"
       />
     </main>
+
+    <!-- ===================================================================
+         功能 2：跨阶段依赖提示（讨论开始时展示）
+    =================================================================== -->
+    <Transition name="slide-down">
+      <div v-if="dependencyHints.length && showDependencyHints && isRunning" class="dependency-hints-bar">
+        <div class="dep-hints-header">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span>前置阶段关键决策（供参考）</span>
+          <button class="dep-close" @click="showDependencyHints = false">×</button>
+        </div>
+        <ul class="dep-hints-list">
+          <li v-for="(hint, i) in dependencyHints" :key="i" class="dep-hint-item">{{ hint }}</li>
+        </ul>
+      </div>
+    </Transition>
+
+    <!-- ===================================================================
+         功能 3：制作人立场（固定置顶提示）
+    =================================================================== -->
+    <Transition name="slide-down">
+      <div v-if="producerStance && showStance && isRunning" class="stance-banner">
+        <div class="stance-inner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          <span class="stance-label">制作人立场：</span>
+          <span class="stance-text">{{ producerStance }}</span>
+          <button class="stance-close" @click="showStance = false">×</button>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ===================================================================
+         功能 1：讨论质量评分（讨论完成后展示）
+    =================================================================== -->
+    <div v-if="qualityScore && isFinished" class="quality-score-panel">
+      <div class="qs-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        讨论质量评分
+        <span :class="['qs-badge', qualityScoreLabel(qualityScore.overall).cls]">{{ qualityScoreLabel(qualityScore.overall).text }}</span>
+      </div>
+      <div class="qs-dims">
+        <div class="qs-dim">
+          <span class="qs-dim-label">完整性</span>
+          <div class="qs-bar-wrap"><div class="qs-bar" :style="{ width: (qualityScore.completeness / 10 * 100) + '%' }" /></div>
+          <span class="qs-dim-value">{{ qualityScore.completeness }}/10</span>
+        </div>
+        <div class="qs-dim">
+          <span class="qs-dim-label">可执行性</span>
+          <div class="qs-bar-wrap"><div class="qs-bar qs-bar-exec" :style="{ width: (qualityScore.executability / 10 * 100) + '%' }" /></div>
+          <span class="qs-dim-value">{{ qualityScore.executability }}/10</span>
+        </div>
+        <div class="qs-dim">
+          <span class="qs-dim-label">共识度</span>
+          <div class="qs-bar-wrap"><div class="qs-bar qs-bar-cons" :style="{ width: (qualityScore.consensus / 10 * 100) + '%' }" /></div>
+          <span class="qs-dim-value">{{ qualityScore.consensus }}/10</span>
+        </div>
+      </div>
+      <div class="qs-overall">综合评分 <strong>{{ qualityScore.overall }}</strong>/10 · {{ qualityScore.message_count }} 条消息</div>
+    </div>
+
+    <!-- ===================================================================
+         功能 7（新）：预设议程显示栏
+    =================================================================== -->
+    <div v-if="agendaItems.length && showAgendaBar" class="agenda-bar">
+      <div class="agenda-bar-header">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        讨论议程
+        <button class="agenda-bar-close" @click="showAgendaBar = false">×</button>
+      </div>
+      <ol class="agenda-list">
+        <li v-for="(item, i) in agendaItems" :key="i" class="agenda-item">
+          <span class="agenda-num">{{ i + 1 }}</span>{{ item }}
+        </li>
+      </ol>
+    </div>
+
+    <!-- ===================================================================
+         功能 2（新）：Agent 投票热力图
+    =================================================================== -->
+    <div v-if="isFinished && Object.keys(votesData).length" class="votes-panel">
+      <div class="votes-header" @click="showVotesPanel = !showVotesPanel">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        Agent 立场投票
+        <span class="votes-toggle">{{ showVotesPanel ? '收起' : '展开' }}</span>
+      </div>
+      <div v-if="showVotesPanel" class="votes-grid">
+        <div v-for="(v, role) in votesData" :key="role" class="vote-row">
+          <span class="vote-role">{{ AGENT_LABELS[role] || role }}</span>
+          <div class="vote-bars">
+            <div class="vote-bar vote-support" :style="{ width: v.support + '%' }" :title="`支持 ${v.support}%`">
+              <span v-if="v.support >= 20">{{ v.support }}%</span>
+            </div>
+            <div class="vote-bar vote-neutral" :style="{ width: v.neutral + '%' }" :title="`中立 ${v.neutral}%`">
+              <span v-if="v.neutral >= 20">{{ v.neutral }}%</span>
+            </div>
+            <div class="vote-bar vote-oppose" :style="{ width: v.oppose + '%' }" :title="`反对 ${v.oppose}%`">
+              <span v-if="v.oppose >= 20">{{ v.oppose }}%</span>
+            </div>
+          </div>
+          <div class="vote-legend">
+            <span class="vl-sup">支持 {{ v.support }}%</span>
+            <span class="vl-opp">反对 {{ v.oppose }}%</span>
+          </div>
+        </div>
+        <div class="votes-key">
+          <span class="vk-sup">■ 支持</span>
+          <span class="vk-neu">■ 中立</span>
+          <span class="vk-opp">■ 反对</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================================
+         功能 5（新）：数值自动校验警告
+    =================================================================== -->
+    <div v-if="isFinished && validationWarnings.length" class="numval-panel">
+      <div class="numval-header" @click="showValidationPanel = !showValidationPanel">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        数值预警 <span class="numval-count">{{ validationWarnings.length }} 项</span>
+        <span class="votes-toggle">{{ showValidationPanel ? '收起' : '展开' }}</span>
+      </div>
+      <div v-if="showValidationPanel" class="numval-list">
+        <div v-for="(w, i) in validationWarnings" :key="i" class="numval-item" :class="'numval-' + w.status">
+          <div class="numval-category">{{ w.category }}: <strong>{{ w.value }}{{ w.unit }}</strong></div>
+          <div class="numval-message">{{ w.message }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================================
+         功能 9（新）：摘要同步文档 / 功能 1（新）：分支创建 — 操作栏
+    =================================================================== -->
+    <div v-if="isFinished" class="disc-actions-bar">
+      <button class="disc-action-btn" @click="syncToDocument" :disabled="syncingDoc">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+        {{ syncingDoc ? '同步中...' : '同步到文档' }}
+      </button>
+      <button class="disc-action-btn disc-action-branch" @click="showBranchPanel = true">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+        创建分支
+      </button>
+      <span v-if="branches.length" class="branch-count-tag">{{ branches.length }} 个分支</span>
+    </div>
+
+    <!-- 分支创建弹窗 -->
+    <Transition name="fade">
+      <div v-if="showBranchPanel" class="dialog-overlay" @click.self="showBranchPanel = false">
+        <div class="dialog dialog-branch">
+          <h3 class="dialog-title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+            创建讨论分支
+          </h3>
+          <p class="branch-hint">在相同议题下，以不同立场探索另一种设计方向。分支将继承本讨论的参与者和议程。</p>
+          <div class="dialog-field">
+            <label class="dialog-label">分支方向 <span style="color:#ef4444">*</span></label>
+            <input v-model="branchDirection" placeholder="例：重度付费路线、休闲免费路线..." class="dialog-input" />
+          </div>
+          <div class="dialog-field">
+            <label class="dialog-label">制作人立场 <span class="optional-tag">可选，留空继承父讨论</span></label>
+            <textarea v-model="branchStance" placeholder="覆盖制作人立场..." class="dialog-textarea" rows="2" />
+          </div>
+          <div class="dialog-field">
+            <label class="dialog-label">讨论轮次</label>
+            <input v-model.number="branchRounds" type="number" min="3" max="20" class="dialog-input" style="width:80px" />
+          </div>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" @click="showBranchPanel = false">取消</button>
+            <button class="btn btn-primary" @click="createBranch" :disabled="!branchDirection.trim() || creatingBranch">
+              {{ creatingBranch ? '创建中...' : '创建分支讨论' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- 同步结果弹窗 -->
+    <Transition name="fade">
+      <div v-if="showSyncResult && syncResult" class="dialog-overlay" @click.self="showSyncResult = false">
+        <div class="dialog">
+          <h3>{{ syncResult.ok ? '✅ 同步成功' : '⚠️ 同步异常' }}</h3>
+          <p v-if="syncResult.document_id">已同步到文档 ID: <code>{{ syncResult.document_id }}</code></p>
+          <p v-if="syncResult.note" class="sync-note">{{ syncResult.note }}</p>
+          <div v-if="syncResult.content" class="sync-content-preview">
+            <pre>{{ syncResult.content.slice(0, 300) }}{{ syncResult.content.length > 300 ? '...' : '' }}</pre>
+          </div>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" @click="showSyncResult = false">关闭</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ===================================================================
+         功能 7：观战模式增强 — 观众提问浮动面板
+    =================================================================== -->
+    <div class="viewer-fab-wrap">
+      <button class="viewer-fab" :class="{ active: showViewerPanel }" @click="showViewerPanel = !showViewerPanel" title="观众提问">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        <span v-if="viewerQuestions.length" class="viewer-fab-badge">{{ viewerQuestions.length }}</span>
+      </button>
+      <Transition name="panel-slide">
+        <div v-if="showViewerPanel" class="viewer-panel">
+          <div class="viewer-panel-header">
+            <span>🎤 观众提问</span>
+            <button class="viewer-panel-close" @click="showViewerPanel = false">×</button>
+          </div>
+          <!-- 提问列表 -->
+          <div class="viewer-questions-list">
+            <div v-if="!viewerQuestions.length" class="viewer-no-questions">暂无问题，成为第一个提问者！</div>
+            <div v-for="q in viewerQuestions" :key="q.id" class="viewer-question-item" :class="{ adopted: q.adopted }">
+              <div class="vq-meta">
+                <span class="vq-name">{{ q.viewer_name }}</span>
+                <span v-if="q.adopted" class="vq-adopted-tag">已采纳</span>
+              </div>
+              <div class="vq-text">{{ q.question }}</div>
+              <div class="vq-actions">
+                <button class="vq-like-btn" @click="likeViewerQuestion(q.id)" :title="`${q.likes} 人点赞`">
+                  👍 {{ q.likes }}
+                </button>
+                <button v-if="userStore.isLoggedIn && !q.adopted && isRunning" class="vq-adopt-btn" @click="adoptViewerQuestion(q.id)">
+                  采纳问题
+                </button>
+              </div>
+            </div>
+          </div>
+          <!-- 提问输入 -->
+          <div class="viewer-input-area">
+            <input v-model="viewerName" placeholder="你的名字" class="viewer-name-input" maxlength="30" />
+            <textarea
+              v-model="viewerQuestionText"
+              placeholder="输入你的问题..."
+              class="viewer-question-input"
+              rows="2"
+              maxlength="500"
+            />
+            <button class="viewer-submit-btn" :disabled="!viewerQuestionText.trim() || submittingQuestion" @click="submitViewerQuestion">
+              {{ submittingQuestion ? '提交中...' : '提交问题' }}
+            </button>
+          </div>
+        </div>
+      </Transition>
+    </div>
 
     <!-- Error display -->
     <div
@@ -2187,4 +2644,242 @@ onUnmounted(() => {
 .model-item-label { font-size: 10px; color: var(--text-weak, #9ca3af); background: #f3f4f6; border-radius: 3px; padding: 1px 4px; }
 .dropdown-enter-active, .dropdown-leave-active { transition: opacity 0.15s, transform 0.15s; }
 .dropdown-enter-from, .dropdown-leave-to { opacity: 0; transform: translateY(-4px); }
+
+/* ============================================================
+   功能 1：讨论质量评分
+============================================================ */
+.quality-score-panel {
+  margin: 12px 16px;
+  background: #fafafa;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 13px;
+}
+.qs-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 10px;
+}
+.qs-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.qs-excellent { background: #dcfce7; color: #15803d; }
+.qs-good { background: #dbeafe; color: #1d4ed8; }
+.qs-fair { background: #fef9c3; color: #a16207; }
+.qs-poor { background: #fee2e2; color: #dc2626; }
+.qs-dims { display: flex; flex-direction: column; gap: 6px; }
+.qs-dim { display: flex; align-items: center; gap: 8px; }
+.qs-dim-label { width: 56px; color: #6b7280; font-size: 12px; flex-shrink: 0; }
+.qs-bar-wrap { flex: 1; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
+.qs-bar { height: 100%; background: #6366f1; border-radius: 3px; transition: width 0.5s; }
+.qs-bar-exec { background: #10b981; }
+.qs-bar-cons { background: #f59e0b; }
+.qs-dim-value { width: 36px; text-align: right; color: #374151; font-size: 12px; font-weight: 600; }
+.qs-overall { margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 12px; }
+.qs-overall strong { color: #374151; }
+
+/* ============================================================
+   功能 2：跨阶段依赖提示
+============================================================ */
+.dependency-hints-bar {
+  margin: 8px 16px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+}
+.dep-hints-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: #1e40af;
+  margin-bottom: 6px;
+}
+.dep-close { margin-left: auto; background: none; border: none; cursor: pointer; color: #93c5fd; font-size: 16px; padding: 0 2px; }
+.dep-hints-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.dep-hint-item { color: #374151; line-height: 1.4; padding: 4px 0; border-bottom: 1px dashed #dbeafe; }
+.dep-hint-item:last-child { border-bottom: none; }
+.slide-down-enter-active, .slide-down-leave-active { transition: all 0.25s ease; }
+.slide-down-enter-from, .slide-down-leave-to { opacity: 0; transform: translateY(-8px); }
+
+/* ============================================================
+   功能 3：制作人立场
+============================================================ */
+.stance-banner {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: linear-gradient(90deg, #fef3c7, #fffbeb);
+  border-bottom: 1px solid #fcd34d;
+  padding: 8px 16px;
+}
+.stance-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+.stance-label { font-weight: 700; color: #92400e; flex-shrink: 0; }
+.stance-text { color: #78350f; line-height: 1.4; }
+.stance-close { margin-left: auto; background: none; border: none; cursor: pointer; color: #d97706; font-size: 16px; padding: 0 2px; flex-shrink: 0; }
+
+/* ============================================================
+   功能 7：观战模式增强
+============================================================ */
+.viewer-fab-wrap {
+  position: fixed;
+  bottom: 80px;
+  right: 20px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.viewer-fab {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #6366f1;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  box-shadow: 0 4px 12px rgba(99,102,241,0.4);
+  position: relative;
+  transition: background 0.15s;
+}
+.viewer-fab:hover { background: #4f46e5; }
+.viewer-fab.active { background: #4338ca; }
+.viewer-fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #ef4444;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 10px;
+  min-width: 16px;
+  text-align: center;
+}
+.viewer-panel {
+  width: 320px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  border: 1px solid #e5e7eb;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 480px;
+}
+.viewer-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+.viewer-panel-close { background: none; border: none; cursor: pointer; color: #9ca3af; font-size: 18px; }
+.viewer-questions-list { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.viewer-no-questions { text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0; }
+.viewer-question-item { background: #f9fafb; border-radius: 8px; padding: 8px 10px; border: 1px solid #e5e7eb; }
+.viewer-question-item.adopted { border-color: #6366f1; background: #eef2ff; }
+.vq-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.vq-name { font-size: 11px; font-weight: 600; color: #6b7280; }
+.vq-adopted-tag { font-size: 10px; background: #6366f1; color: white; padding: 1px 6px; border-radius: 10px; }
+.vq-text { font-size: 12.5px; color: #374151; line-height: 1.4; margin-bottom: 6px; }
+.vq-actions { display: flex; gap: 6px; align-items: center; }
+.vq-like-btn { background: none; border: 1px solid #e5e7eb; border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; color: #6b7280; }
+.vq-like-btn:hover { background: #f3f4f6; }
+.vq-adopt-btn { background: #6366f1; color: white; border: none; border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; margin-left: auto; }
+.vq-adopt-btn:hover { background: #4f46e5; }
+.viewer-input-area { padding: 10px 12px; border-top: 1px solid #e5e7eb; display: flex; flex-direction: column; gap: 6px; }
+.viewer-name-input { font-size: 12px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 4px 8px; color: #374151; }
+.viewer-question-input { font-size: 12.5px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 8px; resize: none; color: #374151; font-family: inherit; }
+.viewer-submit-btn { background: #6366f1; color: white; border: none; border-radius: 6px; padding: 6px; font-size: 13px; cursor: pointer; font-weight: 600; }
+.viewer-submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.panel-slide-enter-active, .panel-slide-leave-active { transition: all 0.2s ease; }
+.panel-slide-enter-from, .panel-slide-leave-to { opacity: 0; transform: translateY(10px) scale(0.97); }
+
+/* ---- 预设议程栏 ---- */
+.agenda-bar { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 14px; margin: 0 16px 8px; }
+.agenda-bar-header { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #16a34a; margin-bottom: 6px; }
+.agenda-bar-close { margin-left: auto; background: none; border: none; cursor: pointer; color: #86efac; font-size: 16px; line-height: 1; }
+.agenda-list { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.agenda-item { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: #374151; }
+.agenda-num { background: #16a34a; color: white; border-radius: 50%; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; margin-top: 1px; }
+
+/* ---- Agent 投票面板 ---- */
+.votes-panel { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin: 0 16px 8px; overflow: hidden; }
+.votes-header { display: flex; align-items: center; gap: 6px; padding: 10px 14px; font-size: 12px; font-weight: 600; color: #374151; cursor: pointer; }
+.votes-header:hover { background: #f1f5f9; }
+.votes-toggle { margin-left: auto; color: #94a3b8; font-size: 11px; }
+.votes-grid { padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+.vote-row { display: grid; grid-template-columns: 90px 1fr 110px; align-items: center; gap: 8px; }
+.vote-role { font-size: 11.5px; color: #64748b; font-weight: 500; }
+.vote-bars { display: flex; height: 16px; border-radius: 4px; overflow: hidden; gap: 1px; background: #e2e8f0; }
+.vote-bar { display: flex; align-items: center; justify-content: center; font-size: 10px; color: white; font-weight: 600; transition: width 0.4s; }
+.vote-support { background: #22c55e; }
+.vote-neutral { background: #94a3b8; }
+.vote-oppose { background: #ef4444; }
+.vote-legend { display: flex; gap: 6px; font-size: 10.5px; }
+.vl-sup { color: #16a34a; }
+.vl-opp { color: #dc2626; }
+.votes-key { display: flex; gap: 12px; font-size: 10px; color: #94a3b8; padding-top: 4px; border-top: 1px solid #e2e8f0; }
+.vk-sup { color: #22c55e; }
+.vk-neu { color: #94a3b8; }
+.vk-opp { color: #ef4444; }
+
+/* ---- 数值校验面板 ---- */
+.numval-panel { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; margin: 0 16px 8px; overflow: hidden; }
+.numval-header { display: flex; align-items: center; gap: 6px; padding: 10px 14px; font-size: 12px; font-weight: 600; color: #92400e; cursor: pointer; }
+.numval-header:hover { background: #fef3c7; }
+.numval-count { background: #f59e0b; color: white; border-radius: 999px; padding: 1px 7px; font-size: 11px; }
+.numval-list { padding: 8px 14px; display: flex; flex-direction: column; gap: 6px; }
+.numval-item { padding: 8px 10px; border-radius: 6px; font-size: 12px; }
+.numval-high { background: #fee2e2; border-left: 3px solid #ef4444; }
+.numval-low { background: #dbeafe; border-left: 3px solid #3b82f6; }
+.numval-category { font-weight: 600; color: #374151; margin-bottom: 2px; }
+.numval-message { color: #6b7280; font-size: 11.5px; }
+
+/* ---- 讨论操作栏 ---- */
+.disc-actions-bar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-top: 1px solid #f1f5f9; flex-shrink: 0; }
+.disc-action-btn { display: flex; align-items: center; gap: 5px; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1.5px solid #e2e8f0; background: white; color: #374151; transition: all 0.15s; }
+.disc-action-btn:hover:not(:disabled) { border-color: #6366f1; color: #6366f1; }
+.disc-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.disc-action-branch { border-color: #a5b4fc; color: #6366f1; }
+.disc-action-branch:hover:not(:disabled) { background: #eef2ff; }
+.branch-count-tag { font-size: 11px; color: #94a3b8; padding: 2px 8px; background: #f1f5f9; border-radius: 999px; }
+
+/* ---- 分支弹窗 ---- */
+.dialog-branch { max-width: 460px; }
+.branch-hint { font-size: 12.5px; color: #64748b; margin-bottom: 12px; line-height: 1.5; }
+.optional-tag { font-size: 11px; color: #9ca3af; background: #f4f4f5; padding: 1px 6px; border-radius: 4px; margin-left: 4px; }
+
+/* ---- 同步结果弹窗 ---- */
+.sync-note { font-size: 12.5px; color: #6b7280; background: #f9fafb; padding: 8px; border-radius: 6px; }
+.sync-content-preview { background: #f1f5f9; border-radius: 6px; padding: 10px; max-height: 160px; overflow-y: auto; }
+.sync-content-preview pre { font-size: 11.5px; color: #374151; white-space: pre-wrap; margin: 0; font-family: monospace; }
 </style>
+
