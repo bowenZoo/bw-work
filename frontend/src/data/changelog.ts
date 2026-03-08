@@ -13,6 +13,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     "items": [
       {
         "type": "new",
+        "text": "大厅公告自动从 git log 生成，无需手动维护"
+      },
+      {
+        "type": "new",
         "text": "决策卡移至右下方 + WebMCP bridge 讨论页工具 + 自动重试机制"
       },
       {
