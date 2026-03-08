@@ -10,6 +10,9 @@ const props = defineProps<{
   agents: Agent[]
   statuses: Map<string, AgentStatus>
   currentSpeaker?: string
+  moderatorRole?: string
+  showSuperProducer?: boolean
+  superProducerStatus?: 'idle' | 'thinking'
 }>()
 
 const emit = defineEmits<{
@@ -128,6 +131,7 @@ onUnmounted(() => stopTick())
       <div class="agent-info">
         <div class="agent-name-row">
           <span class="agent-name">{{ getAgentDisplayName(agent.role) }}</span>
+          <span v-if="moderatorRole && agent.role === moderatorRole" class="moderator-badge">主持</span>
           <span
             v-if="timers[agent.id] !== undefined"
             class="agent-timer"
@@ -136,6 +140,27 @@ onUnmounted(() => stopTick())
         </div>
         <span class="agent-status-label" :class="`label-${getStatus(agent.id)}`">
           {{ getStatusLabel(agent.id, getStatus(agent.id)) }}
+        </span>
+      </div>
+    </div>
+
+    <!-- Virtual: super producer (always last) -->
+    <div
+      v-if="showSuperProducer"
+      class="agent-item super-producer-item"
+      :class="{ 'is-thinking': superProducerStatus === 'thinking' }"
+    >
+      <div class="agent-avatar sp-avatar">
+        <span class="sp-icon">🤖</span>
+        <span class="status-dot" :class="superProducerStatus === 'thinking' ? 'dot-thinking' : 'dot-idle'" />
+      </div>
+      <div class="agent-info">
+        <div class="agent-name-row">
+          <span class="agent-name">超级制作人</span>
+          <span class="sp-badge">AI</span>
+        </div>
+        <span class="agent-status-label" :class="superProducerStatus === 'thinking' ? 'label-thinking' : 'label-idle'">
+          {{ superProducerStatus === 'thinking' ? '分析中' : '监控中' }}
         </span>
       </div>
     </div>
@@ -270,6 +295,47 @@ onUnmounted(() => stopTick())
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.moderator-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #ede9fe;
+  color: #6d28d9;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.sp-avatar {
+  background: linear-gradient(135deg, #e0e7ff 0%, #f0fdf4 100%);
+}
+.sp-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+  line-height: 1;
+}
+.sp-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #f0fdf4;
+  color: #16a34a;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+.super-producer-item {
+  border-left: 1px solid #e0e7ff;
+  margin-left: 2px;
+  padding-left: 10px;
 }
 
 .agent-status-label {

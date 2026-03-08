@@ -404,6 +404,140 @@ function registerTools() {
         return { status: res.status, ...data }
       }
     },
+
+    // === Discussion Page ===
+    {
+      name: 'bw_navigate_discussion',
+      description: 'Navigate to a specific discussion page',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      execute: async (p: any) => {
+        if (router) { router.push(`/discussion/${p.id}`) }
+        else { location.href = `/discussion/${p.id}` }
+        await new Promise(r => setTimeout(r, 1500))
+        return { ok: true, url: location.href }
+      }
+    },
+    {
+      name: 'bw_get_discussion_context',
+      description: 'Get live discussion page state from __bwDiscussion (messages, checkpoints, pause state, agent statuses). Must be on discussion page.',
+      inputSchema: { type: 'object', properties: {} },
+      execute: async () => {
+        const ctx = (window as any).__bwDiscussion
+        if (!ctx) return { error: 'Not on discussion page (window.__bwDiscussion not set)' }
+        const d = ctx.discussion
+        const cps = ctx.checkpoints || []
+        const msgs = ctx.messages || []
+        const agents = ctx.agentStatuses || {}
+        return {
+          id: d?.id,
+          topic: d?.topic,
+          status: d?.status,
+          message_count: msgs.length,
+          last_message: msgs.length > 0 ? { agent: msgs[msgs.length - 1].agentId, content: (msgs[msgs.length - 1].content || '').slice(0, 120) } : null,
+          is_paused: ctx.isPaused,
+          is_waiting_decision: ctx.isWaitingDecision,
+          is_producer_turn: ctx.isProducerTurn,
+          checkpoint_count: cps.length,
+          pending_checkpoints: cps.filter((c: any) => c.type === 'decision' && !c.responded_at).map((c: any) => ({ id: c.id, question: c.question })),
+          agent_statuses: agents,
+        }
+      }
+    },
+    {
+      name: 'bw_get_checkpoints',
+      description: 'Get checkpoints for a discussion via API',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      execute: async (p: any) => {
+        const res = await fetch(`/api/discussions/${p.id}/checkpoints`, { headers: getAuthHeaders() })
+        if (!res.ok) return { error: (await res.json()).detail }
+        const data = await res.json()
+        const cps = data.checkpoints || []
+        return {
+          count: cps.length,
+          checkpoints: cps.map((c: any) => ({
+            id: c.id, type: c.type, round: c.round_num,
+            title: c.title, question: c.question,
+            responded: !!c.responded_at, response_text: c.response_text,
+          }))
+        }
+      }
+    },
+    {
+      name: 'bw_get_producer_assist',
+      description: 'Call producer-assist API and verify answers are generated. Returns questions with answer counts.',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      execute: async (p: any) => {
+        const res = await fetch(`/api/discussions/${p.id}/producer-assist`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        })
+        if (!res.ok) return { error: (await res.json()).detail }
+        const data = await res.json()
+        const questions = data.questions || []
+        return {
+          mode: data.mode,
+          source: data.source,
+          context_summary: data.context_summary,
+          question_count: questions.length,
+          questions: questions.map((q: any) => ({
+            from_agent: q.from_agent,
+            question: q.question.slice(0, 80),
+            answer_count: (q.answers || []).length,
+            has_answers: (q.answers || []).length > 0,
+            answers: (q.answers || []).slice(0, 3),
+          })),
+          all_have_answers: questions.length > 0 && questions.every((q: any) => (q.answers || []).length > 0),
+        }
+      }
+    },
+    {
+      name: 'bw_send_producer_message',
+      description: 'Send a producer message to a discussion',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' }, text: { type: 'string' } }, required: ['id', 'text'] },
+      execute: async (p: any) => {
+        const res = await fetch(`/api/discussions/${p.id}/producer-message`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({ content: p.text }),
+        })
+        if (!res.ok) return { error: (await res.json()).detail }
+        return { ok: true, ...(await res.json()) }
+      }
+    },
+    {
+      name: 'bw_respond_checkpoint',
+      description: 'Respond to a DECISION checkpoint in a discussion',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' }, checkpoint_id: { type: 'string' }, text: { type: 'string' } }, required: ['id', 'checkpoint_id', 'text'] },
+      execute: async (p: any) => {
+        const res = await fetch(`/api/discussions/${p.id}/checkpoint/${p.checkpoint_id}/respond`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({ free_input: p.text }),
+        })
+        if (!res.ok) return { error: (await res.json()).detail }
+        return { ok: true, ...(await res.json()) }
+      }
+    },
+    {
+      name: 'bw_pause_discussion',
+      description: 'Pause a running discussion',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      execute: async (p: any) => {
+        const res = await fetch(`/api/discussions/${p.id}/pause`, { method: 'POST', headers: getAuthHeaders() })
+        if (!res.ok) return { error: (await res.json()).detail }
+        return { ok: true }
+      }
+    },
+    {
+      name: 'bw_resume_discussion',
+      description: 'Resume a paused discussion',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      execute: async (p: any) => {
+        const res = await fetch(`/api/discussions/${p.id}/resume`, { method: 'POST', headers: getAuthHeaders() })
+        if (!res.ok) return { error: (await res.json()).detail }
+        return { ok: true }
+      }
+    },
   ]
 
   for (const t of tools) {

@@ -6,6 +6,8 @@ const props = defineProps<{
   discussionId: string
   active: boolean
   pendingCheckpoint: { id: string; question: string } | null
+  messagesCount?: number
+  questionTrigger?: number  // increments when @超级制作人 questions arrive via WebSocket
 }>()
 
 const emit = defineEmits<{
@@ -34,9 +36,21 @@ const contextSummary = ref('')
 const source = ref<'llm' | 'heuristic'>('llm')
 const autoDeciding = ref(false)
 
+const MAX_RETRIES = 3
+const RETRY_DELAY_MS = 5000
+
+// Only fetch when explicitly triggered:
+// 1. active flag turns true (producer's explicit turn)
 watch(() => props.active, (val) => {
   if (val) resetAndFetch()
 }, { immediate: true })
+
+// 2. @超级制作人 question arrives via WebSocket
+watch(() => props.questionTrigger, (val) => {
+  if (val !== undefined && val > 0) {
+    resetAndFetch()
+  }
+})
 
 function resetState() {
   questions.value = []
@@ -52,10 +66,7 @@ async function resetAndFetch() {
   await fetchCards()
 }
 
-async function fetchCards() {
-  if (!props.discussionId || loading.value) return
-  loading.value = true
-  error.value = ''
+async function _doFetch(attempt: number): Promise<void> {
   try {
     const res = await fetch(`/api/discussions/${props.discussionId}/producer-assist`, {
       method: 'POST',
@@ -63,11 +74,18 @@ async function fetchCards() {
     })
     if (!res.ok) { error.value = '获取建议失败'; return }
     const data = await res.json()
-    contextSummary.value = data.context_summary || ''
-    source.value = data.source === 'heuristic' ? 'heuristic' : 'llm'
 
     if (data.mode === 'questions' && Array.isArray(data.questions) && data.questions.length) {
+      // LLM fallback returned empty answers — retry silently
+      const hasEmptyAnswers = data.source === 'heuristic' &&
+        data.questions.some((q: QuestionItem) => q.answers.length === 0)
+      if (hasEmptyAnswers && attempt < MAX_RETRIES) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
+        return _doFetch(attempt + 1)
+      }
       questions.value = data.questions
+      contextSummary.value = data.context_summary || ''
+      source.value = data.source === 'heuristic' ? 'heuristic' : 'llm'
     } else if (Array.isArray(data.suggestions) && data.suggestions.length) {
       // General mode — wrap suggestions as a single-question card
       questions.value = [{
@@ -75,6 +93,8 @@ async function fetchCards() {
         question: '你现在想表达什么？',
         answers: data.suggestions.map((s: { text: string }) => s.text),
       }]
+      contextSummary.value = data.context_summary || ''
+      source.value = 'llm'
     } else if (props.pendingCheckpoint) {
       questions.value = [{
         from_agent: '主策划',
@@ -84,6 +104,15 @@ async function fetchCards() {
     }
   } catch {
     error.value = '网络错误'
+  }
+}
+
+async function fetchCards() {
+  if (!props.discussionId || loading.value) return
+  loading.value = true
+  error.value = ''
+  try {
+    await _doFetch(0)
   } finally {
     loading.value = false
   }
@@ -92,6 +121,11 @@ async function fetchCards() {
 const currentCard = computed(() => questions.value[currentIndex.value] ?? null)
 const totalCards = computed(() => questions.value.length)
 const isLastCard = computed(() => currentIndex.value >= totalCards.value - 1)
+
+// 无预设选项时（开放式问题）自动展开自定义输入
+watch(currentCard, (card) => {
+  if (card && card.answers.length === 0) useCustom.value = true
+}, { immediate: true })
 
 function getCurrentAnswer(): string {
   if (useCustom.value) return customInput.value.trim()
@@ -159,7 +193,7 @@ const shadowCount = computed(() => Math.min(totalCards.value - currentIndex.valu
 </script>
 
 <template>
-  <div v-if="active" class="pds-wrap">
+  <div class="pds-wrap">
 
     <!-- Loading -->
     <div v-if="loading" class="pds-loading">
@@ -173,12 +207,18 @@ const shadowCount = computed(() => Math.min(totalCards.value - currentIndex.valu
       <button class="pds-retry" @click="refresh">重试</button>
     </div>
 
-    <!-- Empty -->
-    <div v-else-if="!loading && questions.length === 0" class="pds-empty">
-      <div class="pds-empty-icon">💬</div>
-      <div class="pds-empty-text">暂无待回答问题</div>
-      <div class="pds-empty-sub">你可以直接在下方输入发言</div>
-      <button class="pds-refresh-btn" @click="refresh">重新检查</button>
+    <!-- Empty: compact idle state -->
+    <div v-else-if="!loading && questions.length === 0" class="pds-idle">
+      <div class="pds-idle-inner">
+        <span class="pds-idle-icon">🤖</span>
+        <span class="pds-idle-label">超级制作人监控中</span>
+        <button class="pds-idle-refresh" @click="refresh" title="立即检查是否有需要决策的问题">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <!-- Card Stack -->
@@ -309,13 +349,38 @@ const shadowCount = computed(() => Math.min(totalCards.value - currentIndex.valu
 
 <style scoped>
 .pds-wrap {
-  flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  padding: 10px 14px 8px;
   overflow-y: auto;
-  padding: 16px 16px 8px;
 }
+
+/* Compact idle state */
+.pds-idle {
+  padding: 0;
+}
+.pds-idle-inner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  background: #f8f7ff;
+  border: 1px solid #e0e7ff;
+  border-radius: 7px;
+}
+.pds-idle-icon { font-size: 13px; line-height: 1; }
+.pds-idle-label {
+  flex: 1;
+  font-size: 11.5px;
+  color: #6b7280;
+}
+.pds-idle-refresh {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: none; border: 1px solid #c7d2fe; color: #6366f1;
+  cursor: pointer; transition: background 0.12s; flex-shrink: 0;
+}
+.pds-idle-refresh:hover { background: #e0e7ff; }
 
 /* Loading */
 .pds-loading {
@@ -343,21 +408,6 @@ const shadowCount = computed(() => Math.min(totalCards.value - currentIndex.valu
   font-size: 11px; padding: 2px 10px; border-radius: 5px;
   border: 1px solid #fca5a5; background: white; color: #dc2626; cursor: pointer;
 }
-
-/* Empty */
-.pds-empty {
-  display: flex; flex-direction: column; align-items: center;
-  padding: 32px 0; gap: 8px; text-align: center;
-}
-.pds-empty-icon { font-size: 28px; }
-.pds-empty-text { font-size: 14px; font-weight: 600; color: #374151; }
-.pds-empty-sub { font-size: 12px; color: #9ca3af; }
-.pds-refresh-btn {
-  margin-top: 8px; font-size: 12px; padding: 4px 14px;
-  border-radius: 6px; border: 1px solid #c7d2fe;
-  background: white; color: #6366f1; cursor: pointer;
-}
-.pds-refresh-btn:hover { background: #eef2ff; }
 
 /* Stack area */
 .pds-stack-area {

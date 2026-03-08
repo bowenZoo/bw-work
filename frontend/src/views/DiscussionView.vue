@@ -12,12 +12,12 @@ import {
   RightPanel,
   HolisticReviewCard,
   PasswordVerifyModal,
-  ProducerInput,
 } from '@/components/discussion';
 import ProducerDecisionStack from '@/components/discussion/ProducerDecisionStack.vue';
 import { usePlayback } from '@/composables/usePlayback';
 import { useDiscussion } from '@/composables/useDiscussion';
 import { useAgentsStore } from '@/stores/agents';
+import { getAgentDisplayName } from '@/utils/agents';
 import { useDiscussionStore } from '@/stores/discussion';
 import api from '@/api';
 import { useUserStore } from '@/stores/user';
@@ -203,6 +203,7 @@ const {
   holisticReviews,
   checkpoints,
   isWaitingDecision,
+  producerQuestionTrigger,
   respondToCheckpoint,
   sendProducerMessage,
 } = useDiscussion();
@@ -331,6 +332,16 @@ const agentStatuses = computed(() => {
 // Current speaking agent
 const speakingAgentId = computed(() => {
   return agentsStore.speakingAgent?.id;
+});
+
+// Sorted agents: moderator first
+const sortedAgents = computed(() => {
+  const moderatorRole = discussion.value?.moderator_role || 'lead_planner';
+  return [...agentsStore.activeAgents].sort((a, b) => {
+    if (a.role === moderatorRole) return -1;
+    if (b.role === moderatorRole) return 1;
+    return 0;
+  });
 });
 
 
@@ -692,7 +703,6 @@ function handleScrollToCheckpoint(checkpointId: string) {
 // ---- Resizable split panel ----
 const splitPercent = ref(65); // left panel percentage (right = ~35%)
 const isDragging = ref(false);
-const producerInputRef = ref<InstanceType<typeof ProducerInput> | null>(null);
 
 const leftPanelStyle = computed(() => ({
   flex: `0 0 ${splitPercent.value}%`,
@@ -1077,12 +1087,29 @@ watch(isFinished, (finished) => {
   }
 }, { immediate: false })
 
+// Expose live discussion context for WebMCP bridge (window.__bwDiscussion)
+// Uses getters so bridge tools always read current reactive state
+;(window as any).__bwDiscussion = {
+  get discussion() { return discussion.value },
+  get messages() { return messages.value },
+  get checkpoints() { return checkpoints.value },
+  get isPaused() { return isPaused.value },
+  get isWaitingDecision() { return isWaitingDecision.value },
+  get isProducerTurn() { return isProducerTurn.value },
+  get agentStatuses() {
+    const result: Record<string, string> = {}
+    for (const a of agentsStore.agents) result[a.role] = a.status
+    return result
+  },
+}
+
 // Cleanup on unmount
 onUnmounted(() => {
   if (!isPlaybackMode.value) {
     resetLiveDiscussion();
   }
   document.removeEventListener('click', onDocClickModelMenu);
+  delete (window as any).__bwDiscussion;
 });
 </script>
 
@@ -1218,9 +1245,11 @@ onUnmounted(() => {
       <div class="left-panel" :style="leftPanelStyle">
         <!-- Compact Agent Bar -->
         <CompactAgentBar
-          :agents="agentsStore.activeAgents"
+          :agents="sortedAgents"
           :statuses="agentStatuses"
           :current-speaker="speakingAgentId"
+          :moderator-role="discussion?.moderator_role || 'lead_planner'"
+          :show-super-producer="isRunning"
           @select-agent="handleAgentClick"
         />
 
@@ -1265,7 +1294,7 @@ onUnmounted(() => {
             <span class="dot" />
             <span class="dot" />
           </div>
-          <p class="waiting-text">主策划正在思考中...</p>
+          <p class="waiting-text">{{ getAgentDisplayName(discussion?.moderator_role || 'lead_planner') }}正在思考中...</p>
           <p class="waiting-subtext">讨论即将开始</p>
         </div>
 
@@ -1290,16 +1319,6 @@ onUnmounted(() => {
 
       <!-- Right Panel -->
       <section class="right-panel" :style="rightPanelStyle">
-        <!-- Decision Card Stack — primary action when waiting for producer -->
-        <ProducerDecisionStack
-          v-if="discussion?.id && isProducerActive"
-          :discussion-id="discussion.id"
-          :active="isProducerActive"
-          :pending-checkpoint="pendingCheckpoint"
-          @send="handleProducerSend"
-          @respond-checkpoint="handleStackRespondCheckpoint"
-        />
-
         <!-- Info panel (文档大纲 / 决策日志 / 轮次总结) — collapsible -->
         <RightPanel
           :round-summaries="roundSummaries"
@@ -1313,14 +1332,15 @@ onUnmounted(() => {
           @focus-section="handleFocusSection"
           @scroll-to-checkpoint="handleScrollToCheckpoint"
         />
-        <!-- Producer input (replaces UserInputBox) -->
-        <ProducerInput
-          ref="producerInputRef"
-          v-if="isRunning && discussion?.id"
+        <!-- Decision Card Stack — at the bottom of right panel -->
+        <ProducerDecisionStack
+          v-if="discussion?.id && isRunning"
           :discussion-id="discussion.id"
-          :disabled="!isRunning"
-          :is-waiting-decision="isWaitingDecision"
+          :active="isWaitingDecision"
+          :pending-checkpoint="pendingCheckpoint"
+          :question-trigger="producerQuestionTrigger"
           @send="handleProducerSend"
+          @respond-checkpoint="handleStackRespondCheckpoint"
         />
         <!-- Concept incubation completion banner -->
         <div v-if="isConceptDiscussion && isFinished && discussion?.project_id" class="concept-done-banner">
@@ -2301,15 +2321,18 @@ onUnmounted(() => {
   border: 1px solid #F0EBE4;
 }
 
-/* ProducerDecisionStack takes available space; RightPanel shrinks to fit or just shows header */
-.right-panel :deep(.pds-wrap) {
+/* RightPanel (outline / decisions / summaries) fills remaining space */
+.right-panel :deep(.right-panel-container) {
   flex: 1;
   min-height: 0;
-  border-bottom: 1px solid #f0ebe4;
 }
 
-.right-panel :deep(.right-panel-container) {
+/* ProducerDecisionStack: at the bottom, shrinks to content, capped to avoid overflow */
+.right-panel :deep(.pds-wrap) {
   flex-shrink: 0;
+  max-height: 55%;
+  overflow-y: auto;
+  border-top: 1px solid #f0ebe4;
 }
 
 /* Fallback layout for non-running or playback mode */

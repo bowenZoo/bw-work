@@ -47,6 +47,9 @@ export function useDiscussion() {
   const autoPauseMessage = ref('');
   const isProducerTurn = ref(false);  // true when discussion is waiting for producer input
 
+  // Super producer question trigger: increments when @超级制作人 questions arrive
+  const producerQuestionTrigger = ref(0);
+
   // Agenda state
   const agenda = ref<Agenda | null>(null);
 
@@ -370,6 +373,9 @@ export function useDiscussion() {
             isProducerTurn.value = true;
             const colonIdx = content.indexOf(':');
             autoPauseMessage.value = colonIdx >= 0 ? content.substring(colonIdx + 1) : '等待制作人发言';
+            // 确保决策卡触发：即使 producer_question 事件因 WS 断线而丢失，
+            // producer_turn 到来时也强制拉一次卡片
+            producerQuestionTrigger.value += 1;
           } else if (content === 'discussion_paused') {
             isPaused.value = true;
             isProducerTurn.value = false;
@@ -568,6 +574,11 @@ export function useDiscussion() {
       case 'error':
         console.error('Discussion error:', message.data?.content);
         discussionStore.setError(message.data?.content ?? 'Unknown error');
+        break;
+
+      case 'producer_question':
+        // @超级制作人 questions — trigger ProducerDecisionStack to refresh
+        producerQuestionTrigger.value += 1;
         break;
 
       case 'pong':
@@ -859,6 +870,9 @@ export function useDiscussion() {
     // Checkpoint state
     checkpoints,
     isWaitingDecision,
+
+    // Super producer question trigger
+    producerQuestionTrigger: computed(() => producerQuestionTrigger.value),
 
     // Actions
     createDiscussion,

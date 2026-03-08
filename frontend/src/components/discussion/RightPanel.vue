@@ -198,7 +198,7 @@ function triggerDownload(filename: string, content: string) {
 .right-panel-container {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  min-height: 0;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -215,6 +215,10 @@ function triggerDownload(filename: string, content: string) {
 
 .rp-collapsed .tab-bar {
   border-bottom: none;
+}
+
+.rp-collapsed {
+  height: auto;
 }
 
 .tab-collapse-btn {

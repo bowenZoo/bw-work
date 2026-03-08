@@ -76,9 +76,9 @@ const timelineItems = computed<TimelineItem[]>(() => {
   if (props.checkpoints) {
     for (const cp of props.checkpoints) {
       if (cp.type === 'silent') continue
-      // Decision cards are handled in the right panel; only show responded ones here as log
+      // Pending decisions: shown in ProducerDecisionStack (right panel), not in chat
       if (cp.type === 'decision' && cp.response === null) continue
-      if (cp.type === 'decision' && cp.response !== null) continue  // also hide from chat
+      // Responded decisions: show as historical log in chat
       items.push({ kind: 'checkpoint', data: cp })
     }
   }
