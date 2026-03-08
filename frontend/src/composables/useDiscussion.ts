@@ -291,7 +291,13 @@ export function useDiscussion() {
             discussionStore.currentDiscussion.messages = normalized;
           }
         }
-        if (message.data.is_paused) {
+        if (message.data.is_waiting_decision) {
+          // Paused and waiting for producer to respond to a decision card
+          isPaused.value = true;
+          autoPauseMessage.value = '';
+          discussionStore.setStatus('waiting_decision');
+          producerQuestionTrigger.value += 1;
+        } else if (message.data.is_paused) {
           isPaused.value = true;
           autoPauseMessage.value = '讨论已暂停';
         } else {
@@ -391,8 +397,9 @@ export function useDiscussion() {
             discussionStore.setStatus('running');
           } else if (content === 'discussion_waiting_decision') {
             discussionStore.setStatus('waiting_decision');
-            // 触发决策卡刷新（防止 producer_question WS 事件先于此事件丢失）
-            producerQuestionTrigger.value += 1;
+            // 注意：不在此处触发 producerQuestionTrigger
+            // producer_question 事件已先于此事件消费队列并触发卡片展示
+            // 若此处再次触发，会导致第二次 fetchCards 拿到空队列覆盖正确数据
           }
           break;
         }

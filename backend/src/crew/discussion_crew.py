@@ -383,6 +383,9 @@ class DiscussionCrew:
         self._producer_digest_pending: str | None = None  # digest to inject into next round
         # Set to True in _broadcast_message when @超级制作人 questions are detected this round
         self._producer_questions_this_round: bool = False
+        # True while LP is delivering opening / round summary — suppress @超级制作人 detection
+        # so LP summarising what others said doesn't create duplicate decision cards
+        self._in_moderator_broadcast: bool = False
 
         # Concurrency semaphore — set by the caller (_run_discussion_sync) so that
         # the crew can release the slot while waiting for a human decision and
@@ -574,32 +577,59 @@ class DiscussionCrew:
         Returns:
             List of producer messages to inject into the discussion context.
         """
+        # Before entering the wait loop, clear any agents stuck in active state.
+        # This ensures that on WS reconnect, no agents appear stuck as "thinking".
+        try:
+            from src.api.routes.discussion import get_agent_statuses, set_agent_status
+            _active_statuses = {"thinking", "speaking", "writing"}
+            for _aid, _st in list(get_agent_statuses(self._discussion_id).items()):
+                if _st in _active_statuses:
+                    set_agent_status(self._discussion_id, _aid, "idle")
+        except Exception:
+            pass
+
         set_discussion_state(self._discussion_id, DiscussionState.PAUSED)
         self._broadcast_discussion_event("discussion_waiting_decision")
         logger.info("Discussion %s: waiting for producer decision card response", self._discussion_id)
 
         start_time = time.time()
+        loop_count = 0
         while True:
-            if self._has_pending_producer_messages():
+            loop_count += 1
+            has_pending = self._has_pending_producer_messages()
+            if has_pending:
                 msgs = self._check_producer_messages()
                 set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
                 self._broadcast_discussion_event("discussion_resumed")
                 logger.info(
-                    "Discussion %s: producer decision received (%d msg(s)), resuming",
+                    "Discussion %s: producer decision received (%d msg(s)), resuming (loop=%d)",
                     self._discussion_id,
                     len(msgs),
+                    loop_count,
                 )
                 return msgs
 
             state_info = get_discussion_state(self._discussion_id)
             if state_info is None:
+                logger.warning(
+                    "Discussion %s: _wait_for_producer_decision returning [] — state_info is None (loop=%d)",
+                    self._discussion_id, loop_count,
+                )
                 return []
 
             current_state = state_info["state"]
             if current_state == DiscussionState.RUNNING:
                 # Manually resumed via API without a message
+                logger.info(
+                    "Discussion %s: _wait_for_producer_decision returning — state=RUNNING (manual resume) (loop=%d)",
+                    self._discussion_id, loop_count,
+                )
                 return self._check_producer_messages()
             if current_state == DiscussionState.FINISHED:
+                logger.warning(
+                    "Discussion %s: _wait_for_producer_decision returning [] — state=FINISHED (loop=%d)",
+                    self._discussion_id, loop_count,
+                )
                 return []
 
             if time.time() - start_time > self._pause_timeout:
@@ -787,18 +817,22 @@ class DiscussionCrew:
         parts.append(
             "\n## @超级制作人 决策卡格式\n"
             "讨论中有一个 AI 分身「超级制作人」代表真实制作人参与决策。\n"
-            "当你有**需要制作人亲自拍板**的关键问题时（如创意方向、目标受众、核心定位），"
-            "在消息中使用以下格式，每个问题独占一行：\n"
+            "当你有**真正无法绕过、必须制作人亲自拍板**的关键决策时，"
+            "在消息末尾使用以下格式（**每次最多提一个问题**）：\n"
             "```\n"
             "@超级制作人：[具体问题]？\n"
             "```\n"
-            "规则：\n"
-            "- 每个 `@超级制作人：` 标记会生成一张独立决策卡，制作人可逐一选择或自定义回答\n"
-            "- 只对真正需要制作人拍板的关键问题使用（创意定位、目标受众、核心体验等）\n"
-            "- 不要对 AI 可自主决定的技术细节或实现方案使用\n"
-            "- 示例：\n"
-            "  @超级制作人：你希望游戏传达的核心情感体验是什么？\n"
-            "  @超级制作人：目标受众是偏向休闲还是硬核玩家？"
+            "**严格使用标准（不满足则绝不使用）**：\n"
+            "- 必须是影响整个项目方向的战略决策（如：核心玩法路线、目标受众、商业模式）\n"
+            "- 必须是 AI 团队内部无法达成共识、且不等制作人决策就无法继续推进的问题\n"
+            "- 每轮讨论只允许一个 agent 提问，且同一个问题不要重复提出\n"
+            "**不应使用的情况**：\n"
+            "- 技术实现细节（AI 团队可自主决定）\n"
+            "- 锦上添花的意见征集（「你觉得…好吗？」）\n"
+            "- 常规的游戏设计问题（AI 可基于行业经验自主建议）\n"
+            "- 第一轮讨论的基础概念确认（先讨论后提问）\n"
+            "示例（仅在真正卡住时才用）：\n"
+            "  @超级制作人：核心竞争优势是依靠世界观深度还是社交玩法？这将决定后续所有系统的优先级。"
         )
 
         # Briefing (if available)
@@ -1725,30 +1759,35 @@ class DiscussionCrew:
         except Exception as exc:
             logger.debug("Failed to broadcast message: %s", exc)
 
-        # Detect @超级制作人 questions and broadcast decision card events
-        try:
-            from src.crew.mention_parser import parse_super_producer_mentions
-            from src.api.websocket.events import create_producer_question_event
-            questions = parse_super_producer_mentions(content, from_agent=agent_role)
-            if questions:
-                # Persist for producer-assist endpoint to consume
-                from src.api.routes.discussion import push_producer_questions
-                push_producer_questions(self._discussion_id, questions)
-                # Mark that this round has producer questions (so we'll wait after summary)
-                self._producer_questions_this_round = True
-                # Notify frontend in real-time
-                q_event = create_producer_question_event(
-                    discussion_id=self._discussion_id,
-                    questions=questions,
-                )
-                broadcast_sync(q_event.to_dict(), discussion_id=self._discussion_id)
-                logger.info(
-                    "Broadcast %d producer question(s) from %s",
-                    len(questions),
-                    agent_role,
-                )
-        except Exception as exc:
-            logger.debug("Failed to broadcast producer questions: %s", exc)
+        # Detect @超级制作人 questions — only from participant agents during
+        # their own speaking turns.  When the LP/moderator is broadcasting
+        # an opening or round summary (_in_moderator_broadcast=True) we skip
+        # detection so that references to @超级制作人 in LP's text don't create
+        # duplicate decision cards.
+        if not self._in_moderator_broadcast:
+            try:
+                from src.crew.mention_parser import parse_super_producer_mentions
+                from src.api.websocket.events import create_producer_question_event
+                questions = parse_super_producer_mentions(content, from_agent=agent_role)
+                if questions:
+                    # Persist for producer-assist endpoint to consume
+                    from src.api.routes.discussion import push_producer_questions
+                    push_producer_questions(self._discussion_id, questions)
+                    # Mark that this round has producer questions (so we'll wait after summary)
+                    self._producer_questions_this_round = True
+                    # Notify frontend in real-time
+                    q_event = create_producer_question_event(
+                        discussion_id=self._discussion_id,
+                        questions=questions,
+                    )
+                    broadcast_sync(q_event.to_dict(), discussion_id=self._discussion_id)
+                    logger.info(
+                        "Broadcast %d producer question(s) from %s",
+                        len(questions),
+                        agent_role,
+                    )
+            except Exception as exc:
+                logger.debug("Failed to broadcast producer questions: %s", exc)
 
     def _broadcast_discussion_event(self, content: str) -> None:
         """Broadcast a discussion-level event via WebSocket."""
@@ -1840,6 +1879,7 @@ class DiscussionCrew:
         agents_to_call: list[Any],
         context: str,
         interrupt_check: Callable[[], bool] | None = None,
+        interrupt_response_check: Callable[[str], bool] | None = None,
     ) -> tuple[list[tuple[str, str]], bool]:
         """Run multiple agents in parallel, broadcasting as each completes.
 
@@ -1852,11 +1892,21 @@ class DiscussionCrew:
         and returns partial results with ``interrupted=True``.  Background
         threads continue to run but their outputs are discarded.
 
+        When *interrupt_response_check* is provided, each batch of completed
+        futures is first fully collected, then ALL responses are pre-scanned
+        before any broadcasting occurs.  If any response triggers the check,
+        ONLY that agent broadcasts; the others in the same batch are silently
+        set to idle.  This prevents race conditions where agents that happen
+        to complete in the same time window get broadcast after a "stop" trigger.
+
         Args:
             agents_to_call: List of agent instances to call.
             context: The discussion context to respond to.
             interrupt_check: Optional callable returning True when an
                 interrupt is requested (e.g. producer message arrived).
+            interrupt_response_check: Optional callable taking a response
+                string and returning True if it should trigger an interrupt.
+                When provided, responses are pre-scanned before broadcasting.
 
         Returns:
             Tuple of (results, was_interrupted).
@@ -1921,6 +1971,10 @@ class DiscussionCrew:
                 pending, timeout=3.0, return_when=FIRST_COMPLETED,
             )
 
+            _batch_interrupted = False
+
+            # --- Step 1: collect ALL responses in this done batch first ---
+            batch_items: list[tuple[Any, str]] = []
             for future in done:
                 agent = future_to_agent[future]
                 try:
@@ -1928,8 +1982,49 @@ class DiscussionCrew:
                 except Exception as exc:
                     logger.warning("Agent %s failed: %s", agent.role, exc)
                     response = f"（{agent.role}暂时无法给出回复）"
+                batch_items.append((agent, response))
 
-                # Broadcast immediately as this agent finishes
+            # --- Step 2: pre-scan for response-level interrupt trigger ---
+            # If any response would trigger the interrupt (e.g. contains
+            # @超级制作人), only that agent should broadcast; all others in
+            # this batch are silently set to idle.  This prevents the race
+            # condition where agents completing in the same time window get
+            # broadcast after a "stop" trigger simply due to set ordering.
+            _batch_trigger_idx = -1
+            if interrupt_response_check and not interrupted:
+                _batch_trigger_idx = next(
+                    (
+                        i
+                        for i, (_, resp) in enumerate(batch_items)
+                        if interrupt_response_check(resp)
+                    ),
+                    -1,
+                )
+                if _batch_trigger_idx >= 0:
+                    logger.info(
+                        "Discussion %s: pre-scan found interrupt trigger in "
+                        "agent '%s' (batch size %d), suppressing %d other(s)",
+                        self._discussion_id,
+                        batch_items[_batch_trigger_idx][0].role,
+                        len(batch_items),
+                        len(batch_items) - 1,
+                    )
+
+            # --- Step 3: broadcast with interrupt-aware ordering ---
+            for i, (agent, response) in enumerate(batch_items):
+                # Case A: a previous broadcast in this batch already triggered
+                # an interrupt → set idle and discard output.
+                if _batch_interrupted:
+                    self._broadcast_status(agent.role, AgentStatus.IDLE)
+                    continue
+
+                # Case B: pre-scan found a trigger elsewhere in the batch →
+                # skip all agents that are NOT the trigger.
+                if _batch_trigger_idx >= 0 and i != _batch_trigger_idx:
+                    self._broadcast_status(agent.role, AgentStatus.IDLE)
+                    continue
+
+                # Normal broadcast
                 self._broadcast_status(agent.role, AgentStatus.SPEAKING)
                 self._broadcast_message(agent.role, response)
                 self._record_message(agent.role, response)
@@ -1937,8 +2032,14 @@ class DiscussionCrew:
 
                 results.append((agent.role, response))
 
-            # Check for interrupt after processing completions
-            if pending and interrupt_check and interrupt_check():
+                # Check interrupt right after each broadcast — if this agent's
+                # message set _producer_questions_this_round=True, skip any
+                # remaining agents in this batch on the next iteration.
+                if interrupt_check and interrupt_check():
+                    _batch_interrupted = True
+
+            # Check for interrupt on remaining pending futures
+            if _batch_interrupted or (pending and interrupt_check and interrupt_check()):
                 interrupted = True
                 logger.info(
                     "Discussion %s: agent parallel run interrupted, "
@@ -2405,7 +2506,9 @@ class DiscussionCrew:
                 opening = sanitize_speakers_in_text(opening, known_roles=[a.role for a in self._discussion_agents])
 
                 self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                self._in_moderator_broadcast = True
                 self._broadcast_message(self._lead_planner.role, opening)
+                self._in_moderator_broadcast = False
                 self._record_message(self._lead_planner.role, opening)
                 self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
@@ -2456,27 +2559,75 @@ class DiscussionCrew:
                         participating_names,
                     )
 
-                    # Build windowed context for agents
-                    agent_context = self._build_windowed_context(
-                        topic, opening, current_round_msgs,
-                        last_summary=last_summary,
-                        summary_window=3,
-                    )
+                    # Run agents SEQUENTIALLY: after each agent speaks,
+                    # immediately check for @超级制作人 and wait for the
+                    # producer to reply before the next agent continues.
+                    # This prevents multiple agents from all sending
+                    # decision-card questions simultaneously (which would
+                    # overwrite each other's cards on the frontend).
+                    _had_producer_q = False
+                    for _seq_agent in agents_to_call:
+                        if self._abort_reason:
+                            break
 
-                    # All agents think in parallel, broadcast as each finishes
-                    round_responses, _ = self._run_agents_parallel_sync(
-                        agents_to_call, agent_context,
-                    )
-                    for role, response in round_responses:
-                        current_round_msgs.append((role, response))
+                        # Rebuild context per agent so each one sees the
+                        # messages already spoken this round (including any
+                        # producer replies injected mid-round).
+                        agent_context = self._build_windowed_context(
+                            topic, opening, current_round_msgs,
+                            last_summary=last_summary,
+                            injected_messages=pending_injected or None,
+                            summary_window=3,
+                        )
 
-                    # Check for pause/intervention
+                        self._broadcast_status(_seq_agent.role, AgentStatus.THINKING)
+                        try:
+                            from src.crew.tools import set_tool_context, clear_tool_context
+                            set_tool_context(self._discussion_id, _seq_agent.role_name)
+                        except Exception:
+                            pass
+                        try:
+                            _seq_response = _seq_agent.respond_sync(agent_context)
+                        except Exception as _exc:
+                            logger.warning("Agent %s failed: %s", _seq_agent.role, _exc)
+                            _seq_response = f"（{_seq_agent.role}暂时无法给出回复）"
+                        finally:
+                            try:
+                                from src.crew.tools import clear_tool_context
+                                clear_tool_context()
+                            except Exception:
+                                pass
+
+                        self._broadcast_status(_seq_agent.role, AgentStatus.SPEAKING)
+                        self._broadcast_message(_seq_agent.role, _seq_response)
+                        self._record_message(_seq_agent.role, _seq_response)
+                        self._broadcast_status(_seq_agent.role, AgentStatus.IDLE)
+                        current_round_msgs.append((_seq_agent.role, _seq_response))
+
+                        # After each agent speaks, immediately check for
+                        # @超级制作人. If triggered, pause and wait for
+                        # producer before the next agent speaks.
+                        if self._producer_questions_this_round:
+                            _had_producer_q = True
+                            self._producer_questions_this_round = False
+                            _producer_replies = self._wait_for_producer_decision()
+                            if self._abort_reason:
+                                break
+                            if _producer_replies:
+                                # messages already recorded & broadcast by add_producer_message / checkpoint.py
+                                pending_injected.extend(_producer_replies)
+                            # Next agent will get updated context at loop start
+
+                    # Check for manual pause/intervention
                     injected_messages = self._check_pause_and_wait()
                     if self._abort_reason:
                         raise DiscussionTimeoutError(self._abort_reason)
                     if injected_messages:
                         self._inject_user_messages(injected_messages)
                         pending_injected.extend(injected_messages)
+
+                    if self._abort_reason:
+                        raise DiscussionTimeoutError(self._abort_reason)
 
                     # Lead Planner summarizes this round (larger context window)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
@@ -2491,7 +2642,9 @@ class DiscussionCrew:
                     last_summary = latest_summary
 
                     self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                    self._in_moderator_broadcast = True
                     self._broadcast_message(self._lead_planner.role, latest_summary)
+                    self._in_moderator_broadcast = False
                     self._record_message(self._lead_planner.role, latest_summary)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
@@ -2516,25 +2669,15 @@ class DiscussionCrew:
                         )
                         break
 
-                    # Wait for producer decision card response if questions were sent this round
-                    _had_producer_q = self._producer_questions_this_round
-                    self._producer_questions_this_round = False
-                    if _had_producer_q:
-                        # Decision card is already showing — pause and await producer response
-                        _producer_replies = self._wait_for_producer_decision()
-                        if self._abort_reason:
-                            raise DiscussionTimeoutError(self._abort_reason)
-                        if _producer_replies:
-                            self._inject_user_messages(_producer_replies)
-                            pending_injected.extend(_producer_replies)
-                    elif (
-                        round_num >= 3
+                    # Auto-continue check: every 3 rounds without explicit producer question,
+                    # ask the producer whether to continue.
+                    if (
+                        not _had_producer_q
+                        and round_num >= 3
                         and round_num % 3 == 0
                         and round_num < max_rounds
                         and status != DiscussionStatus.SUFFICIENT
                     ):
-                        # Discussion running long without explicit producer question —
-                        # ask the producer whether to continue.
                         # Use the actual discussion moderator (主持人) as the sender.
                         _host_role = self._lead_planner.role  # moderator role name from YAML
                         _continue_q = [{
@@ -2561,7 +2704,7 @@ class DiscussionCrew:
                         if self._abort_reason:
                             raise DiscussionTimeoutError(self._abort_reason)
                         if _producer_replies:
-                            self._inject_user_messages(_producer_replies)
+                            # messages already recorded & broadcast by add_producer_message / checkpoint.py
                             pending_injected.extend(_producer_replies)
 
                     self._broadcast_discussion_event(f"第{round_num}轮讨论完成")
@@ -2945,6 +3088,20 @@ class DiscussionCrew:
                     self._record_message(self._lead_planner.role, opening)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
+                    # If LP opening asked @超级制作人, wait before agents start
+                    if self._producer_questions_this_round:
+                        logger.info(
+                            "Discussion %s: LP opening asked @超级制作人 (extend), "
+                            "pausing before agents start",
+                            self._discussion_id,
+                        )
+                        self._producer_questions_this_round = False
+                        _lp_replies = self._wait_for_producer_decision()
+                        if self._abort_reason:
+                            break
+                        if _lp_replies:
+                            pass  # messages already recorded & broadcast by add_producer_message / checkpoint.py
+
                     # Determine speakers
                     next_speakers = parse_next_speakers(opening, known_roles=[a.role for a in self._discussion_agents])
                     agents_to_call = (
@@ -2954,9 +3111,48 @@ class DiscussionCrew:
                     if not agents_to_call:
                         agents_to_call = list(self._discussion_agents)
 
-                    # Agents discuss in parallel
+                    # Agents discuss SEQUENTIALLY with @超级制作人 pause detection
                     context = self._build_section_context(topic, doc_plan, section, section_content, opening)
-                    round_responses, _ = self._run_agents_parallel_sync(agents_to_call, context)
+                    # Track section message start for dynamic per-agent context
+                    _ext_msg_start = len(self._messages)
+                    round_responses: list[tuple[str, str]] = []
+                    for _seq_agent in agents_to_call:
+                        if self._abort_reason:
+                            break
+                        self._broadcast_status(_seq_agent.role, AgentStatus.THINKING)
+                        try:
+                            from src.crew.tools import set_tool_context, clear_tool_context
+                            set_tool_context(self._discussion_id, _seq_agent.role_name)
+                        except Exception:
+                            pass
+                        try:
+                            _recent_ext = self._messages[_ext_msg_start:]
+                            if _recent_ext:
+                                _ctx_ext = context + "\n\n---\n## 本章节已有讨论（请结合以上内容作答）\n" + "\n\n".join(
+                                    f"{m.agent_role}：{m.content[:1000]}" for m in _recent_ext
+                                )
+                            else:
+                                _ctx_ext = context
+                            _seq_response = _seq_agent.respond_sync(_ctx_ext)
+                        except Exception as _exc:
+                            logger.warning("Agent %s failed: %s", _seq_agent.role, _exc)
+                            _seq_response = f"（{_seq_agent.role}暂时无法给出回复）"
+                        finally:
+                            try:
+                                from src.crew.tools import clear_tool_context
+                                clear_tool_context()
+                            except Exception:
+                                pass
+                        self._broadcast_status(_seq_agent.role, AgentStatus.SPEAKING)
+                        self._broadcast_message(_seq_agent.role, _seq_response)
+                        self._record_message(_seq_agent.role, _seq_response)
+                        self._broadcast_status(_seq_agent.role, AgentStatus.IDLE)
+                        round_responses.append((_seq_agent.role, _seq_response))
+                        if self._producer_questions_this_round:
+                            self._producer_questions_this_round = False
+                            self._wait_for_producer_decision()
+                            if self._abort_reason:
+                                break
 
                     discussion_content = f"主策划：{opening}\n\n"
                     for role, resp in round_responses:
@@ -3751,11 +3947,11 @@ class DiscussionCrew:
         parts.append(
             "\n---\n"
             "## @超级制作人 决策卡\n"
-            "讨论中有「超级制作人」AI 分身代表真实制作人。"
-            "当你有**需要制作人亲自拍板**的关键问题时（创意方向/目标受众/核心体验/商业定位等），"
-            "在消息末尾用以下格式标记，每个问题独占一行：\n"
-            "@超级制作人：[具体问题]？\n"
-            "规则：只对真正需要人类决策的问题使用，不要对 AI 可自主决定的技术细节使用。\n"
+            "当存在**真正无法绕过、必须制作人拍板**的战略决策（项目方向/核心定位/商业模式）时，"
+            "在消息**末尾**用以下格式标记（**每次最多一个问题，且只在确实卡住时才用**）：\n"
+            "@超级制作人：[具体决策问题]？\n"
+            "**不要用于**：技术细节、常规设计问题、意见征集、第一轮基础概念确认。\n"
+            "每轮只能有一个 agent 提问，不重复提已问过的问题。\n"
             "---"
         )
         parts.append(f"\n主策划引导：\n{opening}")
@@ -5375,6 +5571,23 @@ class DiscussionCrew:
                     self._broadcast_message(self._lead_planner.role, opening)
                     self._record_message(self._lead_planner.role, opening)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
+                    # Track where this section's messages start (after LP opening).
+                    # Used to append recent discussion to each agent's context.
+                    section_msg_start = len(self._messages)
+
+                    # If LP opening itself asked @超级制作人, wait for producer
+                    # reply BEFORE any agents start speaking.
+                    if self._producer_questions_this_round:
+                        logger.info(
+                            "Discussion %s: LP opening asked @超级制作人, "
+                            "pausing before agents start",
+                            self._discussion_id,
+                        )
+                        self._producer_questions_this_round = False
+                        _lp_replies = self._wait_for_producer_decision()
+                        if self._abort_reason:
+                            break
+                        # messages already recorded & broadcast by add_producer_message / checkpoint.py
 
                     # Determine speakers
                     next_speakers = parse_next_speakers(opening, known_roles=[a.role for a in self._discussion_agents])
@@ -5394,7 +5607,9 @@ class DiscussionCrew:
                     logger.info("Discussion %s round %d section %s: speakers=%s",
                                 self._discussion_id, round_num, section.id, participating)
 
-                    # Agents discuss in parallel (with producer interrupt detection)
+                    # Agents discuss SEQUENTIALLY so that after each agent
+                    # speaks we can immediately detect @超级制作人 and pause
+                    # for the producer before the next agent continues.
                     context = self._build_section_context(topic, doc_plan, section, section_content, opening)
                     used_decisions = bool(
                         self._section_decisions.get(section.id)
@@ -5407,10 +5622,68 @@ class DiscussionCrew:
                         len(section_content or ""), len(context),
                         "decisions_summary" if used_decisions else "full_content",
                     )
-                    round_responses, was_interrupted = self._run_agents_parallel_sync(
-                        agents_to_call, context,
-                        interrupt_check=self._has_pending_producer_messages,
-                    )
+                    round_responses: list[tuple[str, str]] = []
+                    was_interrupted = False
+                    for _seq_agent in agents_to_call:
+                        if self._abort_reason:
+                            was_interrupted = True
+                            break
+                        self._broadcast_status(_seq_agent.role, AgentStatus.THINKING)
+                        try:
+                            from src.crew.tools import set_tool_context, clear_tool_context
+                            set_tool_context(self._discussion_id, _seq_agent.role_name)
+                        except Exception:
+                            pass
+                        try:
+                            # Rebuild context to include producer replies and
+                            # prior agent responses from this section.
+                            _recent = self._messages[section_msg_start:]
+                            if _recent:
+                                _ctx = context + "\n\n---\n## 本章节已有讨论（请结合以上内容作答）\n" + "\n\n".join(
+                                    f"{m.agent_role}：{m.content[:1000]}" for m in _recent
+                                )
+                            else:
+                                _ctx = context
+                            _seq_response = _seq_agent.respond_sync(_ctx)
+                        except Exception as _exc:
+                            logger.warning("Agent %s failed: %s", _seq_agent.role, _exc)
+                            _seq_response = f"（{_seq_agent.role}暂时无法给出回复）"
+                        finally:
+                            try:
+                                from src.crew.tools import clear_tool_context
+                                clear_tool_context()
+                            except Exception:
+                                pass
+                        self._broadcast_status(_seq_agent.role, AgentStatus.SPEAKING)
+                        self._broadcast_message(_seq_agent.role, _seq_response)
+                        self._record_message(_seq_agent.role, _seq_response)
+                        self._broadcast_status(_seq_agent.role, AgentStatus.IDLE)
+                        round_responses.append((_seq_agent.role, _seq_response))
+
+                        # Immediately check for @超级制作人 — pause before
+                        # the next agent speaks.
+                        if self._producer_questions_this_round:
+                            logger.info(
+                                "Discussion %s: @超级制作人 detected after %s, calling _wait_for_producer_decision",
+                                self._discussion_id, _seq_agent.role,
+                            )
+                            self._producer_questions_this_round = False
+                            was_interrupted = True
+                            _producer_replies = self._wait_for_producer_decision()
+                            logger.info(
+                                "Discussion %s: _wait_for_producer_decision returned %d replies after %s",
+                                self._discussion_id, len(_producer_replies), _seq_agent.role,
+                            )
+                            if self._abort_reason:
+                                break
+                            # After producer replies, let remaining agents
+                            # continue with updated context.
+                            was_interrupted = False
+
+                        # Also check for regular producer messages (existing mechanism)
+                        if self._has_pending_producer_messages():
+                            was_interrupted = True
+                            break
 
                     # Build discussion content for summary and doc update
                     discussion_content = f"主策划：{opening}\n\n"
@@ -5700,6 +5973,19 @@ class DiscussionCrew:
                                 self._record_message(self._lead_planner.role, opening)
                                 self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
+                                # If LP opening asked @超级制作人, wait before agents start
+                                if self._producer_questions_this_round:
+                                    logger.info(
+                                        "Discussion %s: LP opening asked @超级制作人 (review), "
+                                        "pausing before agents start",
+                                        self._discussion_id,
+                                    )
+                                    self._producer_questions_this_round = False
+                                    _lp_replies = self._wait_for_producer_decision()
+                                    if self._abort_reason:
+                                        break
+                                    # messages already recorded & broadcast by add_producer_message / checkpoint.py
+
                                 next_speakers = parse_next_speakers(opening, known_roles=[a.role for a in self._discussion_agents])
 
                                 # Filter producer from speakers — producer interacts via decision cards only
@@ -5714,7 +6000,46 @@ class DiscussionCrew:
                                     agents_to_call = list(self._discussion_agents)
 
                                 ctx = self._build_section_context(topic, doc_plan, sect, sect_content, opening)
-                                rr, _ = self._run_agents_parallel_sync(agents_to_call, ctx)
+                                # Track section message start for dynamic per-agent context
+                                _rev_msg_start = len(self._messages)
+                                rr: list[tuple[str, str]] = []
+                                for _rr_agent in agents_to_call:
+                                    if self._abort_reason:
+                                        break
+                                    self._broadcast_status(_rr_agent.role, AgentStatus.THINKING)
+                                    try:
+                                        from src.crew.tools import set_tool_context, clear_tool_context
+                                        set_tool_context(self._discussion_id, _rr_agent.role_name)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        _recent_rev = self._messages[_rev_msg_start:]
+                                        if _recent_rev:
+                                            _ctx_rev = ctx + "\n\n---\n## 本章节已有讨论（请结合以上内容作答）\n" + "\n\n".join(
+                                                f"{m.agent_role}：{m.content[:1000]}" for m in _recent_rev
+                                            )
+                                        else:
+                                            _ctx_rev = ctx
+                                        _rr_resp = _rr_agent.respond_sync(_ctx_rev)
+                                    except Exception as _exc:
+                                        logger.warning("Agent %s failed: %s", _rr_agent.role, _exc)
+                                        _rr_resp = f"（{_rr_agent.role}暂时无法给出回复）"
+                                    finally:
+                                        try:
+                                            from src.crew.tools import clear_tool_context
+                                            clear_tool_context()
+                                        except Exception:
+                                            pass
+                                    self._broadcast_status(_rr_agent.role, AgentStatus.SPEAKING)
+                                    self._broadcast_message(_rr_agent.role, _rr_resp)
+                                    self._record_message(_rr_agent.role, _rr_resp)
+                                    self._broadcast_status(_rr_agent.role, AgentStatus.IDLE)
+                                    rr.append((_rr_agent.role, _rr_resp))
+                                    if self._producer_questions_this_round:
+                                        self._producer_questions_this_round = False
+                                        self._wait_for_producer_decision()
+                                        if self._abort_reason:
+                                            break
                                 disc_content = f"主策划：{opening}\n\n"
                                 for role, resp in rr:
                                     disc_content += f"{role}：{resp}\n\n"

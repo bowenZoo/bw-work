@@ -303,17 +303,17 @@ def parse_super_producer_mentions(
     """Extract @超级制作人 question mentions from an agent message.
 
     Format: @超级制作人：<question>  OR  @超级制作人 <question>
-    Each occurrence on its own line produces one decision card.
+    Only the FIRST occurrence is returned — agents must raise at most one
+    decision question per message to keep the producer interaction focused.
 
     Args:
         text: Agent message content.
         from_agent: Role name of the agent who wrote this message.
 
     Returns:
-        List of {"from_agent": str, "question": str} dicts, one per mention.
+        List of {"from_agent": str, "question": str} dicts, one per @超级制作人 line.
     """
-    questions: list[dict] = []
-    # Match @超级制作人 followed by optional ：/: and then the question text up to EOL
+    results: list[dict] = []
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped.startswith(_SUPER_PRODUCER_TAG):
@@ -322,5 +322,5 @@ def parse_super_producer_mentions(
         after = stripped[len(_SUPER_PRODUCER_TAG):].lstrip("：: \t")
         after = after.strip()
         if len(after) >= 5:
-            questions.append({"from_agent": from_agent, "question": after})
-    return questions
+            results.append({"from_agent": from_agent, "question": after})
+    return results

@@ -51,6 +51,11 @@ def pop_producer_questions(discussion_id: str) -> list[dict]:
     return _producer_pending_questions.pop(discussion_id, [])
 
 
+def has_producer_questions(discussion_id: str) -> bool:
+    """Check if there are pending @超级制作人 questions without consuming them."""
+    return bool(_producer_pending_questions.get(discussion_id))
+
+
 class DiscussionStatus(str, Enum):
     """Status of a discussion."""
 
@@ -4152,10 +4157,10 @@ async def get_producer_suggestions(
             role = getattr(m, "agent_role", "") or getattr(m, "agent_id", "")
             content = (getattr(m, "content", "") or "")[:300]
             recent_msgs.append(f"[{role}] {content}")
-
-        # 提取 AI 角色向制作人提出的具体问题（仅在无显式问题时使用）
-        if not explicit_questions:
-            questions_for_producer = _extract_questions_for_producer(all_msgs, recent_limit=10)
+        # Note: _extract_questions_for_producer removed — it picked up ordinary
+        # discussion sentences as "questions" and showed them as wrong decision
+        # cards. Only @超级制作人 explicit questions (explicit_questions queue)
+        # or active checkpoint questions drive Mode A.
     except Exception:
         pass
 

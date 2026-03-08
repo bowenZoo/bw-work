@@ -97,6 +97,10 @@ async def _send_discussion_sync(websocket: WebSocket, discussion_id: str) -> Non
     disc_state = get_disc_state(discussion_id)
     is_paused = disc_state is not None and disc_state.get("state") == DiscState.PAUSED
 
+    # Detect waiting_decision: paused AND there are pending producer questions
+    from src.api.routes.discussion import has_producer_questions
+    is_waiting_decision = is_paused and has_producer_questions(discussion_id)
+
     await websocket.send_json({
         "type": "sync",
         "data": {
@@ -118,6 +122,7 @@ async def _send_discussion_sync(websocket: WebSocket, discussion_id: str) -> Non
             "doc_plan": doc_plan,
             "doc_contents": doc_contents,
             "is_paused": is_paused,
+            "is_waiting_decision": is_waiting_decision,
         },
     })
 
