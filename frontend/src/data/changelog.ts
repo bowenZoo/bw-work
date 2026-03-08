@@ -13,6 +13,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     "items": [
       {
         "type": "fix",
+        "text": "继续讨论决策卡明确使用该讨论的主持人角色"
+      },
+      {
+        "type": "fix",
         "text": "重构讨论暂停机制 — 以决策卡替代直接暂停"
       },
       {
