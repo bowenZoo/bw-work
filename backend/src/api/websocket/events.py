@@ -51,6 +51,8 @@ class ServerMessageType(str, Enum):
     CHECKPOINT = "checkpoint"
     # Producer digest event
     PRODUCER_DIGEST = "producer_digest"
+    # Super producer question cards (triggered by @超级制作人 in agent messages)
+    PRODUCER_QUESTION = "producer_question"
 
 
 class AgentStatus(str, Enum):
@@ -1264,5 +1266,48 @@ def create_producer_digest_event(
             digest_summary=digest_summary,
             action=action,
             guidance=guidance,
+        )
+    )
+
+
+# ── Producer Question Event ──────────────────────────────────────────────────
+
+class ProducerQuestionItem(BaseModel):
+    """A single question directed at the producer via @超级制作人."""
+
+    from_agent: str
+    question: str
+
+
+class ProducerQuestionEventData(BaseModel):
+    """Data for a producer_question event."""
+
+    discussion_id: str
+    questions: list[ProducerQuestionItem]
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+class ProducerQuestionEvent(BaseModel):
+    """Event broadcasting @超级制作人 questions that need decision cards."""
+
+    type: ServerMessageType = ServerMessageType.PRODUCER_QUESTION
+    data: ProducerQuestionEventData
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
+
+
+def create_producer_question_event(
+    discussion_id: str,
+    questions: list[dict],
+) -> ProducerQuestionEvent:
+    """Create a producer_question event from a list of {from_agent, question} dicts."""
+    items = [ProducerQuestionItem(**q) for q in questions]
+    return ProducerQuestionEvent(
+        data=ProducerQuestionEventData(
+            discussion_id=discussion_id,
+            questions=items,
         )
     )

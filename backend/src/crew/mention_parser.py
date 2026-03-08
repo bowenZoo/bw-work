@@ -288,3 +288,39 @@ def get_all_roles() -> list[str]:
         List of all role names.
     """
     return [pattern.role for pattern in ROLE_PATTERNS]
+
+
+# ── Super Producer (@超级制作人) ──────────────────────────────────────────────
+
+SUPER_PRODUCER_ROLE = "超级制作人"
+_SUPER_PRODUCER_TAG = "@超级制作人"
+
+
+def parse_super_producer_mentions(
+    text: str,
+    from_agent: str = "",
+) -> list[dict]:
+    """Extract @超级制作人 question mentions from an agent message.
+
+    Format: @超级制作人：<question>  OR  @超级制作人 <question>
+    Each occurrence on its own line produces one decision card.
+
+    Args:
+        text: Agent message content.
+        from_agent: Role name of the agent who wrote this message.
+
+    Returns:
+        List of {"from_agent": str, "question": str} dicts, one per mention.
+    """
+    questions: list[dict] = []
+    # Match @超级制作人 followed by optional ：/: and then the question text up to EOL
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(_SUPER_PRODUCER_TAG):
+            continue
+        # Remove the tag and optional delimiter
+        after = stripped[len(_SUPER_PRODUCER_TAG):].lstrip("：: \t")
+        after = after.strip()
+        if len(after) >= 5:
+            questions.append({"from_agent": from_agent, "question": after})
+    return questions

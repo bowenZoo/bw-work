@@ -727,7 +727,26 @@ class DiscussionCrew:
             "- 项目的初心、创意来源、目标受众等第一手想法，来自制作人本人，不是由任何 AI 角色预设的\n"
             "- 当你需要了解「项目为什么做」「创作初心是什么」「目标玩家是谁」等制作人视角的信息时，"
             "必须在 ```speakers``` 块中加入 `制作人`，邀请其亲自分享，而不是让主策划或其他 AI 角色代为回答\n"
-            "- 主策划（AI）的职责是主持和引导讨论，不能替代制作人回答项目起源类问题"
+            "- **任何 AI 角色（包括主策划）都绝对不能替制作人回答「为什么做这个游戏」「项目初心」「创意来源」类问题**\n"
+            "- 若被问及此类问题，必须将 `制作人` 列入 speakers，由制作人亲自作答"
+        )
+
+        # Super producer (@超级制作人) instruction
+        parts.append(
+            "\n## @超级制作人 决策卡格式\n"
+            "讨论中有一个 AI 分身「超级制作人」代表真实制作人参与决策。\n"
+            "当你有**需要制作人亲自拍板**的关键问题时（如创意方向、目标受众、核心定位），"
+            "在消息中使用以下格式，每个问题独占一行：\n"
+            "```\n"
+            "@超级制作人：[具体问题]？\n"
+            "```\n"
+            "规则：\n"
+            "- 每个 `@超级制作人：` 标记会生成一张独立决策卡，制作人可逐一选择或自定义回答\n"
+            "- 只对真正需要制作人拍板的关键问题使用（创意定位、目标受众、核心体验等）\n"
+            "- 不要对 AI 可自主决定的技术细节或实现方案使用\n"
+            "- 示例：\n"
+            "  @超级制作人：你希望游戏传达的核心情感体验是什么？\n"
+            "  @超级制作人：目标受众是偏向休闲还是硬核玩家？"
         )
 
         # Briefing (if available)
@@ -1653,6 +1672,29 @@ class DiscussionCrew:
             broadcast_sync(event.to_dict(), discussion_id=self._discussion_id)
         except Exception as exc:
             logger.debug("Failed to broadcast message: %s", exc)
+
+        # Detect @超级制作人 questions and broadcast decision card events
+        try:
+            from src.crew.mention_parser import parse_super_producer_mentions
+            from src.api.websocket.events import create_producer_question_event
+            questions = parse_super_producer_mentions(content, from_agent=agent_role)
+            if questions:
+                # Persist for producer-assist endpoint to consume
+                from src.api.routes.discussion import push_producer_questions
+                push_producer_questions(self._discussion_id, questions)
+                # Notify frontend in real-time
+                q_event = create_producer_question_event(
+                    discussion_id=self._discussion_id,
+                    questions=questions,
+                )
+                broadcast_sync(q_event.to_dict(), discussion_id=self._discussion_id)
+                logger.info(
+                    "Broadcast %d producer question(s) from %s",
+                    len(questions),
+                    agent_role,
+                )
+        except Exception as exc:
+            logger.debug("Failed to broadcast producer questions: %s", exc)
 
     def _broadcast_discussion_event(self, content: str) -> None:
         """Broadcast a discussion-level event via WebSocket."""
@@ -3548,6 +3590,17 @@ class DiscussionCrew:
                 f"{self._producer_digest_pending}"
             )
 
+        # @超级制作人 instruction for the moderator
+        prompt += (
+            "\n\n---\n"
+            "## @超级制作人 决策卡\n"
+            "你在开场时如有需要制作人拍板的关键问题（创意方向/目标受众/核心体验等），"
+            "在消息末尾用以下格式，每个问题独占一行：\n"
+            "@超级制作人：[具体问题]？\n"
+            "只对真正需要人类决策的问题使用，不要对技术细节使用。\n"
+            "---"
+        )
+
         task = Task(
             description=prompt,
             expected_output=f"引导讨论章节「{section.title}」的问题和发言人指定",
@@ -3623,6 +3676,17 @@ class DiscussionCrew:
         if self._producer_digest_pending:
             parts.append(f"\n⚠️ 制作人反馈（请务必回应）：\n{self._producer_digest_pending}")
             self._producer_digest_pending = None
+        # @超级制作人 instruction — injected into every agent's context
+        parts.append(
+            "\n---\n"
+            "## @超级制作人 决策卡\n"
+            "讨论中有「超级制作人」AI 分身代表真实制作人。"
+            "当你有**需要制作人亲自拍板**的关键问题时（创意方向/目标受众/核心体验/商业定位等），"
+            "在消息末尾用以下格式标记，每个问题独占一行：\n"
+            "@超级制作人：[具体问题]？\n"
+            "规则：只对真正需要人类决策的问题使用，不要对 AI 可自主决定的技术细节使用。\n"
+            "---"
+        )
         parts.append(f"\n主策划引导：\n{opening}")
         return "\n".join(parts)
 

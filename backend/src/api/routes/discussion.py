@@ -35,6 +35,21 @@ router = APIRouter(prefix="/api/discussions", tags=["discussions"])
 # Memory storage for summaries
 _discussion_memory = DiscussionMemory(data_dir="data/projects")
 
+# @超级制作人 questions pending producer response: discussion_id → list of {from_agent, question}
+_producer_pending_questions: dict[str, list[dict]] = {}
+
+
+def push_producer_questions(discussion_id: str, questions: list[dict]) -> None:
+    """Store @超级制作人 questions from an agent message (called by WebSocket handler)."""
+    if discussion_id not in _producer_pending_questions:
+        _producer_pending_questions[discussion_id] = []
+    _producer_pending_questions[discussion_id].extend(questions)
+
+
+def pop_producer_questions(discussion_id: str) -> list[dict]:
+    """Retrieve and clear pending @超级制作人 questions for a discussion."""
+    return _producer_pending_questions.pop(discussion_id, [])
+
 
 class DiscussionStatus(str, Enum):
     """Status of a discussion."""
@@ -4012,30 +4027,24 @@ _SUPER_PRODUCER_SYSTEM_GENERAL = """你是「超级制作人助手」，专门�
 
 
 def _call_llm_for_producer_assist(prompt: str, system: str) -> dict | None:
-    """调用 LLM 生成制作人发言建议。失败返回 None。"""
+    """调用 LLM 生成制作人发言建议。失败返回 None。
+
+    使用 _get_llm_from_config() 获取 LLM 实例，确保代理 user-agent patch 已应用。
+    """
     try:
-        from src.admin.config_store import ConfigStore
-        cfg = ConfigStore().get_active_llm_config()
-        if not cfg or not cfg.get("api_key"):
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        llm = _get_llm_from_config()
+        if llm is None:
             return None
 
-        import litellm  # type: ignore
-        model = cfg.get("model", "gpt-4o-mini")
-        base_url = cfg.get("base_url") or None
-
-        resp = litellm.completion(
-            model=model,
-            api_key=cfg["api_key"],
-            api_base=base_url or None,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.8,
-            max_tokens=800,
-            timeout=15,
-        )
-        raw = resp.choices[0].message.content or ""
+        # 限制 max_tokens（每题3条答案×100字×3问题≈3500 tokens）
+        llm_short = llm.bind(max_tokens=3500)
+        resp = llm_short.invoke([
+            SystemMessage(content=system),
+            HumanMessage(content=prompt),
+        ])
+        raw = resp.content if hasattr(resp, "content") else str(resp)
         # 提取 JSON
         start = raw.find("{")
         end = raw.rfind("}") + 1
@@ -4076,9 +4085,10 @@ def _heuristic_producer_suggestions(topic: str, recent_context: str, checkpoint_
 
 
 def _extract_questions_for_producer(msgs: list, recent_limit: int = 8) -> list[str]:
-    """从最近消息中提取 AI 角色向制作人提出的问题。"""
-    import re
+    """从最近消息中提取 AI 角色向制作人提出的问题。
 
+    策略：按行拆分，只收录满足条件的干净问句，过滤 markdown 代码块等噪音。
+    """
     questions: list[str] = []
     # 只看最近几条消息（最后一条是制作人发言触发，往前找 AI 消息）
     for m in msgs[-recent_limit:]:
@@ -4089,14 +4099,27 @@ def _extract_questions_for_producer(msgs: list, recent_limit: int = 8) -> list[s
         content = (getattr(m, "content", "") or "").strip()
         if not content:
             continue
-        # 提取句子结尾为 ? 或 ？ 的问句
-        sentences = re.split(r"(?<=[。！？!?])\s*", content)
-        for s in sentences:
-            s = s.strip()
-            if s.endswith("?") or s.endswith("？"):
-                # 优先收录明显针对制作人的问句
-                if len(s) >= 10:
-                    questions.append(f"[{role}] {s}")
+
+        in_code_block = False
+        for line in content.splitlines():
+            stripped = line.strip()
+            # 跟踪代码块状态，代码块内容一律跳过
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                continue
+            if in_code_block:
+                continue
+            # 必须以 ? 或 ？ 结尾，且不含 ` 反引号（避免代码片段）
+            if not (stripped.endswith("?") or stripped.endswith("？")):
+                continue
+            if "`" in stripped:
+                continue
+            # 去除 markdown 加粗/编号前缀，只保留问题本体
+            clean = stripped.lstrip("*#0123456789.-） ) 、").strip("*").strip()
+            # 长度过滤：太短不像完整问句
+            if len(clean) < 8:
+                continue
+            questions.append(f"[{role}] {clean}")
     return questions
 
 
@@ -4114,36 +4137,122 @@ async def get_producer_suggestions(
     if not disc:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
+    # --- 优先使用 @超级制作人 显式标记的问题（最高优先级）---
+    explicit_questions = pop_producer_questions(discussion_id)
+
     # 获取最近 10 条消息作为上下文
     recent_msgs: list[str] = []
     checkpoint_q = ""
     questions_for_producer: list[str] = []
     all_msgs: list = []
     try:
-        all_msgs = _discussion_memory.get_messages(discussion_id)
+        loaded = _discussion_memory.load(discussion_id)
+        all_msgs = list(loaded.messages) if loaded else []
         for m in all_msgs[-10:]:
             role = getattr(m, "agent_role", "") or getattr(m, "agent_id", "")
             content = (getattr(m, "content", "") or "")[:300]
             recent_msgs.append(f"[{role}] {content}")
 
-        # 提取 AI 角色向制作人提出的具体问题
-        questions_for_producer = _extract_questions_for_producer(all_msgs, recent_limit=10)
+        # 提取 AI 角色向制作人提出的具体问题（仅在无显式问题时使用）
+        if not explicit_questions:
+            questions_for_producer = _extract_questions_for_producer(all_msgs, recent_limit=10)
+    except Exception:
+        pass
 
-        # 若当前有待决策 checkpoint，获取其问题
-        from src.api.routes.checkpoint import _checkpoints  # type: ignore
-        disc_checkpoints = _checkpoints.get(discussion_id, [])
+    # 若当前有待决策 checkpoint，从 crew 实例或持久化数据中获取
+    checkpoint_options: list[dict] = []
+    try:
+        crew_inst = _running_crews.get(discussion_id)
+        if crew_inst and crew_inst._current_discussion:
+            disc_checkpoints = list(crew_inst._current_discussion.checkpoints)
+        else:
+            stored = _discussion_memory.load(discussion_id)
+            disc_checkpoints = list(stored.checkpoints) if stored else []
         for cp in reversed(disc_checkpoints):
-            if getattr(cp, "type", "") == "decision" and not getattr(cp, "responded", False):
-                checkpoint_q = getattr(cp, "question", "") or ""
+            # checkpoint 可能是 dict 或 Pydantic model
+            cp_type = cp.get("type", "") if isinstance(cp, dict) else getattr(cp, "type", "")
+            cp_responded = cp.get("responded") if isinstance(cp, dict) else getattr(cp, "responded", None)
+            cp_question = cp.get("question", "") if isinstance(cp, dict) else getattr(cp, "question", "")
+            if cp_type == "decision" and not cp_responded:
+                checkpoint_q = cp_question or ""
+                # 提取 checkpoint 自带的选项作为答案候选
+                raw_opts = cp.get("options", []) if isinstance(cp, dict) else getattr(cp, "options", [])
+                if raw_opts:
+                    checkpoint_options = [
+                        {
+                            "label": opt.get("label", "") if isinstance(opt, dict) else getattr(opt, "label", ""),
+                            "description": opt.get("description", "") if isinstance(opt, dict) else getattr(opt, "description", ""),
+                        }
+                        for opt in raw_opts
+                    ]
                 break
     except Exception:
         pass
 
     recent_context = "\n".join(recent_msgs)
+    logger.info(
+        "producer-assist %s: explicit=%d, q4p=%d, checkpoint_q=%r",
+        discussion_id[:8], len(explicit_questions), len(questions_for_producer), checkpoint_q[:40] if checkpoint_q else ""
+    )
 
-    # --- 模式 A：有具体问题 → 逐题生成答案选项 ---
+    # --- 模式 A1：有 @超级制作人 显式问题 → 直接生成决策卡答案选项 ---
+    if explicit_questions:
+        qs_text = "\n".join(
+            f"{i+1}. [{q['from_agent']}] {q['question']}"
+            for i, q in enumerate(explicit_questions[:3])
+        )
+        prompt = f"""讨论主题：{disc.topic}
+制作人立场：{disc.producer_stance or '（未设定）'}
+
+AI 角色通过 @超级制作人 向制作人提出的决策问题（必须逐一生成 2-3 条答案选项）：
+{qs_text}
+
+最近讨论内容（供参考）：
+{recent_context or '（暂无消息）'}
+
+请针对每个问题生成 2-3 条不同角度的答案选项，让制作人选择后发送。"""
+
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, _call_llm_for_producer_assist, prompt, _SUPER_PRODUCER_SYSTEM_QUESTIONS
+        )
+
+        if result and isinstance(result.get("questions"), list) and result["questions"]:
+            result["mode"] = "questions"
+            result["discussion_id"] = discussion_id
+            result["source"] = result.get("source", "llm")
+            return result
+
+        # LLM 失败 → 提供通用默认答案，避免制作人只能看到自定义输入
+        _default_answers = ["是，按此方向推进", "需要进一步讨论后决定", "暂缓，优先处理其他问题"]
+        heuristic_questions = [
+            {"from_agent": q["from_agent"], "question": q["question"], "answers": _default_answers}
+            for q in explicit_questions[:3]
+        ]
+        return {
+            "mode": "questions",
+            "questions": heuristic_questions,
+            "context_summary": f"当前讨论：{disc.topic[:40]}",
+            "source": "heuristic",
+            "discussion_id": discussion_id,
+        }
+
+    # --- 模式 A2：有隐式问题（AI 消息中的问句）→ 逐题生成答案选项 ---
     if questions_for_producer or checkpoint_q:
-        q_list = questions_for_producer[-5:]  # 最多5个问题
+        # 若 checkpoint 自带选项 → 直接用，无需 LLM（选项质量高于启发式）
+        if checkpoint_q and checkpoint_options:
+            answers = [
+                f"{opt['label']}：{opt['description']}" if opt.get("description") else opt["label"]
+                for opt in checkpoint_options
+            ]
+            return {
+                "mode": "questions",
+                "questions": [{"from_agent": "主策划", "question": checkpoint_q, "answers": answers}],
+                "context_summary": f"当前讨论：{disc.topic[:40]}",
+                "source": "checkpoint",
+                "discussion_id": discussion_id,
+                "checkpoint_question": checkpoint_q,
+            }
+        q_list = questions_for_producer[-3:]  # 最多3个问题，避免 JSON 超出 max_tokens
         if checkpoint_q and checkpoint_q not in " ".join(q_list):
             q_list = [f"[主策划] {checkpoint_q}"] + q_list
 
@@ -4168,25 +4277,19 @@ AI 向制作人提出的问题（必须逐一生成 2-3 条答案选项）：
             result["mode"] = "questions"
             result["discussion_id"] = discussion_id
             result["checkpoint_question"] = checkpoint_q
+            result["source"] = result.get("source", "llm")
             return result
 
-        # LLM 失败或格式错误 → 启发式降级
+        # LLM 失败或格式错误 → 提供通用默认答案，避免制作人只能看到自定义输入
+        import re as _re
+        _default_answers = ["是，按此方向推进", "需要进一步讨论后决定", "暂缓，优先处理其他问题"]
         heuristic_questions = []
         for q_str in q_list:
-            # 拆分 "[role] question" 格式
-            import re as _re
             m = _re.match(r"\[(.+?)\]\s*(.+)", q_str)
-            agent = m.group(1) if m else "策划"
-            question = m.group(2) if m else q_str
-            q_short = question[:30]
             heuristic_questions.append({
-                "from_agent": agent,
-                "question": question,
-                "answers": [
-                    f"关于{q_short}，我的核心想法是这样的：这个方向我们可以先锁定，后续再迭代。",
-                    f"这个问题我需要再想想，但大方向上{q_short}暂时先按现有共识推进。",
-                    f"我对{q_short}有些疑问，能否先给我更多参考信息再作决定？",
-                ],
+                "from_agent": m.group(1) if m else "策划",
+                "question": m.group(2) if m else q_str,
+                "answers": _default_answers,
             })
         result = {
             "mode": "questions",

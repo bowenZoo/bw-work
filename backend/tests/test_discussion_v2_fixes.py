@@ -481,3 +481,59 @@ class TestPersistState:
             assert "中文讨论主题测试" in content
             # Cleanup
             path.unlink(missing_ok=True)
+
+
+class TestLLMConfigAndProjectCreation:
+    """Tests to prevent silent failures in LLM initialization and project creation."""
+
+    def test_langchain_anthropic_importable(self):
+        """langchain_anthropic must be installed; missing it causes all discussions to fail silently."""
+        try:
+            from langchain_anthropic import ChatAnthropic  # noqa: F401
+        except ImportError as e:
+            pytest.fail(
+                f"langchain_anthropic not installed: {e}. "
+                "Run: pip install langchain-anthropic. "
+                "Without it, every discussion fails with 'LLM not configured'."
+            )
+
+    def test_langchain_openai_importable(self):
+        """langchain_openai must be installed for OpenAI-compatible providers."""
+        try:
+            from langchain_openai import ChatOpenAI  # noqa: F401
+        except ImportError as e:
+            pytest.fail(
+                f"langchain_openai not installed: {e}. "
+                "Run: pip install langchain-openai."
+            )
+
+    def test_get_llm_from_config_returns_instance_when_configured(self):
+        """_get_llm_from_config must return a non-None LLM when admin store has a valid profile.
+
+        Regression: ImportError for langchain_anthropic was silently caught,
+        causing all discussions to fail with 'LLM not configured'.
+        """
+        from unittest.mock import MagicMock, patch
+
+        fake_config = {
+            "id": "test_profile",
+            "name": "Test Claude",
+            "api_key": "sk-test-key",
+            "base_url": "https://api.anthropic.com",
+            "model": "claude-haiku-4-5-20251001",
+            "is_active": True,
+        }
+
+        mock_store_instance = MagicMock()
+        mock_store_instance.get_active_llm_config.return_value = fake_config
+
+        # ConfigStore is imported locally inside _get_llm_from_config,
+        # so we patch it at the source module.
+        with patch("src.admin.config_store.ConfigStore", return_value=mock_store_instance):
+            from src.api.routes.discussion import _get_llm_from_config
+            llm = _get_llm_from_config()
+
+        assert llm is not None, (
+            "_get_llm_from_config returned None even though config is valid. "
+            "Likely a missing package (langchain_anthropic / langchain_openai)."
+        )
