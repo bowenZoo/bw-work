@@ -8,6 +8,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    "version": "v1.12.0",
+    "date": "2026-03-09",
+    "items": [
+      {
+        "type": "fix",
+        "text": "修复多个制作人交互问题"
+      }
+    ]
+  },
+  {
     "version": "v1.11.0",
     "date": "2026-03-08",
     "items": [
