@@ -12,6 +12,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     "date": "2026-03-08",
     "items": [
       {
+        "type": "fix",
+        "text": "重构讨论暂停机制 — 以决策卡替代直接暂停"
+      },
+      {
         "type": "new",
         "text": "大厅公告自动从 git log 生成，无需手动维护"
       },
