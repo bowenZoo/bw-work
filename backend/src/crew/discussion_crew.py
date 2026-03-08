@@ -381,6 +381,8 @@ class DiscussionCrew:
         self._pending_producer_messages: list[dict] = []
         self._producer_message_lock = __import__("threading").Lock()
         self._producer_digest_pending: str | None = None  # digest to inject into next round
+        # Set to True in _broadcast_message when @超级制作人 questions are detected this round
+        self._producer_questions_this_round: bool = False
 
         # Concurrency semaphore — set by the caller (_run_discussion_sync) so that
         # the crew can release the slot while waiting for a human decision and
@@ -555,6 +557,56 @@ class DiscussionCrew:
                     "Discussion %s: producer turn timed out", self._discussion_id
                 )
                 self._abort_reason = "Producer turn timed out"
+                set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
+                raise DiscussionTimeoutError(self._abort_reason)
+
+            time.sleep(self._pause_check_interval)
+
+    def _wait_for_producer_decision(self) -> list[dict]:
+        """Pause and wait for the producer to respond to a decision card.
+
+        Called after @超级制作人 questions are detected in a round's messages, or when
+        the lead planner asks the producer whether to continue discussion.
+        Unlike _wait_for_producer_turn this broadcasts ``discussion_waiting_decision``
+        (not ``discussion_waiting_producer``) so the frontend shows the decision card
+        instead of the generic pause banner.
+
+        Returns:
+            List of producer messages to inject into the discussion context.
+        """
+        set_discussion_state(self._discussion_id, DiscussionState.PAUSED)
+        self._broadcast_discussion_event("discussion_waiting_decision")
+        logger.info("Discussion %s: waiting for producer decision card response", self._discussion_id)
+
+        start_time = time.time()
+        while True:
+            if self._has_pending_producer_messages():
+                msgs = self._check_producer_messages()
+                set_discussion_state(self._discussion_id, DiscussionState.RUNNING)
+                self._broadcast_discussion_event("discussion_resumed")
+                logger.info(
+                    "Discussion %s: producer decision received (%d msg(s)), resuming",
+                    self._discussion_id,
+                    len(msgs),
+                )
+                return msgs
+
+            state_info = get_discussion_state(self._discussion_id)
+            if state_info is None:
+                return []
+
+            current_state = state_info["state"]
+            if current_state == DiscussionState.RUNNING:
+                # Manually resumed via API without a message
+                return self._check_producer_messages()
+            if current_state == DiscussionState.FINISHED:
+                return []
+
+            if time.time() - start_time > self._pause_timeout:
+                logger.warning(
+                    "Discussion %s: producer decision timed out", self._discussion_id
+                )
+                self._abort_reason = "Producer decision timed out"
                 set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
                 raise DiscussionTimeoutError(self._abort_reason)
 
@@ -1682,6 +1734,8 @@ class DiscussionCrew:
                 # Persist for producer-assist endpoint to consume
                 from src.api.routes.discussion import push_producer_questions
                 push_producer_questions(self._discussion_id, questions)
+                # Mark that this round has producer questions (so we'll wait after summary)
+                self._producer_questions_this_round = True
                 # Notify frontend in real-time
                 q_event = create_producer_question_event(
                     discussion_id=self._discussion_id,
@@ -2373,11 +2427,8 @@ class DiscussionCrew:
                     source_text = opening if round_num == 1 else (last_summary or opening)
                     next_speakers = parse_next_speakers(source_text, known_roles=[a.role for a in self._discussion_agents])
 
-                    # Pause if the speakers block requests producer turn
+                    # Filter producer from speakers — producer interacts via decision cards only
                     if PRODUCER_ROLE in (next_speakers or []):
-                        self._wait_for_producer_turn()
-                        if self._abort_reason:
-                            raise DiscussionTimeoutError(self._abort_reason)
                         next_speakers = [s for s in next_speakers if s != PRODUCER_ROLE] or None
 
                     # Filter agents to those who should speak
@@ -2465,30 +2516,51 @@ class DiscussionCrew:
                         )
                         break
 
-                    # Auto-pause check
-                    if (
-                        self._auto_pause_interval > 0
-                        and round_num % self._auto_pause_interval == 0
-                        and round_num < max_rounds
-                    ):
-                        logger.info(
-                            "Auto-pausing discussion %s at round %d (interval=%d)",
-                            self._discussion_id,
-                            round_num,
-                            self._auto_pause_interval,
-                        )
-                        set_discussion_state(
-                            self._discussion_id, DiscussionState.PAUSED
-                        )
-                        self._broadcast_discussion_event(
-                            f"discussion_auto_paused:已完成第{round_num}轮讨论，等待继续"
-                        )
-                        injected = self._check_pause_and_wait()
+                    # Wait for producer decision card response if questions were sent this round
+                    _had_producer_q = self._producer_questions_this_round
+                    self._producer_questions_this_round = False
+                    if _had_producer_q:
+                        # Decision card is already showing — pause and await producer response
+                        _producer_replies = self._wait_for_producer_decision()
                         if self._abort_reason:
                             raise DiscussionTimeoutError(self._abort_reason)
-                        if injected:
-                            self._inject_user_messages(injected)
-                            pending_injected.extend(injected)
+                        if _producer_replies:
+                            self._inject_user_messages(_producer_replies)
+                            pending_injected.extend(_producer_replies)
+                    elif (
+                        round_num >= 3
+                        and round_num % 3 == 0
+                        and round_num < max_rounds
+                        and status != DiscussionStatus.SUFFICIENT
+                    ):
+                        # Discussion running long without explicit producer question —
+                        # ask the producer whether to continue
+                        _continue_q = [{
+                            "from_agent": self._lead_planner.role,
+                            "question": (
+                                f"讨论已进行 {round_num} 轮，各方观点较为充分。"
+                                "请问是否继续深入讨论，还是汇总现有结论？"
+                            ),
+                            "answers": ["继续讨论", "汇总结论，结束本轮", "重新聚焦核心问题"],
+                        }]
+                        try:
+                            from src.api.routes.discussion import push_producer_questions
+                            from src.api.websocket.events import create_producer_question_event
+                            push_producer_questions(self._discussion_id, _continue_q)
+                            broadcast_sync(
+                                create_producer_question_event(
+                                    self._discussion_id, _continue_q
+                                ).to_dict(),
+                                discussion_id=self._discussion_id,
+                            )
+                        except Exception as _exc:
+                            logger.debug("Failed to push continue question: %s", _exc)
+                        _producer_replies = self._wait_for_producer_decision()
+                        if self._abort_reason:
+                            raise DiscussionTimeoutError(self._abort_reason)
+                        if _producer_replies:
+                            self._inject_user_messages(_producer_replies)
+                            pending_injected.extend(_producer_replies)
 
                     self._broadcast_discussion_event(f"第{round_num}轮讨论完成")
 
@@ -2644,11 +2716,8 @@ class DiscussionCrew:
 
                     next_speakers = parse_next_speakers(source_text, known_roles=[a.role for a in self._discussion_agents])
 
-                    # Pause if the speakers block requests producer turn
+                    # Filter producer from speakers — producer interacts via decision cards only
                     if PRODUCER_ROLE in (next_speakers or []):
-                        self._wait_for_producer_turn()
-                        if self._abort_reason:
-                            raise DiscussionTimeoutError(self._abort_reason)
                         next_speakers = [s for s in next_speakers if s != PRODUCER_ROLE] or None
 
                     agents_to_call = (
@@ -5308,11 +5377,8 @@ class DiscussionCrew:
                     # Determine speakers
                     next_speakers = parse_next_speakers(opening, known_roles=[a.role for a in self._discussion_agents])
 
-                    # Pause if the speakers block requests producer turn
+                    # Filter producer from speakers — producer interacts via decision cards only
                     if PRODUCER_ROLE in (next_speakers or []):
-                        self._wait_for_producer_turn()
-                        if self._abort_reason:
-                            raise DiscussionTimeoutError(self._abort_reason)
                         next_speakers = [s for s in next_speakers if s != PRODUCER_ROLE] or None
 
                     agents_to_call = (
@@ -5634,11 +5700,8 @@ class DiscussionCrew:
 
                                 next_speakers = parse_next_speakers(opening, known_roles=[a.role for a in self._discussion_agents])
 
-                                # Pause if the speakers block requests producer turn
+                                # Filter producer from speakers — producer interacts via decision cards only
                                 if PRODUCER_ROLE in (next_speakers or []):
-                                    self._wait_for_producer_turn()
-                                    if self._abort_reason:
-                                        raise DiscussionTimeoutError(self._abort_reason)
                                     next_speakers = [s for s in next_speakers if s != PRODUCER_ROLE] or None
 
                                 agents_to_call = (

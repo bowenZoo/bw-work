@@ -391,6 +391,8 @@ export function useDiscussion() {
             discussionStore.setStatus('running');
           } else if (content === 'discussion_waiting_decision') {
             discussionStore.setStatus('waiting_decision');
+            // 触发决策卡刷新（防止 producer_question WS 事件先于此事件丢失）
+            producerQuestionTrigger.value += 1;
           }
           break;
         }
