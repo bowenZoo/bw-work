@@ -2534,9 +2534,11 @@ class DiscussionCrew:
                         and status != DiscussionStatus.SUFFICIENT
                     ):
                         # Discussion running long without explicit producer question —
-                        # ask the producer whether to continue
+                        # ask the producer whether to continue.
+                        # Use the actual discussion moderator (主持人) as the sender.
+                        _host_role = self._lead_planner.role  # moderator role name from YAML
                         _continue_q = [{
-                            "from_agent": self._lead_planner.role,
+                            "from_agent": _host_role,
                             "question": (
                                 f"讨论已进行 {round_num} 轮，各方观点较为充分。"
                                 "请问是否继续深入讨论，还是汇总现有结论？"
