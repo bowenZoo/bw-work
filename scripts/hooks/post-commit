@@ -1,0 +1,27 @@
+#!/bin/sh
+# post-commit hook — 自动更新 changelog.ts
+# 源文件: scripts/hooks/post-commit
+# 安装: scripts/install-hooks.sh
+
+# 防止无限循环：若最后一次 commit 是自动更新公告则跳过
+LAST=$(git log -1 --pretty=%s)
+case "$LAST" in
+  "chore: 自动更新更新日志"*) exit 0 ;;
+esac
+
+REPO=$(git rev-parse --show-toplevel)
+CHANGELOG="$REPO/frontend/src/data/changelog.ts"
+
+# 运行生成脚本
+node "$REPO/frontend/scripts/gen-changelog.mjs"
+STATUS=$?
+if [ $STATUS -ne 0 ]; then
+  echo "[post-commit] gen-changelog 脚本失败，跳过自动提交"
+  exit 0
+fi
+
+# 若 changelog 有变化则自动 commit
+if ! git diff --quiet "$CHANGELOG"; then
+  git add "$CHANGELOG"
+  git commit -m "chore: 自动更新更新日志"
+fi
