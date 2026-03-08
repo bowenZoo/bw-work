@@ -1,6 +1,7 @@
 /**
  * 大厅页面 E2E 测试
  * 覆盖：页面加载、项目卡片、讨论卡片、创建弹窗
+ * 注意：所有创建数据的测试使用 try/finally 保证清理，即使测试失败也会删除数据
  */
 
 import { test, expect } from './fixtures';
@@ -11,9 +12,7 @@ const API_URL = 'http://localhost:18000';
 test.describe('大厅页面', () => {
   test('已登录用户看到大厅主体', async ({ authedPage: page }) => {
     await expect(page.locator('.hall')).toBeVisible();
-    // 头部标题
     await expect(page.locator('.hall-title')).toBeVisible();
-    // 应有新讨论/新项目按钮
     await expect(page.locator('button').filter({ hasText: '新讨论' })).toBeVisible();
     await expect(page.locator('button').filter({ hasText: '新项目' })).toBeVisible();
   });
@@ -23,19 +22,15 @@ test.describe('大厅页面', () => {
     const count = await tabs.count();
     expect(count).toBeGreaterThanOrEqual(2);
 
-    // 点击项目 Tab
     await tabs.filter({ hasText: '项目' }).first().click();
-    // 项目列表容器应出现
     await expect(page.locator('[class*="project"], .project-list, .card-grid').first()).toBeVisible({ timeout: 5000 });
   });
 
   test('新建项目弹窗 - 打开与关闭', async ({ authedPage: page }) => {
     await page.locator('button').filter({ hasText: '新项目' }).click();
-    // 弹窗出现
     const modal = page.locator('.dialog, [class*="modal"], [class*="overlay"]').first();
     await expect(modal).toBeVisible({ timeout: 5000 });
 
-    // 取消关闭
     const cancelBtn = modal.locator('button').filter({ hasText: /取消|关闭|Cancel/ }).first();
     await cancelBtn.click();
     await expect(modal).not.toBeVisible({ timeout: 3000 });
@@ -43,33 +38,33 @@ test.describe('大厅页面', () => {
 
   test('新建项目 - 填写表单并提交后跳转概念孵化讨论', async ({ authedPage: page, request }) => {
     const token = await getToken(page);
-    const projectName = `E2E项目_${Date.now()}`;
+    let createdProjectId: string | null = null;
 
-    await page.locator('button').filter({ hasText: '新项目' }).click();
-    const modal = page.locator('.dialog, [class*="modal"]').first();
-    await expect(modal).toBeVisible();
+    try {
+      await page.locator('button').filter({ hasText: '新项目' }).click();
+      const modal = page.locator('.dialog, [class*="modal"]').first();
+      await expect(modal).toBeVisible();
 
-    // 填写名称
-    const nameInput = modal.locator('input[placeholder*="项目名"], input[type="text"]').first();
-    await nameInput.fill(projectName);
+      const nameInput = modal.locator('input[placeholder*="项目名"], input[type="text"]').first();
+      await nameInput.fill(`E2E项目_${Date.now()}`);
 
-    // 提交
-    const submitBtn = modal.locator('button').filter({ hasText: /创建|确认|提交/ }).first();
-    await submitBtn.click();
+      const submitBtn = modal.locator('button').filter({ hasText: /创建|确认|提交/ }).first();
+      await submitBtn.click();
 
-    // 创建项目后应自动跳转到概念孵化讨论页 /discussion/:id
-    await page.waitForURL(/\/discussion\//, { timeout: 12000 });
-    const discussionId = page.url().split('/discussion/')[1].split('/')[0];
-    expect(discussionId).toBeTruthy();
+      await page.waitForURL(/\/discussion\//, { timeout: 12000 });
+      const discussionId = page.url().split('/discussion/')[1].split('/')[0];
+      expect(discussionId).toBeTruthy();
 
-    // 清理：获取项目 id 并删除
-    const discRes = await request.get(`${API_URL}/api/discussions/${discussionId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (discRes.ok()) {
-      const discData = await discRes.json();
-      if (discData.project_id) {
-        await deleteTestProject(request, token, discData.project_id);
+      const discRes = await request.get(`${API_URL}/api/discussions/${discussionId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (discRes.ok()) {
+        const discData = await discRes.json();
+        createdProjectId = discData.project_id ?? null;
+      }
+    } finally {
+      if (createdProjectId) {
+        await deleteTestProject(request, token, createdProjectId);
       }
     }
   });
@@ -79,7 +74,6 @@ test.describe('大厅页面', () => {
     const modal = page.locator('.dialog, [class*="modal"], [class*="overlay"]').first();
     await expect(modal).toBeVisible({ timeout: 5000 });
 
-    // 应有主题/话题输入框
     const topicInput = modal.locator('textarea, input').first();
     await expect(topicInput).toBeVisible();
 
@@ -90,22 +84,21 @@ test.describe('大厅页面', () => {
     const token = await getToken(page);
     const projectId = await createTestProject(request, token, `E2E跳转测试_${Date.now()}`);
 
-    // 刷新大厅，等待项目卡片出现
-    await page.reload();
-    await page.waitForLoadState('networkidle');
+    try {
+      await page.reload();
+      await page.waitForLoadState('networkidle');
 
-    // 切换到项目 Tab
-    const projectTab = page.locator('.hall-tab, [class*="tab"]').filter({ hasText: '项目' }).first();
-    await projectTab.click();
+      const projectTab = page.locator('.hall-tab, [class*="tab"]').filter({ hasText: '项目' }).first();
+      await projectTab.click();
 
-    // 找到刚创建的项目卡片并点击
-    const card = page.locator('[class*="card"]').filter({ hasText: /E2E跳转测试/ }).first();
-    await expect(card).toBeVisible({ timeout: 8000 });
-    await card.click();
+      const card = page.locator('[class*="card"]').filter({ hasText: /E2E跳转测试/ }).first();
+      await expect(card).toBeVisible({ timeout: 8000 });
+      await card.click();
 
-    await page.waitForURL(/\/project\//, { timeout: 10000 });
-    await expect(page.locator('.project-detail')).toBeVisible({ timeout: 10000 });
-
-    await deleteTestProject(request, token, projectId);
+      await page.waitForURL(/\/project\//, { timeout: 10000 });
+      await expect(page.locator('.project-detail')).toBeVisible({ timeout: 10000 });
+    } finally {
+      await deleteTestProject(request, token, projectId);
+    }
   });
 });
