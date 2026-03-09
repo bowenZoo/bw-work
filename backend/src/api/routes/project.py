@@ -34,6 +34,18 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 _registry = ProjectRegistry()
 _gdd_parser = GDDParser()
 _module_detector = ModuleDetector(cache_dir="data/cache/modules")
+_DATA_DIR = Path(__file__).parent.parent.parent.parent / "data" / "projects"
+
+
+def _project_exists(project_id: str) -> bool:
+    """Check project existence via registry OR _index.json (covers demo projects)."""
+    if _registry.get(project_id):
+        return True
+    try:
+        with open(_DATA_DIR / "_index.json") as f:
+            return project_id in json.load(f)
+    except Exception:
+        return False
 
 
 # Request/Response Models
@@ -1162,8 +1174,7 @@ class AddMemberRequest(BaseModel):
 @router.get("/{project_id}/members")
 async def list_project_members(project_id: str, user: dict = Depends(get_current_user)):
     """List project members."""
-    project = _registry.get(project_id)
-    if not project:
+    if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     
     _db = AdminDatabase()
@@ -1181,12 +1192,14 @@ async def list_project_members(project_id: str, user: dict = Depends(get_current
 @router.post("/{project_id}/members")
 async def add_project_member(project_id: str, request: AddMemberRequest, user: dict = Depends(get_current_user)):
     """Add a member to project. Project owner or superadmin only."""
-    project = _registry.get(project_id)
-    if not project:
+    if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
-    
-    if user.get("role") != "superadmin" and getattr(project, 'owner_id', None) != user["id"]:
-        raise HTTPException(status_code=403, detail="Only project owner or superadmin can manage members")
+
+    if user.get("role") != "superadmin":
+        # Allow owner check via registry (fallback to allowing superadmin only for index-only projects)
+        project = _registry.get(project_id)
+        if not project or getattr(project, 'owner_id', None) != user["id"]:
+            raise HTTPException(status_code=403, detail="Only project owner or superadmin can manage members")
     
     _db = AdminDatabase()
     with _db.get_cursor() as cursor:
@@ -1211,12 +1224,13 @@ async def add_project_member(project_id: str, request: AddMemberRequest, user: d
 @router.delete("/{project_id}/members/{member_user_id}")
 async def remove_project_member(project_id: str, member_user_id: int, user: dict = Depends(get_current_user)):
     """Remove a member from project."""
-    project = _registry.get(project_id)
-    if not project:
+    if not _project_exists(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
-    
-    if user.get("role") != "superadmin" and getattr(project, 'owner_id', None) != user["id"]:
-        raise HTTPException(status_code=403, detail="Only project owner or superadmin can manage members")
+
+    if user.get("role") != "superadmin":
+        project = _registry.get(project_id)
+        if not project or getattr(project, 'owner_id', None) != user["id"]:
+            raise HTTPException(status_code=403, detail="Only project owner or superadmin can manage members")
     
     _db = AdminDatabase()
     with _db.get_cursor() as cursor:

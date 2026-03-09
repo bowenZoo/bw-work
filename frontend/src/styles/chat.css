@@ -62,8 +62,9 @@
   margin-right: 16px;
 }
 
-/* User messages on right */
-.chat-group.user {
+/* User / Producer messages on right */
+.chat-group.user,
+.chat-group.producer {
   flex-direction: row-reverse;
   justify-content: flex-start;
 }
@@ -75,12 +76,14 @@
   max-width: min(900px, calc(100% - 60px));
 }
 
-/* User messages align content right */
-.chat-group.user .chat-group-messages {
+/* User / Producer messages align content right */
+.chat-group.user .chat-group-messages,
+.chat-group.producer .chat-group-messages {
   align-items: flex-end;
 }
 
-.chat-group.user .chat-group-footer {
+.chat-group.user .chat-group-footer,
+.chat-group.producer .chat-group-footer {
   justify-content: flex-end;
 }
 
@@ -217,18 +220,21 @@ img.chat-avatar {
   background: var(--chat-bg-hover);
 }
 
-/* User bubbles have different styling */
-.chat-group.user .chat-bubble {
+/* User / Producer bubbles have different styling */
+.chat-group.user .chat-bubble,
+.chat-group.producer .chat-bubble {
   border-color: rgba(234, 88, 12, 0.2);
   background: rgba(251, 146, 60, 0.12);
 }
 
-.dark .chat-group.user .chat-bubble {
+.dark .chat-group.user .chat-bubble,
+.dark .chat-group.producer .chat-bubble {
   border-color: transparent;
   background: var(--chat-accent-subtle);
 }
 
-.chat-group.user .chat-bubble:hover {
+.chat-group.user .chat-bubble:hover,
+.chat-group.producer .chat-bubble:hover {
   background: rgba(255, 77, 77, 0.15);
 }
 

@@ -214,7 +214,7 @@ async function fetchMembers() {
     const res = await fetch(`${base}/api/projects/${projectId()}/members`, {
       headers: { Authorization: `Bearer ${userStore.accessToken}` },
     })
-    if (res.ok) members.value = await res.json()
+    if (res.ok) { const data = await res.json(); members.value = data.items ?? [] }
   } finally {
     loadingMembers.value = false
   }
@@ -228,7 +228,7 @@ async function inviteMember() {
     const res = await fetch(`${base}/api/projects/${projectId()}/members`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${userStore.accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: inviteUsername.value.trim(), role: inviteRole.value }),
+      body: JSON.stringify({ username: inviteUsername.value.trim(), role: inviteRole.value }),
     })
     if (!res.ok) { const e = await res.json(); alert(e.detail || '邀请失败'); return }
     inviteUsername.value = ''
@@ -775,6 +775,7 @@ onMounted(async () => {
     <Transition name="fade">
       <div v-if="showNewDoc" class="dialog-overlay" @click.self="showNewDoc = null">
         <div class="dialog">
+          <button class="dialog-close-btn" @click="showNewDoc = null">×</button>
           <h3>新建文档</h3>
           <input
             v-model="newDocTitle"
@@ -784,7 +785,6 @@ onMounted(async () => {
             autofocus
           />
           <div class="dialog-actions">
-            <button class="btn btn-secondary" @click="showNewDoc = null">取消</button>
             <button class="btn btn-primary" @click="doCreateDocument(showNewDoc!)" :disabled="creating">创建</button>
           </div>
         </div>
@@ -794,6 +794,7 @@ onMounted(async () => {
     <Transition name="fade">
       <div v-if="showAdoptDialog" class="dialog-overlay" @click.self="showAdoptDialog = null">
         <div class="dialog">
+          <button class="dialog-close-btn" @click="showAdoptDialog = null">×</button>
           <h3>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             采纳讨论产出
@@ -812,7 +813,6 @@ onMounted(async () => {
             <option v-for="d in showAdoptDialog.stageDocs" :key="d.id" :value="d.id">{{ d.title }} (v{{ d.current_version }})</option>
           </select>
           <div class="dialog-actions">
-            <button class="btn btn-secondary" @click="showAdoptDialog = null">取消</button>
             <button class="btn btn-primary" @click="doAdopt" :disabled="!!adoptingId">{{ adoptingId ? '处理中...' : '确认采纳' }}</button>
           </div>
         </div>
@@ -822,10 +822,10 @@ onMounted(async () => {
     <Transition name="fade">
       <div v-if="previewOutput" class="dialog-overlay" @click.self="previewOutput = null">
         <div class="preview-modal">
+          <button class="dialog-close-btn" @click="previewOutput = null">×</button>
           <h3 class="preview-modal-title">{{ previewOutput.title }}</h3>
           <div class="preview-modal-body markdown-body" v-html="marked.parse(previewOutput.content || '')"></div>
           <div class="dialog-actions">
-            <button class="btn btn-secondary" @click="previewOutput = null">关闭</button>
             <button
               v-if="previewOutput.status !== 'adopted'"
               class="btn btn-primary"
@@ -839,6 +839,7 @@ onMounted(async () => {
     <Transition name="fade">
       <div v-if="showNewDiscDialog" class="dialog-overlay" @click.self="showNewDiscDialog = null">
         <div class="dialog dialog-enhanced">
+          <button class="dialog-close-btn" @click="showNewDiscDialog = null; newDiscTopic = ''">×</button>
           <h3 class="dialog-title">新建讨论</h3>
           <div class="dialog-participants">
             <span class="participants-label">参与者：</span>
@@ -909,7 +910,6 @@ onMounted(async () => {
             />
           </div>
           <div class="dialog-actions">
-            <button class="btn btn-secondary" @click="showNewDiscDialog = null; newDiscTopic = ''">取消</button>
             <button class="btn btn-primary" @click="createStageDiscussion(showNewDiscDialog!)" :disabled="creatingDisc">{{ creatingDisc ? '创建中...' : '创建' }}</button>
           </div>
         </div>
@@ -919,6 +919,7 @@ onMounted(async () => {
     <Transition name="fade">
       <div v-if="showMemberDialog" class="dialog-overlay" @click.self="showMemberDialog = false">
         <div class="dialog dialog-wide">
+          <button class="dialog-close-btn" @click="showMemberDialog = false">×</button>
           <h3 class="dialog-title">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             成员管理
@@ -942,9 +943,6 @@ onMounted(async () => {
             </select>
             <button class="btn btn-primary btn-sm" @click="inviteMember" :disabled="inviting">邀请</button>
           </div>
-          <div class="dialog-actions">
-            <button class="btn btn-secondary" @click="showMemberDialog = false">关闭</button>
-          </div>
         </div>
       </div>
     </Transition>
@@ -952,6 +950,7 @@ onMounted(async () => {
     <Transition name="fade">
       <div v-if="showStageDialog" class="dialog-overlay" @click.self="showStageDialog = false">
         <div class="dialog dialog-wide">
+          <button class="dialog-close-btn" @click="showStageDialog = false">×</button>
           <h3 class="dialog-title">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             管理阶段
@@ -978,9 +977,6 @@ onMounted(async () => {
             <input v-model="newStageName" placeholder="自定义阶段名称..." class="dialog-input stage-edit-input" @keyup.enter="addCustomStage" />
             <button class="btn btn-sm btn-primary" @click="addCustomStage" :disabled="savingStage || !newStageName.trim()">+ 添加</button>
           </div>
-          <div class="dialog-actions">
-            <button class="btn btn-secondary" @click="showStageDialog = false">关闭</button>
-          </div>
         </div>
       </div>
     </Transition>
@@ -988,11 +984,11 @@ onMounted(async () => {
     <Transition name="fade">
       <div v-if="showDeleteConfirm" class="dialog-overlay" @click.self="showDeleteConfirm = false">
         <div class="dialog">
+          <button class="dialog-close-btn" @click="showDeleteConfirm = false">×</button>
           <h3>⚠️ 确认删除项目</h3>
           <p style="color: #ef4444; font-weight: 500;">你确定要删除项目「{{ project?.name }}」吗？</p>
           <p style="color: #6b7280; font-size: 13px;">此操作不可撤销，项目的所有阶段、文档、讨论记录将被永久删除。</p>
           <div class="dialog-actions">
-            <button class="btn btn-secondary" @click="showDeleteConfirm = false">取消</button>
             <button class="btn btn-danger" @click="deleteProject" :disabled="deleting">{{ deleting ? '删除中...' : '确认删除' }}</button>
           </div>
         </div>
@@ -1027,6 +1023,7 @@ onMounted(async () => {
     <Transition name="fade">
       <div v-if="showAiAssist" class="dialog-overlay" @click.self="showAiAssist = false">
         <div class="dialog dialog-wide ai-assist-dialog">
+          <button class="dialog-close-btn" @click="showAiAssist = false">×</button>
           <h3 class="dialog-title">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             制作人 AI 助理 — 快速规划
@@ -1043,7 +1040,6 @@ onMounted(async () => {
               <input v-model="aiAudience" placeholder="例：休闲玩家 / 女性用户 / 硬核玩家 / 海外市场..." class="dialog-input" />
             </div>
             <div class="dialog-actions">
-              <button class="btn btn-secondary" @click="showAiAssist = false">取消</button>
               <button class="btn btn-primary" @click="runAiAssist" :disabled="!aiConcept.trim() || aiRunning">
                 {{ aiRunning ? '分析中...' : '🤖 生成规划' }}
               </button>
@@ -1080,7 +1076,6 @@ onMounted(async () => {
             </div>
 
             <div class="dialog-actions">
-              <button class="btn btn-secondary" @click="showAiAssist = false">关闭</button>
             </div>
           </div>
         </div>
@@ -1443,8 +1438,9 @@ onMounted(async () => {
   padding: 24px;
   width: min(400px, 90vw);
   box-shadow: 0 8px 32px -4px #00000020;
+  position: relative;
 }
-.dialog h3 { margin: 0 0 16px; font-size: 18px; font-weight: 600; }
+.dialog h3 { margin: 0 0 16px; font-size: 18px; font-weight: 600; padding-right: 36px; }
 .dialog-input {
   width: 100%;
   padding: 10px 12px;
@@ -1476,6 +1472,7 @@ onMounted(async () => {
   box-shadow: 0 8px 32px -4px #00000020;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 .preview-modal-title { font-size: 18px; font-weight: 700; color: #18181B; margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid #E5E7EB; }
 .preview-modal-body { flex: 1; overflow-y: auto; margin-bottom: 16px; }
@@ -1505,14 +1502,36 @@ onMounted(async () => {
 .col-leader { display: flex; align-items: center; gap: 4px; padding: 2px 0 4px; }
 .leader-icon { color: #F59E0B; font-size: 11px; }
 .leader-name { font-size: 11px; color: #6B7280; }
-.dialog-enhanced { border-radius: 16px; padding: 28px; width: min(440px, 90vw); box-shadow: 0 8px 32px -4px #00000020; }
-.dialog-title { margin: 0 0 20px; font-size: 19px; font-weight: 700; color: #18181B; }
+.dialog-enhanced { border-radius: 16px; padding: 28px; width: min(440px, 90vw); box-shadow: 0 8px 32px -4px #00000020; position: relative; }
+.dialog-title { margin: 0 0 20px; font-size: 19px; font-weight: 700; color: #18181B; padding-right: 36px; }
 .dialog-field { margin-bottom: 14px; }
 .dialog-label { display: block; font-size: 13px; font-weight: 500; color: #374151; margin-bottom: 6px; }
 .dialog-desc { font-size: 13px; color: #6b7280; margin: -4px 0 14px; line-height: 1.5; }
 .dialog-textarea { width: 100%; padding: 10px 12px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 14px; outline: none; box-sizing: border-box; resize: vertical; font-family: inherit; line-height: 1.5; }
 .dialog-textarea:focus { border-color: #7C3AED; box-shadow: 0 0 0 2px rgba(124,58,237,0.15); }
-.dialog-wide { border-radius: 16px; padding: 28px; width: min(500px, 90vw); box-shadow: 0 8px 32px -4px #00000020; }
+.dialog-wide { border-radius: 16px; padding: 28px; width: min(500px, 90vw); box-shadow: 0 8px 32px -4px #00000020; position: relative; }
+/* Unified dialog close button */
+.dialog-close-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: #9CA3AF;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.12s, color 0.12s;
+  z-index: 1;
+}
+.dialog-close-btn:hover { background: #F3F4F6; color: #374151; }
 .member-loading { text-align: center; color: #9CA3AF; padding: 20px; }
 .member-list { margin-bottom: 16px; max-height: 260px; overflow-y: auto; }
 .member-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #F3F4F6; }

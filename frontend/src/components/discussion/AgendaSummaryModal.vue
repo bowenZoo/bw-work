@@ -144,9 +144,6 @@ function handleOverlayClick(event: MouseEvent) {
 
         <!-- Footer -->
         <div class="modal-footer">
-          <button class="btn btn-secondary" @click="handleClose">
-            关闭
-          </button>
           <button
             v-if="item?.summary"
             class="btn btn-primary"

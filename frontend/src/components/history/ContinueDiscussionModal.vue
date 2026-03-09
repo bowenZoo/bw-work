@@ -129,13 +129,6 @@ function handleBackdropClick(event: MouseEvent) {
           <!-- Footer -->
           <div class="modal-footer">
             <button
-              class="btn btn-secondary"
-              :disabled="isSubmitting"
-              @click="handleClose"
-            >
-              取消
-            </button>
-            <button
               class="btn btn-primary"
               :disabled="!canSubmit"
               @click="handleConfirm"
