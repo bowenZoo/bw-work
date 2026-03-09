@@ -13,6 +13,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     "items": [
       {
         "type": "fix",
+        "text": "决策卡等待状态改为无限期等待，不再自动超时完成讨论"
+      },
+      {
+        "type": "fix",
         "text": "修复成员管理不显示用户 + 统一弹框右上角关闭样式"
       },
       {
