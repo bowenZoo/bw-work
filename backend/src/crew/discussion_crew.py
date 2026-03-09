@@ -488,8 +488,7 @@ class DiscussionCrew:
         # Broadcast pause status
         self._broadcast_discussion_event("discussion_paused")
 
-        # Wait for resume or timeout
-        start_time = time.time()
+        # Wait for resume (no timeout — waits indefinitely until producer resumes or finishes)
         while True:
             state_info = get_discussion_state(self._discussion_id)
             if state_info is None:
@@ -504,16 +503,6 @@ class DiscussionCrew:
             if state_info["state"] == DiscussionState.FINISHED:
                 # Manually finished while paused
                 break
-
-            # Check timeout
-            if time.time() - start_time > self._pause_timeout:
-                logger.warning(
-                    "Discussion %s paused timeout, auto-finishing",
-                    self._discussion_id,
-                )
-                set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
-                self._abort_reason = "Discussion paused timeout"
-                raise DiscussionTimeoutError(self._abort_reason)
 
             time.sleep(self._pause_check_interval)
 
@@ -4182,7 +4171,6 @@ class DiscussionCrew:
             except Exception as exc:
                 logger.warning("Failed to release concurrency semaphore: %s", exc)
 
-        start_time = time.time()
         try:
             while True:
                 # Check if discussion was aborted
@@ -4199,14 +4187,7 @@ class DiscussionCrew:
                             "free_input": cp.response_text or "",
                         }
 
-                # Timeout check
-                if time.time() - start_time > self._pause_timeout:
-                    logger.warning(
-                        "Decision wait timeout for checkpoint %s in discussion %s",
-                        checkpoint_id, self._discussion_id,
-                    )
-                    raise DiscussionTimeoutError(f"Decision wait timeout for checkpoint {checkpoint_id}")
-
+                # No timeout — waits indefinitely until producer responds or discussion is finished
                 time.sleep(self._pause_check_interval)
         finally:
             # Re-acquire the semaphore slot before continuing discussion execution
