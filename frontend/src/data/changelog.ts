@@ -13,6 +13,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     "items": [
       {
         "type": "fix",
+        "text": "消除\"未知决策卡\"——三处联合修复"
+      },
+      {
+        "type": "fix",
         "text": "移除所有暂停等待函数的 30 分钟超时，改为无限期等待"
       },
       {
