@@ -592,7 +592,6 @@ class DiscussionCrew:
         self._broadcast_discussion_event("discussion_waiting_decision")
         logger.info("Discussion %s: waiting for producer decision card response", self._discussion_id)
 
-        start_time = time.time()
         loop_count = 0
         while True:
             loop_count += 1
@@ -631,14 +630,6 @@ class DiscussionCrew:
                     self._discussion_id, loop_count,
                 )
                 return []
-
-            if time.time() - start_time > self._pause_timeout:
-                logger.warning(
-                    "Discussion %s: producer decision timed out", self._discussion_id
-                )
-                self._abort_reason = "Producer decision timed out"
-                set_discussion_state(self._discussion_id, DiscussionState.FINISHED)
-                raise DiscussionTimeoutError(self._abort_reason)
 
             time.sleep(self._pause_check_interval)
 
