@@ -13,6 +13,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     "items": [
       {
         "type": "fix",
+        "text": "prevent double-trigger race condition on decision card"
+      },
+      {
+        "type": "fix",
         "text": "制作人通过输入框回复后决策卡残留问题"
       },
       {
