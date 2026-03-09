@@ -12,6 +12,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     "date": "2026-03-09",
     "items": [
       {
+        "type": "fix",
+        "text": "制作人通过输入框回复后决策卡残留问题"
+      },
+      {
         "type": "new",
         "text": "决策卡LLM失败时显示提示并支持仅刷新答案选项"
       },
