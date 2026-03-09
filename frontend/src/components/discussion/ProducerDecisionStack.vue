@@ -66,11 +66,22 @@ async function resetAndFetch() {
   await fetchCards()
 }
 
-async function _doFetch(attempt: number): Promise<void> {
+async function _doFetch(attempt: number, refreshQuestions?: QuestionItem[]): Promise<void> {
   try {
+    const body: Record<string, unknown> = {}
+    if (refreshQuestions && refreshQuestions.length > 0) {
+      body.refresh_questions = refreshQuestions.map(q => ({
+        from_agent: q.from_agent,
+        question: q.question,
+      }))
+    }
     const res = await fetch(`/api/discussions/${props.discussionId}/producer-assist`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${userStore.accessToken}` },
+      headers: {
+        Authorization: `Bearer ${userStore.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
     })
     if (!res.ok) { error.value = '获取建议失败'; return }
     const data = await res.json()
@@ -81,7 +92,7 @@ async function _doFetch(attempt: number): Promise<void> {
         data.questions.some((q: QuestionItem) => q.answers.length === 0)
       if (hasEmptyAnswers && attempt < MAX_RETRIES) {
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
-        return _doFetch(attempt + 1)
+        return _doFetch(attempt + 1, refreshQuestions)
       }
       questions.value = data.questions
       contextSummary.value = data.context_summary || ''
@@ -107,12 +118,12 @@ async function _doFetch(attempt: number): Promise<void> {
   }
 }
 
-async function fetchCards() {
+async function fetchCards(refreshQuestions?: QuestionItem[]) {
   if (!props.discussionId || loading.value) return
   loading.value = true
   error.value = ''
   try {
-    await _doFetch(0)
+    await _doFetch(0, refreshQuestions)
   } finally {
     loading.value = false
   }
@@ -185,7 +196,16 @@ async function autoDecide() {
 }
 
 function refresh() {
-  resetAndFetch()
+  if (questions.value.length > 0) {
+    // 保留当前问题，仅重新生成答案选项
+    const currentQuestions = [...questions.value]
+    selectedAnswer.value = 0
+    customInput.value = ''
+    useCustom.value = false
+    fetchCards(currentQuestions)
+  } else {
+    resetAndFetch()
+  }
 }
 
 // Stack visual: how many shadow cards to show (max 2)
@@ -259,6 +279,15 @@ const shadowCount = computed(() => Math.min(totalCards.value - currentIndex.valu
 
           <!-- Question -->
           <div class="pds-question">{{ currentCard?.question }}</div>
+
+          <!-- Heuristic fallback notice -->
+          <div v-if="source === 'heuristic'" class="pds-heuristic-notice">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            AI 未能生成具体选项，以下为通用答案
+            <button class="pds-heuristic-retry" @click.stop="refresh" :disabled="loading">重新生成</button>
+          </div>
 
           <!-- Answer options -->
           <div v-if="currentCard?.answers.length" class="pds-options">
@@ -564,6 +593,22 @@ const shadowCount = computed(() => Math.min(totalCards.value - currentIndex.valu
 }
 .pds-dot-done { background: #a5b4fc; }
 .pds-dot-current { background: #6366f1; transform: scale(1.3); }
+
+/* Heuristic fallback notice */
+.pds-heuristic-notice {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 8px;
+  background: #fef9c3; border: 1px solid #fde047; border-radius: 6px;
+  font-size: 11.5px; color: #854d0e; line-height: 1.4;
+}
+.pds-heuristic-retry {
+  margin-left: auto; flex-shrink: 0;
+  font-size: 11px; font-weight: 600; color: #92400e;
+  background: white; border: 1px solid #fbbf24; border-radius: 4px;
+  padding: 1px 8px; cursor: pointer; transition: background 0.12s;
+}
+.pds-heuristic-retry:hover:not(:disabled) { background: #fef3c7; }
+.pds-heuristic-retry:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Context */
 .pds-context {

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from crewai import Crew, Process
-from fastapi import Depends, APIRouter, HTTPException
+from fastapi import Body, Depends, APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from src.agents import Summarizer
@@ -4131,6 +4131,7 @@ def _extract_questions_for_producer(msgs: list, recent_limit: int = 8) -> list[s
 @router.post("/{discussion_id}/producer-assist")
 async def get_producer_suggestions(
     discussion_id: str,
+    body: dict = Body(default={}),
     user=Depends(get_optional_user),
 ):
     """获取超级制作人 AI 发言建议。
@@ -4142,8 +4143,19 @@ async def get_producer_suggestions(
     if not disc:
         raise HTTPException(status_code=404, detail="Discussion not found")
 
-    # --- 优先使用 @超级制作人 显式标记的问题（最高优先级）---
-    explicit_questions = pop_producer_questions(discussion_id)
+    # --- 刷新模式：前端传入 refresh_questions，直接复用这些问题重新生成答案 ---
+    # 此时跳过 pop_producer_questions，避免重新刷新时变成通用建议
+    refresh_questions: list[dict] | None = body.get("refresh_questions")
+    if refresh_questions and isinstance(refresh_questions, list) and all(
+        isinstance(q, dict) and "question" in q for q in refresh_questions
+    ):
+        explicit_questions = [
+            {"from_agent": q.get("from_agent", "策划"), "question": q["question"]}
+            for q in refresh_questions
+        ]
+    else:
+        # --- 正常模式：从队列取 @超级制作人 显式问题 ---
+        explicit_questions = pop_producer_questions(discussion_id)
 
     # 获取最近 10 条消息作为上下文
     recent_msgs: list[str] = []
