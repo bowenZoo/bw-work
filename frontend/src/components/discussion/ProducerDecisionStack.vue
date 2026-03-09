@@ -118,13 +118,14 @@ async function _doFetch(attempt: number, refreshQuestions?: QuestionItem[]): Pro
       }]
       contextSummary.value = data.context_summary || ''
       source.value = 'llm'
-    } else if (props.pendingCheckpoint) {
+    } else if (props.pendingCheckpoint && props.pendingCheckpoint.question.trim()) {
       questions.value = [{
         from_agent: '主策划',
         question: props.pendingCheckpoint.question,
         answers: [],
       }]
     }
+    // else: no questions available — show empty/idle state
   } catch {
     error.value = '网络错误'
   }

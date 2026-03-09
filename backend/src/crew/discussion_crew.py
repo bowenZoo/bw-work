@@ -3142,7 +3142,9 @@ class DiscussionCrew:
                     self._broadcast_status(self._lead_planner.role, AgentStatus.THINKING)
                     summary = self._lead_planner_section_summary(section.title, round_num, discussion_content)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                    self._in_moderator_broadcast = True
                     self._broadcast_message(self._lead_planner.role, summary)
+                    self._in_moderator_broadcast = False
                     self._record_message(self._lead_planner.role, summary)
                     self._broadcast_status(self._lead_planner.role, AgentStatus.IDLE)
 
@@ -4084,6 +4086,20 @@ class DiscussionCrew:
             cp_type = CheckpointType(cp_type_str.lower())
         except ValueError:
             cp_type = CheckpointType.SILENT
+
+        # Validate DECISION checkpoints: must have a non-empty question.
+        # If not, downgrade to PROGRESS so the discussion doesn't block on an
+        # unintelligible "unknown" decision card.
+        if cp_type == CheckpointType.DECISION:
+            question_text = str(data.get("question", "")).strip()
+            if not question_text:
+                logger.warning(
+                    "DECISION checkpoint missing question (round=%d section=%s), "
+                    "downgrading to PROGRESS",
+                    round_num,
+                    getattr(section, "id", "?"),
+                )
+                cp_type = CheckpointType.PROGRESS
 
         options = []
         if cp_type == CheckpointType.DECISION:
@@ -5723,7 +5739,9 @@ class DiscussionCrew:
                         # SILENT: no notification, generate fallback summary for internal use
                         summary = self._lead_planner_section_summary(section.title, round_num, discussion_content)
                         self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                        self._in_moderator_broadcast = True
                         self._broadcast_message(self._lead_planner.role, summary)
+                        self._in_moderator_broadcast = False
                         self._record_message(self._lead_planner.role, summary)
                     elif checkpoint.type == CheckpointType.PROGRESS:
                         # PROGRESS: non-blocking notice
@@ -5731,7 +5749,9 @@ class DiscussionCrew:
                         self._persist_checkpoint(checkpoint)
                         summary_text = f"[进展通报] {checkpoint.title}: {checkpoint.summary}"
                         self._broadcast_status(self._lead_planner.role, AgentStatus.SPEAKING)
+                        self._in_moderator_broadcast = True
                         self._broadcast_message(self._lead_planner.role, summary_text)
+                        self._in_moderator_broadcast = False
                         self._record_message(self._lead_planner.role, summary_text)
                         summary = summary_text
                     elif checkpoint.type == CheckpointType.DECISION:

@@ -4191,7 +4191,7 @@ async def get_producer_suggestions(
             cp_responded = cp.get("responded") if isinstance(cp, dict) else getattr(cp, "responded", None)
             cp_question = cp.get("question", "") if isinstance(cp, dict) else getattr(cp, "question", "")
             if cp_type == "decision" and not cp_responded:
-                checkpoint_q = cp_question or ""
+                checkpoint_q = (cp_question or "").strip()
                 # 提取 checkpoint 自带的选项作为答案候选
                 raw_opts = cp.get("options", []) if isinstance(cp, dict) else getattr(cp, "options", [])
                 if raw_opts:
