@@ -13,6 +13,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     "items": [
       {
         "type": "fix",
+        "text": "决策卡通用选项问题 — LLM失败时增加重试并减小context大小"
+      },
+      {
+        "type": "fix",
         "text": "修复多个制作人交互问题"
       }
     ]
