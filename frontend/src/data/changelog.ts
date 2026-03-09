@@ -12,6 +12,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     "date": "2026-03-09",
     "items": [
       {
+        "type": "new",
+        "text": "决策卡LLM失败时显示提示并支持仅刷新答案选项"
+      },
+      {
         "type": "fix",
         "text": "决策卡通用选项问题 — LLM失败时增加重试并减小context大小"
       },
