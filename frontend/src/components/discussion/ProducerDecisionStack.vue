@@ -43,10 +43,16 @@ const RETRY_DELAY_MS = 5000
 // 1. active flag turns true (producer's explicit turn)
 watch(() => props.active, (val) => {
   if (val) {
-    resetAndFetch()
+    // Only fetch if questions haven't already been loaded by questionTrigger.
+    // Both questionTrigger and active fire when @超级制作人 is detected —
+    // questionTrigger fires first (from WS message), active fires a moment
+    // later (when discussion state flips to PAUSED). A second resetAndFetch()
+    // would pop an already-empty queue and overwrite the correct card.
+    if (questions.value.length === 0 && !loading.value) {
+      resetAndFetch()
+    }
   } else {
-    // Waiting period ended (producer responded via input box or decision card)
-    // Clear stale card so it doesn't persist into the next agent's thinking phase
+    // Waiting period ended — clear stale card
     resetState()
   }
 }, { immediate: true })
