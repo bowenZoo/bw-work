@@ -13,6 +13,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     "items": [
       {
         "type": "fix",
+        "text": "修复成员管理不显示用户 + 统一弹框右上角关闭样式"
+      },
+      {
+        "type": "fix",
         "text": "prevent double-trigger race condition on decision card"
       },
       {
