@@ -42,7 +42,13 @@ const RETRY_DELAY_MS = 5000
 // Only fetch when explicitly triggered:
 // 1. active flag turns true (producer's explicit turn)
 watch(() => props.active, (val) => {
-  if (val) resetAndFetch()
+  if (val) {
+    resetAndFetch()
+  } else {
+    // Waiting period ended (producer responded via input box or decision card)
+    // Clear stale card so it doesn't persist into the next agent's thinking phase
+    resetState()
+  }
 }, { immediate: true })
 
 // 2. @超级制作人 question arrives via WebSocket
